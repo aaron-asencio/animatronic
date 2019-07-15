@@ -2,7 +2,7 @@ from adafruit_servokit import ServoKit
 import time
 
 
-class Driver:
+class TrunkContoller:
 
     def __init__(self, name):
         self.name = name
@@ -137,6 +137,6 @@ class Driver:
 
         
     
-driver = Driver("Servo driver")
-driver.test()
-#driver.wave()
+TrunkContoller = TrunkContoller("Servo TrunkContoller")
+TrunkContoller.test()
+#TrunkContoller.wave()
