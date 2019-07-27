@@ -1,28 +1,52 @@
-from trunkcontroller import TrunkContoller
+from trunkcontroller import TrunkController
 import asyncio
 import concurrent.futures
 
-async def main():
+def lookAround():
     loop = asyncio.get_event_loop()
-    contoller = TrunkContoller("Servo TrunkContoller")
+    controller = TrunkController("Servo TrunkController")
+    neckTilt = loop.create_task(controller.neckTilt())
+    neckPan = loop.create_task(controller.neckPan())
+    shoulder = loop.create_task(controller.shoulder())
+    loop.run_until_complete(asyncio.gather(neckTilt, neckPan, shoulder))
+    #asyncio.run_coroutine_threadsafe(controller.neckCenter(), loop)
+    
+    #center = loop.create_task(controller.neckCenter())
+    asyncio.run(controller.neckCenter())
+    
+    
+    
+def wave():
+    #pool = concurrent.futures.ThreadPoolExecutor() 
+    #loop = asyncio.get_event_loop()
+    #loop = asyncio.get_running_loop()
+    controller = TrunkController("Servo TrunkController")
+  
+    # works
+    asyncio.run(controller.wave())
+    
+    #    asyncio.run(controller.elbowTilt())
+    # asyncio.run(controller.elbowPan())
+        
+    #await loop.run_in_executor(None, controller.wave)
+    #_event_loop()
+    #wave = loop.create_task(controller.wave())
+    #loop.run_until_complete(asyncio.gather(wave))
+
+def main():
+    #lookAround()
+    
+    wave()
+    #asyncio.run(wave())
+    #asyncio.run(controller.wave())
     #works but not async
     #await asyncio.gather(contoller.neckPan(), contoller.neckTilt())
     # await asyncio.gather( TrunkContoller("Servo TrunkContoller").neckTilt(), TrunkContoller("Servo TrunkContoller").neckPan() )
     #works but not async
-    result1 = await loop.run_in_executor(None, contoller.neckTilt)
-    result = await loop.run_in_executor(None, contoller.neckPan)
+    #await loop.run_in_executor(None, contoller.neckTilt)
     
-    #task = loop.create_task(foo())
-    #loop.run_until_complete(task)
-    
-    # the ServoKit library is probably not built for asyncio but the run_in_executor should run concurrent. You have to remove
-    # async from the in front of the method for run_in_executor.
-    # create class without servoKit and test to see if we can't make concurrent calls KISS - try loop with print first to prove.
-    
-   
-    
-
-asyncio.run(main())
+main()   
+#asyncio.run(main())
     #import sys
     #print(sys.argv[1])
 
