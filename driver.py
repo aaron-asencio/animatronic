@@ -1,74 +1,49 @@
-from adafruit_servokit import ServoKit
-import time
+from trunkcontroller import TrunkController
+import asyncio
+import concurrent.futures
 
-kit = ServoKit(channels=16)
-for i in range(0, 3):
-    kit.servo[i].actuation_range = 270
+def lookAround():
+    loop = asyncio.get_event_loop()
+    controller = TrunkController("Servo TrunkController")
+    neckTilt = loop.create_task(controller.neckTilt())
+    neckPan = loop.create_task(controller.neckPan())
+    shoulder = loop.create_task(controller.shoulder())
+    loop.run_until_complete(asyncio.gather(neckTilt, neckPan, shoulder))
+    #asyncio.run_coroutine_threadsafe(controller.neckCenter(), loop) 
+    #center = loop.create_task(controller.neckCenter())
+    asyncio.run(controller.neckCenter())
+    
+def wave():
+    #pool = concurrent.futures.ThreadPoolExecutor() 
+    #loop = asyncio.get_event_loop()
+    #loop = asyncio.get_running_loop()
+    controller = TrunkController("Servo TrunkController")
+  
+    # works
+    asyncio.run(controller.wave())
+    
+    #    asyncio.run(controller.elbowTilt())
+    # asyncio.run(controller.elbowPan())
+        
+    #await loop.run_in_executor(None, controller.wave)
+    #_event_loop()
+    #wave = loop.create_task(controller.wave())
+    #loop.run_until_complete(asyncio.gather(wave))
 
-NECK_TILT = 4
-NECK_PAN = 5
-RT_ELBOW_PAN = 2
-RT_ELBOW_TILT = 3
-RT_SHOULDER_ROTATOR = 6
-# set up servos with 270 range
-print("servo setup")
-
-# Neck servos
-print("move neck pan")
-NECK_PAN_MIN = 0
-NECK_PAN_MAX = 90
-kit.servo[NECK_PAN].angle = NECK_PAN_MIN
-time.sleep(1)
-kit.servo[NECK_PAN].angle = NECK_PAN_MAX
-time.sleep(1)
-kit.servo[NECK_PAN].angle = NECK_PAN_MIN
-time.sleep(1)
-
-print("move neck tilt")
-NECK_TILT_MIN = 0
-NECK_TILT_MAX = 45
-kit.servo[NECK_TILT].angle = NECK_TILT_MIN
-time.sleep(1)
-kit.servo[NECK_TILT].angle = NECK_TILT_MAX
-time.sleep(1)
-kit.servo[NECK_TILT].angle = NECK_TILT_MIN
-time.sleep(1)
-
-# elbow servos
-print("move elbow pan")
-RT_ELBOW_PAN_MIN = 0
-RT_ELBOW_PAN_MAX = 180
-kit.servo[RT_ELBOW_PAN].angle = RT_ELBOW_PAN_MAX
-time.sleep(1)
-kit.servo[RT_ELBOW_PAN].angle = RT_ELBOW_PAN_MAX
-time.sleep(1)
-kit.servo[RT_ELBOW_PAN].angle = RT_ELBOW_PAN_MAX
-time.sleep(1)
-
-#print("move elbow tilt")
-RT_ELBOW_TILT_MIN = 0
-RT_ELBOW_TILT_MAX = 180
-kit.servo[RT_ELBOW_TILT].angle = RT_ELBOW_TILT_MIN
-time.sleep(1)
-kit.servo[RT_ELBOW_TILT].angle = RT_ELBOW_TILT_MAX
-time.sleep(1)
-kit.servo[RT_ELBOW_TILT].angle = RT_ELBOW_TILT_MIN
-time.sleep(1)
-
-# shoulder servo
-print("move shoulder rotate")
-RT_SHOULDER_ROTATOR_MIN = 0
-RT_SHOULDER_ROTATOR_MAX = 180
-
-kit.servo[RT_SHOULDER_ROTATOR].angle = RT_SHOULDER_ROTATOR_MIN
-time.sleep(1)
-kit.servo[RT_SHOULDER_ROTATOR].angle = RT_SHOULDER_ROTATOR_MAX
-time.sleep(1)
-kit.servo[RT_SHOULDER_ROTATOR].angle = RT_SHOULDER_ROTATOR_MIN
-time.sleep(1)
-
-
-#if __name__ == "__main__":
-#    import sys
-#   print(sys.argv[1])
+def main():
+    lookAround()
+    
+    #wave()
+    #asyncio.run(wave())
+    #asyncio.run(controller.wave())
+    #works but not async
+    #await asyncio.gather(contoller.neckPan(), contoller.neckTilt())
+    # await asyncio.gather( TrunkContoller("Servo TrunkContoller").neckTilt(), TrunkContoller("Servo TrunkContoller").neckPan() )
+    #works but not async
+    #await loop.run_in_executor(None, contoller.neckTilt)
+    
+main()   
+#asyncio.run(main())
+    #import sys
+    #print(sys.argv[1])
 
