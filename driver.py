@@ -9,12 +9,9 @@ def lookAround():
     neckPan = loop.create_task(controller.neckPan())
     shoulder = loop.create_task(controller.shoulder())
     loop.run_until_complete(asyncio.gather(neckTilt, neckPan, shoulder))
-    #asyncio.run_coroutine_threadsafe(controller.neckCenter(), loop)
-    
+    #asyncio.run_coroutine_threadsafe(controller.neckCenter(), loop) 
     #center = loop.create_task(controller.neckCenter())
     asyncio.run(controller.neckCenter())
-    
-    
     
 def wave():
     #pool = concurrent.futures.ThreadPoolExecutor() 
@@ -34,9 +31,9 @@ def wave():
     #loop.run_until_complete(asyncio.gather(wave))
 
 def main():
-    #lookAround()
+    lookAround()
     
-    wave()
+    #wave()
     #asyncio.run(wave())
     #asyncio.run(controller.wave())
     #works but not async

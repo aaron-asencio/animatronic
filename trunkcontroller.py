@@ -41,8 +41,32 @@ class TrunkController:
         NECK_TILT_MIN = 0
         NECK_TILT_MAX = 50
         await self.move(self.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.025, revert,1)
-               
-    async def neckCenter(self,revert=False):
+    
+    async def nodYes(self,revert=True):
+        NECK_TILT_MIN = 0
+        NECK_TILT_MAX = 50
+        for x in range(0, 2):
+            await self.move(self.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.025, revert,1)
+         
+     async def shakeHead(self, revert=True):
+        NECK_PAN_MIN = 30
+        NECK_PAN_MAX = 120
+        for x in range(0, 3):
+            await self.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert,1)
+        
+        await asyncio.sleep(1)
+        
+   
+    async def shakeNo(self, revert=True):
+        NECK_PAN_MIN = 30
+        NECK_PAN_MAX = 150
+        for x in range(0, 2):
+            await self.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert,1)
+        
+        await asyncio.sleep(1)
+        
+  
+    async def neckCenter(self, revert=True):
         # can we get current location from servo lib?
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 95
@@ -84,18 +108,6 @@ class TrunkController:
         controller = TrunkController("Servo TrunkController")
         #await self.moveByDirection(self.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,
         #          RT_SHOULDER_ROTATOR_MAX, 0.005,True)
-        
-        # This event loop is already running
-        #elbowPan = loop.create_task(self.elbowPan())
-        #elbowTilt = loop.create_task(self.elbowTilt())
-        #loop.run_until_complete(asyncio.gather(elbowPan, elbowTilt))
-        
-        # asyncio.run() cannot be called from a running event loop
-        #asyncio.run(self.elbowTilt())
-        #asyncio.run(self.elbowPan())
-        
-        #asyncio.run_coroutine_threadsafe(self.elbowPan(), loop)
-        #asyncio.run_coroutine_threadsafe(self.elbowTilt(), loop)
         
         # not moving down
         #await self.moveByDirection(self.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MAX, RT_SHOULDER_ROTATOR_MIN, 0.005,False)
