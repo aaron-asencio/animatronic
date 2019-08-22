@@ -1,0 +1,4 @@
+# animatronic
+
+## lightshowpi config
+
