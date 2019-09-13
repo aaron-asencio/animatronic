@@ -17,8 +17,8 @@ class Movements:
         controller = TrunkController("Servo TrunkController")
         neckTilt = loop.create_task(controller.neckTilt())
         neckPan = loop.create_task(controller.neckPan())
-        shoulder = loop.create_task(controller.shoulder())
-        loop.run_until_complete(asyncio.gather(neckTilt, neckPan, shoulder))
+        #shoulder = loop.create_task(controller.shoulder())
+        loop.run_until_complete(asyncio.gather(neckTilt, neckPan))
         asyncio.run(controller.neckCenter())
 
     def scan(self):
