@@ -19,11 +19,11 @@ mv = Movements("Orchstrate Movements")
 print(args.action)
 
 if (args.action == 'wave'):
-    asyncio.run(trunkController.wave())
+    asyncio.run(mv.wave())
 elif(args.action == 'yes'):
-   asyncio.run(trunkController.nodYes())
+   asyncio.run(mv.nodYes())
 elif(args.action == 'no'):
-   asyncio.run(trunkController.shakeNo())
+   asyncio.run(mv.shakeNo())
 elif(args.action == 'lookAround'):
     mv.lookAround()
 elif(args.action == 'scan'):

@@ -2,6 +2,9 @@ from adafruit_servokit import ServoKit
 from time import sleep
 import asyncio
 
+"""
+Class for basic movements of the trunk
+"""
 
 class TrunkController:
 
@@ -36,39 +39,31 @@ class TrunkController:
         await self.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
         await asyncio.sleep(1)
 
+    async def neckFullPan(self, revert=True):
+        NECK_PAN_MIN = 0
+        NECK_PAN_MAX = 180
+        await self.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
+        await asyncio.sleep(1)    
+
     # neck servo tilt
     async def neckTilt(self, revert=True):
         NECK_TILT_MIN = 0
         NECK_TILT_MAX = 50
         await self.move(self.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.025, revert, .1)
-
-    async def nodYes(self, revert=True):
-        NECK_TILT_MIN = 0
-        NECK_TILT_MAX = 30
-        for x in range(0, 2):
-            await self.move(self.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.015, revert, .05)
-
-    async def shakeHead(self, revert=True):
-        NECK_PAN_MIN = 30
-        NECK_PAN_MAX = 120
-        for x in range(0, 3):
-            await self.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, 1)
-
-        await asyncio.sleep(1)
-
-    async def shakeNo(self, revert=True):
-        NECK_PAN_MIN = 30
-        NECK_PAN_MAX = 150
-        for x in range(0, 2):
-            await self.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
-        await self.neckCenter()
        
 
     async def neckCenter(self, revert=True):
         # can we get current location from servo lib?
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 95
-        await self.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
+        NECK_CENTER = 90
+        currentPosition = round(self.kit.servo[servo_num].angle)
+        increasing = currentPosition < NECK_CENTER
+        # don't move if already at center
+        if currentPosition != NECK_CENTER
+            # determine increasing or decreasing then use moveByDirection 
+            #await self.move(self.NECK_PAN, currentPosition, NECK_PAN_MAX, 0.01, revert, .1)
+            await self.moveByDirection(self, self.NECK_PAN, currentPosition, NECK_CENTER, 0.01, increasing)
 
     async def neckTiltCenter(self):
         NECK_TILT_MIN = 19
@@ -96,29 +91,7 @@ class TrunkController:
         await self.move(self.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,
                         RT_SHOULDER_ROTATOR_MAX, 0.005, revert, 1)
 
-    async def wave(self):
-        RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 220
-        RT_ELBOW_PAN_MIN = 0
-        RT_ELBOW_PAN_MAX = 80
-        RT_ELBOW_TILT_MIN = 0
-        RT_ELBOW_TILT_MAX = 15
-
-        #raise arm
-        increasing = True
-        await self.moveByDirection(self.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, increasing)
-        await self.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
-        await self.moveByDirection(self.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, increasing)
-        sleep(1)
-        # rotate elbow to wave
-        for i in range(0, 3, 1):
-            revert = i % 2 == 0
-            await self.move(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.005, revert, 0.05)
-        # lower arm
-        increasing = False
-        await self.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.0025, increasing)
-        await self.moveByDirection(self.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, False)
-
+    
 
     # TODO: make a method that can take multiple servos
     # revert arg flips the start and stop and can make it increment/decrement
@@ -126,6 +99,7 @@ class TrunkController:
         print("moving " + self.servos[servo_num])
         for i in range(start, stop, 1):
             self.kit.servo[servo_num].angle = i
+            print("Servo angle set " +str(i) + "; angle returned: " + str(round(self.kit.servo[servo_num].angle)) )
             await asyncio.sleep(delay)
 
         if(revert):
@@ -153,21 +127,22 @@ class TrunkController:
     def displayPosition(self):
         # for servo_num, servo_name in enumerate(servos, start=1):
         for servo_num in range(0, len(self.servos), 1):
-            print(self.kit.servo[servo_num].angle)
+            print(str(round(self.kit.servo[servo_num].angle)))
 
     async def test(self):
-        await self.neckTiltCenter()
-        await self.neckPan()
-        await self.neckCenter()
         # await self.neckTiltCenter()
-        await self.neckTilt()
-        await self.neckTiltCenter()
-        await self.shoulder()
-        await self.elbowPan()
-        await self.elbowTilt()
-        await self.displayPosition()
+        # await self.neckPan()
+        # await self.neckCenter()
+        # # await self.neckTiltCenter()
+        # await self.neckTilt()
+        # await self.neckTiltCenter()
+        # await self.shoulder()
+        # await self.elbowPan()
+        # await self.elbowTilt()
+        #await self.displayPosition()
+        await self.neckFullPan()
 
 
-#trunkController = TrunkController("Servo TrunkContoller")
-# TrunkController.test()
+trunkController = TrunkController("Servo TrunkContoller")
+asyncio.run(trunkController.test())
 #asyncio.run(trunkController.wave())
