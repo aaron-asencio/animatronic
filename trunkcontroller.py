@@ -113,7 +113,6 @@ class TrunkController:
         # rotate elbow to wave
         for i in range(0, 3, 1):
             revert = i % 2 == 0
-            print(revert)
             await self.move(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.005, revert, 0.05)
         # lower arm
         increasing = False
@@ -143,13 +142,11 @@ class TrunkController:
             for i in range(start, stop, 1):
                 self.kit.servo[servo_num].angle = i
                 await asyncio.sleep(delay)
-                print(i)
-
+          
         if(not increasing):
             print("not increasing " + self.servos[servo_num])
             print("start " + str(start) + "; stop:" + str(stop))
             for i in range(stop, start, -1):
-                print(i)
                 self.kit.servo[servo_num].angle = i
                 await asyncio.sleep(delay)
 
