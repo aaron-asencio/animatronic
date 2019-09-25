@@ -15,19 +15,23 @@ args = parser.parse_args()
 
 mv = Movements("Orchstrate Movements")
        
-
+#async def main():
 print(args.action)
 
 if (args.action == 'wave'):
     asyncio.run(mv.wave())
 elif(args.action == 'yes'):
-   asyncio.run(mv.nodYes())
+    asyncio.run(mv.nodYes())
 elif(args.action == 'no'):
-   asyncio.run(mv.shakeNo())
+    asyncio.run(mv.shakeNo())
 elif(args.action == 'lookAround'):
     mv.lookAround()
 elif(args.action == 'scan'):
     mv.scan()
 elif(args.action == 'swivelHead'):
-    mv.lookAround()
+    asyncio.run(mv.swivelHead())
+elif(args.action == 'come'):
+    asyncio.run(mv.come())   
+
+#asyncio.run(main())
 
