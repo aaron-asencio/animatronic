@@ -5,6 +5,8 @@ import threading
 import subprocess
 from subprocess import Popen
 """
+sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --file="/home/pi/lightshowpi/music/sb_party_switch.mp3"
+sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="/home/pi/lightshowpi/music/sb_party_switch.mp3"
 
 To put in input mode - this actually started playing xmas playlist - have to look into that
 sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --config="/home/pi/lightshowpi/config/overrides-mic.cfg"
@@ -71,10 +73,10 @@ class Animatronic:
     # take function name and audio file
     def runActionAndAudio(self, methodName, audioFile):
         # works - copy from this - don't change
-        #asyncio.run(getattr(self, methodName)())
         cmd = self.lightshowPlayCmd + '"' + self.lightshowDir + audioFile + '"'
         print(cmd)
         proc = subprocess.Popen(cmd, shell=True)
+        asyncio.run(getattr(self, methodName)())
         proc.terminate()
 
     def rippedPants(self):
@@ -83,7 +85,6 @@ class Animatronic:
         proc = subprocess.Popen(cmd, shell=True)
         asyncio.run(self.swivelHeadAndWave())
         proc.terminate()
-
 
     def main(self):
         # startParty()
