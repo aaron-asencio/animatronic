@@ -1,6 +1,7 @@
 from trunkcontroller import TrunkController
 import asyncio
 import concurrent.futures
+import subprocess
 
 def lookAround():
     loop = asyncio.get_event_loop()
@@ -32,8 +33,9 @@ def wave():
 
 
 def main():
-    lookAround()
+    #lookAround()
     
+    subprocess.call("/home/pi/lightshowpi/py/synchronized_lights.py --file=$MUSIC_HOME/sb_party_switch.mp3", shell=True)
     #wave()
     #asyncio.run(wave())
     #asyncio.run(controller.wave())
