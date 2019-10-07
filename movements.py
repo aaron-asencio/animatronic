@@ -125,7 +125,7 @@ class Movements:
             await self.trunkController.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
         await self.trunkController.neckCenter()
 
-    def wave(self):
+    async def wave(self):
        
         RT_SHOULDER_ROTATOR_MIN = 10
         RT_SHOULDER_ROTATOR_MAX = 190
