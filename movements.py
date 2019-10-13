@@ -64,7 +64,37 @@ class Movements:
         # palm down
         await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
       
+    async def comein(self):
+        RT_SHOULDER_ROTATOR_MIN = 0
+        RT_SHOULDER_ROTATOR_MAX = 40
+
+        # elbow rotate
+        RT_ELBOW_PAN_MIN = 10
+        RT_ELBOW_PAN_MAX = 130
         
+        # elbow bend
+        RT_ELBOW_TILT_MIN = 25
+        RT_ELBOW_TILT_MAX = 160
+
+        revert = True
+            
+        increasing = True
+        # raise arm
+        await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
+        # palm up
+        await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
+        
+        for x in range(3):
+            await self.trunkController.move(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, 0.05)
+        
+        # sleep(.2)
+       
+        increasing = False
+        # lower arm
+        await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
+        # # palm down
+        await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
+          
         
     async def lookAround(self):
         loop = asyncio.get_event_loop()
@@ -74,33 +104,43 @@ class Movements:
         await asyncio.gather(neckTilt, neckPan)
         await self.trunkController.neckCenter()
 
+    async def lookAroundSmall(self):
+        await self.trunkController.neckCenter()
+        await asyncio.sleep(.5)
+        for x in range(2):
+            loop = asyncio.get_event_loop()
+            neckTilt = loop.create_task(self.trunkController.neckTilt(10, 30))
+            neckPan = loop.create_task(self.trunkController.neckPan())
+            await asyncio.gather(neckTilt, neckPan)
+            await asyncio.sleep(.5)
+        
+        await self.trunkController.neckCenter()
+
+
     async def neckEllipse(self):
+        await self.trunkController.neckCenter()
         loop = asyncio.get_event_loop()
-        neckTilt = loop.create_task(self.trunkController.neckTilt(0, 80))
+        neckTilt = loop.create_task(self.trunkController.neckTilt(0, 45))
         neckPan = loop.create_task(self.trunkController.neckPan())
         await asyncio.gather(neckTilt, neckPan)
+        await asyncio.sleep(1) 
+        await self.trunkController.neckCenter()
 
     async def swivelHead(self):
         await self.trunkController.neckCenter()
         await self.neckEllipse()
         await self.neckEllipse()
-        # would like to sleep here but have to make this async and then have to change controller.py...
-        await asyncio.sleep(.2) 
+        await asyncio.sleep(1) 
         await self.trunkController.neckCenter()
     
-    def swivelHeadWorks(self):
-        # this method cannot be async and even if it was you cannot call asyncio.run() on it because it uses asyncio.run in it
-        asyncio.run(self.trunkController.neckCenter())
-        asyncio.run(self.neckEllipse())
-        asyncio.run(self.neckEllipse())
-        # would like to sleep here but have to make this async and then have to change controller.py...
-        asyncio.run(self.trunkController.neckCenter())   
-   
-    def scan(self):
-        asyncio.run(self.trunkController.neckCenter())
+    
+    async def scan(self):
+        await self.trunkController.neckCenter()
         for _ in range(2):
-            asyncio.run(self.trunkController.neckPan())
-        asyncio.run(self.trunkController.neckCenter())
+            await self.trunkController.neckPan()
+        
+        await asyncio.sleep(1) 
+        await self.trunkController.neckCenter()
 
     async def nodYes(self, revert=True):
         NECK_TILT_MIN = 0
@@ -114,8 +154,10 @@ class Movements:
         await self.trunkController.neckCenter()
         for _ in range(3):
             await self.trunkController.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, 1)
-        await self.trunkController.neckCenter()
+        
         await asyncio.sleep(1)
+        await self.trunkController.neckCenter()
+       
 
     async def shakeNo(self, revert=True):
         NECK_PAN_MIN = 30
@@ -123,9 +165,11 @@ class Movements:
         await self.trunkController.neckCenter()
         for _ in range(2):
             await self.trunkController.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
+        
+        await asyncio.sleep(1)            
         await self.trunkController.neckCenter()
 
-    def wave(self):
+    async def wave(self):
        
         RT_SHOULDER_ROTATOR_MIN = 10
         RT_SHOULDER_ROTATOR_MAX = 190
@@ -147,5 +191,5 @@ class Movements:
         increasing = False
         await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.0025, increasing)
         await self.trunkController.moveByDirection(self.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, False)
-        print("Waved to the fans")
+        
 
