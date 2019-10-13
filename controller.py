@@ -25,13 +25,20 @@ elif(args.action == 'yes'):
 elif(args.action == 'no'):
     asyncio.run(mv.shakeNo())
 elif(args.action == 'lookAround'):
-    mv.lookAround()
+      asyncio.run(mv.lookAround())
 elif(args.action == 'scan'):
-    mv.scan()
+      asyncio.run(mv.scan())
 elif(args.action == 'swivelHead'):
     asyncio.run(mv.swivelHead())
 elif(args.action == 'come'):
     asyncio.run(mv.come())   
+elif(args.action == 'comein'):
+    asyncio.run(mv.comein())       
+elif(args.action == 'neckEllipse'):
+    asyncio.run(mv.neckEllipse())    
+elif(args.action == 'lookAroundSmall'):
+    asyncio.run(mv.lookAroundSmall())    
+    
 
 #asyncio.run(main())
 

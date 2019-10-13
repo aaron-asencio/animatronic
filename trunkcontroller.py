@@ -58,7 +58,7 @@ class TrunkController:
         # don't move if already at center
         if currentPosition != NECK_CENTER:
             # determine increasing or decreasing then use moveByDirection 
-            await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.005, increase)
+            await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.01, increase)
           
 
     async def neckTiltCenter(self):
