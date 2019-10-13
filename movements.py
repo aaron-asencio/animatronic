@@ -13,8 +13,8 @@ Class for orchestrated movements that make expressions and gestures
 
 
 class Movements:
-    def __init__(self, name):
-        self.name = name
+    #def __init__(self):
+        
 
     trunkController = TrunkController("Servo TrunkController")
     # should be in an include
@@ -94,7 +94,34 @@ class Movements:
         await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
         # # palm down
         await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
-          
+
+
+    async def armOut(self):
+        RT_SHOULDER_ROTATOR_MIN = 0
+        RT_SHOULDER_ROTATOR_MAX = 40
+        # elbow rotate
+        RT_ELBOW_PAN_MIN = 10
+        RT_ELBOW_PAN_MAX = 130
+        # elbow bend
+        RT_ELBOW_TILT_MIN = 25
+        RT_ELBOW_TILT_MAX = 160
+       
+        increasing = True
+        # raise arm
+        await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
+        # palm up
+        await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
+        # arm out
+        await self.trunkController.moveByDirection(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
+        #await self.trunkController.move(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, 0.05)
+        await asyncio.sleep(3)
+        increasing = False
+        await self.trunkController.moveByDirection(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
+        # lower arm
+        await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
+        # # palm down
+        await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
+      
         
     async def lookAround(self):
         loop = asyncio.get_event_loop()

@@ -5,7 +5,7 @@ import threading
 import subprocess
 from subprocess import Popen
 """
-sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --file="/home/pi/lightshowpi/music/sb_party_switch.mp3"
+command to run lightshowpi and play a music file
 sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="/home/pi/lightshowpi/music/sb_party_switch.mp3"
 
 To put in input mode - this actually started playing xmas playlist - have to look into that
@@ -16,52 +16,66 @@ sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --config="/home/pi/l
 
 class Animatronic:
     # def __init__(self):
-
+    
+    # 
     lightshowPlayCmd = 'sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file='
-    lightshowPlayFile1 = '"/home/pi/lightshowpi/music/sb_party_switch.mp3"'
-    lightshowPlayFile2 = '"/home/pi/lightshowpi/music/sb_ripped_pants.mp3"'
-    lightshowDir = '/home/pi/lightshowpi/music/'
-
+    #lightshowDir = '/home/pi/lightshowpi/music/'
+    lightshowDir = '/home/pi/animatronic/music/'
+    
+    #list of files on server
     music = ['beetel-exorcist.wav', 'blah.wav', 'bloody-mary.mp3', 'chucky.mp3', 'yoda-fear.wav', 'krusty-laugh.wav', 'sb_party_switch.wav', 'sb_ripped_pants.mp3',
-             'spongebob-torture.mp3', 'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav', 'yoda-fear.wav']
+             'spongebob-torture.mp3', 'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav']
 
     idle = 3
 
     # strategy - put all of the async methods in one async function so we can call it with asyncio.run only once
     async def patrol(self):
-        mv = Movements("Orchestrate Movements")
+        mv = Movements()
         await asyncio.sleep(self.idle)
         await mv.neckEllipse()
         await asyncio.sleep(1)
         await asyncio.sleep(1)
         await mv.lookAroundSmall()
 
-
     async def swivelHeadAndWave(self):
-        mv = Movements("Orchestrate Movements")
+        mv = Movements()
         await asyncio.sleep(self.idle)
         wave = asyncio.create_task(mv.wave())
         swivelHead = asyncio.create_task(mv.swivelHead())
         await asyncio.gather(wave, swivelHead)    
     
     async def no(self):
-        mv = Movements("Orchestrate Movements")
+        mv = Movements()
         await asyncio.sleep(self.idle)
         await mv.shakeNo()
       
     async def comeAndSwivelHead(self):
-        mv = Movements("Orchestrate Movements")
+        mv = Movements()
         await asyncio.sleep(self.idle)
-        wave = asyncio.create_task(mv.come())
-        swivelHead = asyncio.create_task(mv.swivelHead())
-        await asyncio.gather(wave, swivelHead)
+        action1 = asyncio.create_task(mv.come())
+        action2 = asyncio.create_task(mv.swivelHead())
+        await asyncio.gather(action1, action2)
     
     async def comeAndLook(self):
-        mv = Movements("Orchestrate Movements")
+        mv = Movements()
         await asyncio.sleep(self.idle)
         wave = asyncio.create_task(mv.come())
         swivelHead = asyncio.create_task(mv.lookAround())
         await asyncio.gather(wave, swivelHead)
+
+    async def comeinLookAroundSmall(self):
+        mv = Movements()
+        await asyncio.sleep(self.idle)
+        action1 = asyncio.create_task(mv.comein())
+        action2 = asyncio.create_task(mv.lookAroundSmall())
+        await asyncio.gather(action1, action2)
+    
+    async def armOutLookAroundSmall(self):
+        mv = Movements()
+        await asyncio.sleep(self.idle)
+        action1 = asyncio.create_task(mv.armOut())
+        action2 = asyncio.create_task(mv.lookAroundSmall())
+        await asyncio.gather(action1, action2)
 
     # take function name and audio file
     def runActionAndAudio(self, methodName, audioFile):
@@ -100,10 +114,10 @@ class Animatronic:
         self.runActionAndAudio("comeAndLook", self.music[2]) 
     
     def yodaFear(self):
-        self.runActionAndAudio("comeAndLook", self.music[2]) 
+        self.runActionAndAudio("armOutLookAroundSmall", self.music[4]) 
             
       
-    def main(self):
+    #def main(self):
         #self.startParty()
         #self.yoda900()
         #self.rippedPants()
@@ -112,11 +126,12 @@ class Animatronic:
         #self.exorcist()
         #self.waiting()
         #self.vaderFather()
-        self.bloody()
+        #self.bloody()
+        #self.yodaFear()
 
 
-a = Animatronic()
-a.main()
+#a = Animatronic()
+#a.main()
 # asyncio.run(main()) # can't use this because of other event loops runnign in code
 # RuntimeError: asyncio.run() cannot be called from a running event loop
 # sys:1: RuntimeWarning: coroutine 'TrunkController.neckCenter' was never awaited
