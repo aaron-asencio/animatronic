@@ -96,8 +96,8 @@ class TrunkController:
         servo = self.kit.servo[servo_num]
         for i in range(start, stop, 1):
             servo.angle = i
-            currentPosition = round(servo.angle)
-            print("Servo angle set " +str(i) + "; angle returned: " + str(currentPosition) )
+            #currentPosition = round(servo.angle)
+            #print("Servo angle set " +str(i) + "; angle returned: " + str(currentPosition) )
             await asyncio.sleep(delay)
 
         if(revert):

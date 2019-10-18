@@ -6,10 +6,10 @@ import subprocess
 from subprocess import Popen
 """
 command to run lightshowpi and play a music file
-sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="/home/pi/lightshowpi/music/sb_party_switch.mp3"
+sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="/home/pi/animatronic/music/sb_party_switch.mp3"
 
 To put in input mode - this actually started playing xmas playlist - have to look into that
-sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --config="/home/pi/lightshowpi/config/overrides-mic.cfg"
+sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --config="/home/pi/lightshowpi/config/overrides-mic.cfg"
 
 """
 
@@ -86,6 +86,15 @@ class Animatronic:
         asyncio.run(getattr(self, methodName)())
         proc.terminate()
 
+    def audioTest(self):
+        cmd = 'sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="/home/pi/animatronic/music/blah.wav"'
+        proc = subprocess.Popen(cmd, shell=True)
+        
+        while proc.poll() is None:
+            # do nothing
+           x=0
+        proc.terminate()
+    
     def startParty(self):
        self.runActionAndAudio("swivelHeadAndWave", self.music[6])
 

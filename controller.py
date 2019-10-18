@@ -4,14 +4,14 @@ from animatronic import Animatronic
 import asyncio
 import concurrent.futures
 import argparse
+import subprocess
+from subprocess import Popen
 
 # Arguments
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--action', default=None, help='Action to perform')
 
-#trunkController = TrunkController("Servo TrunkController")
- 
 args = parser.parse_args()
 
 mv = Movements()
@@ -20,7 +20,17 @@ a = Animatronic()
 #async def main():
 print(args.action)
 
-if (args.action == 'wave'):
+proc = None
+
+if (args.action == 'mic'):
+    cmd = 'sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --config="/home/pi/lightshowpi/config/overrides-mic.cfg"'
+    proc = subprocess.Popen(cmd, shell=True)
+    # this spawns two processes
+    # sometimes jaw sticks
+    # need to be able to terminate this process - have to send ctrl + C to it 
+    # might to run process in separate thread 
+    #proc.terminate()
+elif (args.action == 'wave'):
     asyncio.run(mv.wave())
 elif(args.action == 'yes'):
     asyncio.run(mv.nodYes())
@@ -42,26 +52,28 @@ elif(args.action == 'neckEllipse'):
     asyncio.run(mv.neckEllipse())    
 elif(args.action == 'lookAroundSmall'):
     asyncio.run(mv.lookAroundSmall())    
-elif(args.action == 'startParty'):
-    asyncio.run(a.startParty())
+elif(args.action == 'party'):
+    a.startParty()
 elif(args.action == 'yoda900'):
-    asyncio.run(a.yoda900())
+    a.yoda900()
 elif(args.action == 'rippedPants'):
-    asyncio.run(a.rippedPants())
+   a.rippedPants()
 elif(args.action == 'blah'):
-    asyncio.run(a.blah())
+    a.blah()
 elif(args.action == 'vaderBeaten'):
-    asyncio.run(a.vaderBeaten())   
+    a.vaderBeaten()
 elif(args.action == 'exorcist'):
-    asyncio.run(a.exorcist())   
+    a.exorcist()
 elif(args.action == 'waiting'):
-    asyncio.run(a.waiting())   
+    a.waiting()
 elif(args.action == 'vaderFather'):
-    asyncio.run(a.vaderFather())   
+    a.vaderFather()
 elif(args.action == 'bloody'):
-    asyncio.run(a.bloody())            
+    a.bloody()          
 elif(args.action == 'yodaFear'):
-    asyncio.run(a.yodaFear())          
+    a.yodaFear()
+elif(args.action == 'audioest'):
+    a.audioTest()
 else:
     raise Exception('Unknown action '+ str(args.action))  
 
