@@ -169,6 +169,17 @@ class Movements:
         await asyncio.sleep(1)            
         await self.trunkController.neckCenter()
 
+
+    async def smallShakeNo(self, revert=True):
+        NECK_PAN_MIN = 70
+        NECK_PAN_MAX = 110
+        await self.trunkController.neckCenter()
+        for _ in range(2):
+            await self.trunkController.move(self.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
+        
+        await asyncio.sleep(1)            
+        await self.trunkController.neckCenter()        
+
     async def wave(self):
        
         RT_SHOULDER_ROTATOR_MIN = 10

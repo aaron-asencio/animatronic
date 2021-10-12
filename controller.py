@@ -24,6 +24,8 @@ elif(args.action == 'yes'):
     asyncio.run(mv.nodYes())
 elif(args.action == 'no'):
     asyncio.run(mv.shakeNo())
+elif(args.action == 'smno'):
+    asyncio.run(mv.smallShakeNo())    
 elif(args.action == 'lookAround'):
       asyncio.run(mv.lookAround())
 elif(args.action == 'scan'):

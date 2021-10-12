@@ -4,12 +4,14 @@ import concurrent.futures
 import threading
 import subprocess
 from subprocess import Popen
+import argparse
+
 """
-sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --file="/home/pi/lightshowpi/music/sb_party_switch.mp3"
-sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="/home/pi/lightshowpi/music/sb_party_switch.mp3"
+sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --file="~/Music/sb_party_switch.wav"
+sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="~/Music/sb_party_switch.wav"
 
 To put in input mode - this actually started playing xmas playlist - have to look into that
-sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --config="/home/pi/lightshowpi/config/overrides-mic.cfg"
+sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --config="/home/pi/lightshowpi/config/overrides-mic.cfg"
 
 """
 
@@ -17,12 +19,12 @@ sudo /usr/bin/python /home/pi/lightshowpi/py/animatronic.py --config="/home/pi/l
 class Animatronic:
     # def __init__(self):
 
-    lightshowPlayCmd = 'sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file='
-    lightshowPlayFile1 = '"/home/pi/lightshowpi/music/sb_party_switch.mp3"'
-    lightshowPlayFile2 = '"/home/pi/lightshowpi/music/sb_ripped_pants.mp3"'
-    lightshowDir = '/home/pi/lightshowpi/music/'
+    lightshowPlayCmd = 'sudo /usr/bin/python /home/pi/workspace/lightshowpi/py/synchronized_lights.py --file='
+    lightshowPlayFile1 = '"~/Music/sb_party_switch.wav"'
+    lightshowPlayFile2 = '"~/Music/blah.wav"'
+    lightshowDir = '/home/pi/Music/'
 
-    music = ['beetel-exorcist.wav', 'blah.wav', 'bloody-mary.mp3', 'chucky.mp3', 'yoda-fear.wav', 'krusty-laugh.wav', 'sb_party_switch.wav', 'sb_ripped_pants.mp3',
+    music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav',
              'spongebob-torture.mp3', 'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav', 'yoda-fear.wav']
 
     idle = 3
@@ -48,7 +50,17 @@ class Animatronic:
         mv = Movements("Orchestrate Movements")
         await asyncio.sleep(self.idle)
         await mv.shakeNo()
+
+    async def lookAroundSmall(self):
+        mv = Movements("Orchestrate Movements")
+        await asyncio.sleep(1)
+        await mv.lookAroundSmall()
       
+    async def neckEllipse(self):
+        mv = Movements("Orchestrate Movements")
+        await asyncio.sleep(1)
+        await mv.neckEllipse()
+
     async def comeAndSwivelHead(self):
         mv = Movements("Orchestrate Movements")
         await asyncio.sleep(self.idle)
@@ -73,50 +85,86 @@ class Animatronic:
         proc.terminate()
 
     def startParty(self):
-       self.runActionAndAudio("swivelHeadAndWave", self.music[6])
+       self.runActionAndAudio("swivelHeadAndWave", self.music[3])
 
     def rippedPants(self):
-        self.runActionAndAudio("comeAndLook", self.music[7])
+        self.runActionAndAudio("comeAndLook", self.music[4])
+
+    def torture(self):
+        self.runActionAndAudio("comeAndLook", self.music[4])    
 
     def exorcist(self):
         self.runActionAndAudio("comeAndLook", self.music[0])    
 
     def yoda900(self):
-        self.runActionAndAudio("patrol", self.music[12])
+        self.runActionAndAudio("patrol", self.music[9])
 
     def blah(self):
        self.runActionAndAudio("no", self.music[1])
 
     def vaderBeaten(self):
-        self.runActionAndAudio("patrol", self.music[9])
+        self.runActionAndAudio("patrol", self.music[5])
     
     def waiting(self):
-        self.runActionAndAudio("comeAndLook", self.music[11])
+        self.runActionAndAudio("comeAndLook", self.music[7])
     
     def vaderFather(self):
-        self.runActionAndAudio("comeAndLook", self.music[10])
+        self.runActionAndAudio("comeAndLook", self.music[6])
 
-    def bloody(self):
-        self.runActionAndAudio("comeAndLook", self.music[2]) 
+    def krusty(self):
+        self.runActionAndAudio("neckEllipse", self.music[2]) 
     
     def yodaFear(self):
-        self.runActionAndAudio("comeAndLook", self.music[2]) 
+        self.runActionAndAudio("comeAndLook", self.music[10]) 
             
-      
-    def main(self):
-        #self.startParty()
-        #self.yoda900()
-        #self.rippedPants()
-        #self.blah()
-        #self.vaderBeaten()
-        #self.exorcist()
-        #self.waiting()
-        #self.vaderFather()
-        self.bloody()
+    
+def main(arg):
+    #self.startParty() # pretty good
+    #self.yoda900() # doesn't move jaw much
+    #self.rippedPants() # need different motion
+    #self.torture() # need different motion
+    # self.blah() # need to shorten the delay depending on audio work on more custom motions here
+    #self.vaderBeaten()
+    #self.exorcist()
+    #self.waiting()
+    #self.vaderFather()
+    #self.krusty()
+   
+    a = Animatronic()
 
+    if (args.action == 'startParty'):
+        a.startParty()
+    elif(args.action == 'yoda'):
+        a.yoda900()
+    #elif(args.action == 'rippedPants'): # playing torture - need audio
+    #    a.rippedPants()
+    elif(args.action == 'torture'):
+        a.torture()   
+    elif(args.action == 'blah'):
+        a.blah()
+    elif(args.action == 'vaderBeaten'):
+        a.vaderBeaten()
+    elif(args.action == 'exorcist'):
+        a.exorcist()
+    elif(args.action == 'waiting'):
+        a.waiting()  
+    elif(args.action == 'vaderFather'):
+        a.vaderFather()      
+    elif(args.action == 'krusty'):
+        a.krusty()    
+    elif(args.action == 'mic'):
+        # needs to set --config="/home/pi/lightshowpi/config/overrides-mic.cfg" for lightshowPlayCmd
+        a.lookAroundSmall() 
 
-a = Animatronic()
-a.main()
 # asyncio.run(main()) # can't use this because of other event loops runnign in code
 # RuntimeError: asyncio.run() cannot be called from a running event loop
 # sys:1: RuntimeWarning: coroutine 'TrunkController.neckCenter' was never awaited
+# sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --action=startParty
+# Arguments
+#a.main()
+#if __name__ == "__main__":
+parser = argparse.ArgumentParser()
+parser.add_argument('--action', default=None, help='Action to perform')
+args = parser.parse_args()
+print(args.action)
+main(args)
