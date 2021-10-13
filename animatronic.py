@@ -7,6 +7,7 @@ from subprocess import Popen
 import argparse
 
 """
+sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --action="krusty"
 sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --file="~/Music/sb_party_switch.wav"
 sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="~/Music/sb_party_switch.wav"
 
@@ -131,7 +132,7 @@ def main(arg):
     #self.krusty()
    
     a = Animatronic()
-
+        
     if (args.action == 'startParty'):
         a.startParty()
     elif(args.action == 'yoda'):
@@ -153,8 +154,13 @@ def main(arg):
     elif(args.action == 'krusty'):
         a.krusty()    
     elif(args.action == 'mic'):
-        # needs to set --config="/home/pi/lightshowpi/config/overrides-mic.cfg" for lightshowPlayCmd
-        a.lookAroundSmall() 
+        #a.lookAroundSmall() 
+        cmd = 'sudo /usr/bin/python /home/pi/workspace/lightshowpi/py/synchronized_lights.py --config /home/pi/workspace/lightshowpi/config/overrides-mic.cfg'
+        print(cmd)
+        proc = subprocess.Popen(cmd, shell=True)
+        # run an action to go with audio
+        #asyncio.run(getattr(self, methodName)())
+        proc.terminate()
 
 # asyncio.run(main()) # can't use this because of other event loops runnign in code
 # RuntimeError: asyncio.run() cannot be called from a running event loop
@@ -164,7 +170,7 @@ def main(arg):
 #a.main()
 #if __name__ == "__main__":
 parser = argparse.ArgumentParser()
-parser.add_argument('--action', default=None, help='Action to perform')
+parser.add_argument('--action', default=None, help='Action to perform.')
 args = parser.parse_args()
 print(args.action)
 main(args)
