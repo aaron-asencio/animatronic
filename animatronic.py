@@ -7,12 +7,12 @@ from subprocess import Popen
 import argparse
 
 """
-sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --action="krusty"
-sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --file="~/Music/sb_party_switch.wav"
-sudo /usr/bin/python /home/pi/lightshowpi/py/synchronized_lights.py --file="~/Music/sb_party_switch.wav"
+sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --action="startParty"
+
+sudo /usr/bin/python /home/pi/workspace/lightshowpi/py/synchronized_lights.py --file="~/Music/sb_party_switch.wav"
 
 To put in input mode - this actually started playing xmas playlist - have to look into that
-sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --config="/home/pi/lightshowpi/config/overrides-mic.cfg"
+sudo /usr/bin/python ~/workspace/animatronic/animatronic.py --config="/home/pi/animatronic/config/overrides-mic.cfg"
 
 """
 
