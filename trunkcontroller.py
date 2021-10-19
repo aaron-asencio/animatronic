@@ -141,6 +141,6 @@ class TrunkController:
         #await self.neckFullPan()
 
 
-#trunkController = TrunkController("Servo TrunkContoller")
-#asyncio.run(trunkController.test())
+trunkController = TrunkController("Servo TrunkContoller")
+asyncio.run(trunkController.test())
 #asyncio.run(trunkController.wave())
