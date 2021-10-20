@@ -1,0 +1,438 @@
+[
+    {
+        "id": "eca99d8bf1138501",
+        "type": "tab",
+        "label": "Main",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "de5243fddd4ea70f",
+        "type": "ui_tab",
+        "name": "Controller",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "d63b47cbe26c4286",
+        "type": "ui_base",
+        "theme": {
+            "name": "theme-light",
+            "lightTheme": {
+                "default": "#0094CE",
+                "baseColor": "#0094CE",
+                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif",
+                "edited": true,
+                "reset": false
+            },
+            "darkTheme": {
+                "default": "#097479",
+                "baseColor": "#097479",
+                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif",
+                "edited": false
+            },
+            "customTheme": {
+                "name": "Untitled Theme 1",
+                "default": "#4B7930",
+                "baseColor": "#4B7930",
+                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif"
+            },
+            "themeState": {
+                "base-color": {
+                    "default": "#0094CE",
+                    "value": "#0094CE",
+                    "edited": false
+                },
+                "page-titlebar-backgroundColor": {
+                    "value": "#0094CE",
+                    "edited": false
+                },
+                "page-backgroundColor": {
+                    "value": "#fafafa",
+                    "edited": false
+                },
+                "page-sidebar-backgroundColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "group-textColor": {
+                    "value": "#1bbfff",
+                    "edited": false
+                },
+                "group-borderColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "group-backgroundColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "widget-textColor": {
+                    "value": "#111111",
+                    "edited": false
+                },
+                "widget-backgroundColor": {
+                    "value": "#0094ce",
+                    "edited": false
+                },
+                "widget-borderColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "base-font": {
+                    "value": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif"
+                }
+            },
+            "angularTheme": {
+                "primary": "indigo",
+                "accents": "blue",
+                "warn": "red",
+                "background": "grey",
+                "palette": "light"
+            }
+        },
+        "site": {
+            "name": "Node-RED Dashboard",
+            "hideToolbar": "false",
+            "allowSwipe": "false",
+            "lockMenu": "false",
+            "allowTempTheme": "true",
+            "dateFormat": "DD/MM/YYYY",
+            "sizes": {
+                "sx": 48,
+                "sy": 48,
+                "gx": 6,
+                "gy": 6,
+                "cx": 6,
+                "cy": 6,
+                "px": 0,
+                "py": 0
+            }
+        }
+    },
+    {
+        "id": "52ac967c2860f372",
+        "type": "ui_group",
+        "name": "Routines",
+        "tab": "de5243fddd4ea70f",
+        "order": 1,
+        "disp": true,
+        "width": "5",
+        "collapse": true,
+        "className": ""
+    },
+    {
+        "id": "98f897b8d51a8fde",
+        "type": "exec",
+        "z": "eca99d8bf1138501",
+        "command": "sudo python3 /home/pi/workspace/animatronic/animatronic.py",
+        "addpay": "payload",
+        "append": "",
+        "useSpawn": "false",
+        "timer": "",
+        "winHide": false,
+        "oldrc": false,
+        "name": "Exec Animatronic Action",
+        "x": 490,
+        "y": 360,
+        "wires": [
+            [],
+            [
+                "2752ac7a55ca1391"
+            ],
+            [
+                "98735ffb3f1ed999"
+            ]
+        ],
+        "inputLabels": [
+            "action"
+        ]
+    },
+    {
+        "id": "2752ac7a55ca1391",
+        "type": "debug",
+        "z": "eca99d8bf1138501",
+        "name": "STDERR",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 780,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "98735ffb3f1ed999",
+        "type": "debug",
+        "z": "eca99d8bf1138501",
+        "name": "Return code",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 730,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "e62a41a8a20e3e3f",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "SpongeBob - Start Party",
+        "group": "52ac967c2860f372",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "SpongeBob - Start Party",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "yellow",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"startParty\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 150,
+        "y": 100,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "47ad441df7bcb6a7",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "SpongeBob - Torture",
+        "group": "52ac967c2860f372",
+        "order": 2,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "SpongeBob - Torture",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "yellow",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"torture\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 140,
+        "y": 160,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "df35f39d5feea884",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "BeetleJuice - Exorcist",
+        "group": "52ac967c2860f372",
+        "order": 3,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "BeetleJuice - Exorcist",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"exorcist\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 140,
+        "y": 280,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "ad831db9fbe4fe84",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Blah Blah Blah",
+        "group": "52ac967c2860f372",
+        "order": 4,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Blah Blah Blah",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"blah\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 120,
+        "y": 340,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "0189c287d5a50256",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Vader - You are beaten",
+        "group": "52ac967c2860f372",
+        "order": 7,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Vader - You are beaten",
+        "tooltip": "",
+        "color": "gray",
+        "bgcolor": "black",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"vaderBeaten\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 140,
+        "y": 400,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "7d74b864f09ea07e",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Krusty Clown Laugh",
+        "group": "52ac967c2860f372",
+        "order": 5,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Krusty Clown Laugh",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"krustyLaugh\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 140,
+        "y": 220,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "f55b1577f4d68762",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Test",
+        "group": "52ac967c2860f372",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Test",
+        "tooltip": "",
+        "color": "white",
+        "bgcolor": "green",
+        "className": "",
+        "icon": "fa-exclamation-triangle",
+        "payload": "--action=\"test\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 600,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "810b71a52b9ad808",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Well, we're waiting!",
+        "group": "52ac967c2860f372",
+        "order": 6,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Well, we're waiting!",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"waiting\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 130,
+        "y": 520,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "b9b6ce02fa09e6e0",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Vader - I am you father!",
+        "group": "52ac967c2860f372",
+        "order": 8,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Vader - I am you father!",
+        "tooltip": "",
+        "color": "gray",
+        "bgcolor": "black",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"vaderFather\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 150,
+        "y": 460,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    }
+]
