@@ -18,7 +18,7 @@
         "id": "d63b47cbe26c4286",
         "type": "ui_base",
         "theme": {
-            "name": "theme-light",
+            "name": "theme-custom",
             "lightTheme": {
                 "default": "#0094CE",
                 "baseColor": "#0094CE",
@@ -29,35 +29,37 @@
             "darkTheme": {
                 "default": "#097479",
                 "baseColor": "#097479",
-                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif",
-                "edited": false
+                "baseFont": "Arial,Arial,Helvetica,sans-serif",
+                "edited": true,
+                "reset": false
             },
             "customTheme": {
                 "name": "Untitled Theme 1",
                 "default": "#4B7930",
-                "baseColor": "#4B7930",
-                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif"
+                "baseColor": "#ffa500",
+                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif",
+                "reset": false
             },
             "themeState": {
                 "base-color": {
-                    "default": "#0094CE",
-                    "value": "#0094CE",
-                    "edited": false
+                    "default": "#4B7930",
+                    "value": "#ffa500",
+                    "edited": true
                 },
                 "page-titlebar-backgroundColor": {
-                    "value": "#0094CE",
-                    "edited": false
+                    "value": "#ffa500",
+                    "edited": true
                 },
                 "page-backgroundColor": {
-                    "value": "#fafafa",
-                    "edited": false
+                    "value": "#ffffff",
+                    "edited": true
                 },
                 "page-sidebar-backgroundColor": {
                     "value": "#ffffff",
                     "edited": false
                 },
                 "group-textColor": {
-                    "value": "#1bbfff",
+                    "value": "#ffc04d",
                     "edited": false
                 },
                 "group-borderColor": {
@@ -73,7 +75,7 @@
                     "edited": false
                 },
                 "widget-backgroundColor": {
-                    "value": "#0094ce",
+                    "value": "#ffa500",
                     "edited": false
                 },
                 "widget-borderColor": {
@@ -93,7 +95,7 @@
             }
         },
         "site": {
-            "name": "Node-RED Dashboard",
+            "name": "Halloween Controller",
             "hideToolbar": "false",
             "allowSwipe": "false",
             "lockMenu": "false",
@@ -120,6 +122,28 @@
         "disp": true,
         "width": "5",
         "collapse": true,
+        "className": ""
+    },
+    {
+        "id": "37b2385f694838f9",
+        "type": "ui_group",
+        "name": "Movements",
+        "tab": "de5243fddd4ea70f",
+        "order": 2,
+        "disp": true,
+        "width": "6",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "4f55fa1d13dfa10e",
+        "type": "ui_group",
+        "name": "LightshowPi",
+        "tab": "de5243fddd4ea70f",
+        "order": 3,
+        "disp": true,
+        "width": "6",
+        "collapse": false,
         "className": ""
     },
     {
@@ -339,7 +363,7 @@
         "bgcolor": "orange",
         "className": "",
         "icon": "",
-        "payload": "--action=\"krustyLaugh\"",
+        "payload": "--action=\"krusty\"",
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
@@ -432,6 +456,454 @@
         "wires": [
             [
                 "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "98e0efb4b104691b",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Wave",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Wave",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"wave\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 680,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "0d8063b75ac27300",
+        "type": "exec",
+        "z": "eca99d8bf1138501",
+        "command": "sudo python3 /home/pi/workspace/animatronic/controller.py",
+        "addpay": "payload",
+        "append": "",
+        "useSpawn": "false",
+        "timer": "",
+        "winHide": false,
+        "oldrc": false,
+        "name": "Exec Controller Action",
+        "x": 480,
+        "y": 800,
+        "wires": [
+            [],
+            [
+                "d22206dbb8a73e8f"
+            ],
+            [
+                "ede3ec231e96bc53"
+            ]
+        ],
+        "inputLabels": [
+            "action"
+        ]
+    },
+    {
+        "id": "ede3ec231e96bc53",
+        "type": "debug",
+        "z": "eca99d8bf1138501",
+        "name": "Return code",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 730,
+        "y": 820,
+        "wires": []
+    },
+    {
+        "id": "d22206dbb8a73e8f",
+        "type": "debug",
+        "z": "eca99d8bf1138501",
+        "name": "STDERR",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 720,
+        "y": 780,
+        "wires": []
+    },
+    {
+        "id": "ca5744d71c6ad0e0",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Yes",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Yes",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"yes\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 720,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "e95925e47611c8ca",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "No",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "No",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"no\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 760,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "b4274e995272bbca",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Small No",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Small No",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"smno\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 120,
+        "y": 800,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "bfa1f1238f597fa5",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Look Around",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Look Around",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"lookAround\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 130,
+        "y": 840,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "44818a9b4ce59065",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Neck Ellipse",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Neck Ellipse",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"neckEllipse\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 130,
+        "y": 1000,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "c168c84076782a89",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Swivel Head",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Swivel Head",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"swivelHead\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 130,
+        "y": 1040,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "75d999c219ff892b",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Come",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Come",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"come\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 1080,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "dbb8a2482d9b6c76",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Come In",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Come In",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"comein\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 120,
+        "y": 1120,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "3826adbd0ba68c54",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Look Around Small",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Look Around Small",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"lookAroundSmall\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 156,
+        "y": 879,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "a2d7d0bd2e532a05",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Scan",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Scan",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"scan\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 920,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "32eb9c0d86888fb7",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Partol",
+        "group": "37b2385f694838f9",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Patrol",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "red",
+        "className": "",
+        "icon": "",
+        "payload": "--action=\"patrol\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 960,
+        "wires": [
+            [
+                "0d8063b75ac27300"
+            ]
+        ]
+    },
+    {
+        "id": "eb2fe32819c58556",
+        "type": "exec",
+        "z": "eca99d8bf1138501",
+        "command": "sudo /usr/bin/python3 /home/pi/workspace/lightshowpi/py/synchronized_lights.py --config overrides-mic.cfg",
+        "addpay": "payload",
+        "append": "",
+        "useSpawn": "false",
+        "timer": "",
+        "winHide": false,
+        "oldrc": false,
+        "name": "Exec LSP Mic Stream",
+        "x": 540,
+        "y": 1100,
+        "wires": [
+            [],
+            [],
+            []
+        ],
+        "inputLabels": [
+            "action"
+        ]
+    },
+    {
+        "id": "0788c1d62f7be02a",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Mic",
+        "group": "4f55fa1d13dfa10e",
+        "order": 9,
+        "width": "3",
+        "height": "2",
+        "passthru": false,
+        "label": "Mic",
+        "tooltip": "",
+        "color": "white",
+        "bgcolor": "blue",
+        "className": "",
+        "icon": "fa-microphone fa-2x",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 130,
+        "y": 1200,
+        "wires": [
+            [
+                "eb2fe32819c58556"
             ]
         ]
     }
