@@ -59,6 +59,23 @@ class TrunkController:
         if currentPosition != NECK_CENTER:
             # determine increasing or decreasing then use moveByDirection 
             await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.05, increase)
+            
+    async def neckLtToRt(self, revert=True):
+        NECK_CENTER = 90
+        NECK_LEFT = 110
+        NECK_RIGHT = 70
+        currentPosition = round(self.kit.servo[self.NECK_PAN].angle)
+        if currentPosition != NECK_CENTER:
+            # determine increasing or decreasing then use moveByDirection 
+            await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.05, increase)
+        
+        increase = currentPosition < NECK_LEFT
+        print("Current pos: " + str(increase) + ". Should increase? "+ str(increase))
+        # don't move if already at center
+        await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_LEFT, 0.05, increase)
+        await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_RIGHT, 0.05, increase)
+        await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.05, increase)
+        
           
 
     async def neckTiltCenter(self):
