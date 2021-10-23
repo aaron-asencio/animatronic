@@ -1,5 +1,12 @@
 [
     {
+        "id": "a91fc266b62a5a29",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": ""
+    },
+    {
         "id": "eca99d8bf1138501",
         "type": "tab",
         "label": "Main",
@@ -832,23 +839,23 @@
         "id": "32eb9c0d86888fb7",
         "type": "ui_button",
         "z": "eca99d8bf1138501",
-        "name": "Partol",
+        "name": "Slow Scan",
         "group": "37b2385f694838f9",
         "order": 9,
         "width": 0,
         "height": 0,
         "passthru": false,
-        "label": "Patrol",
+        "label": "Slow Scan",
         "tooltip": "",
         "color": "black",
-        "bgcolor": "red",
+        "bgcolor": "orange",
         "className": "",
         "icon": "",
-        "payload": "--action=\"patrol\"",
+        "payload": "--action=\"slowScan\"",
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 110,
+        "x": 130,
         "y": 960,
         "wires": [
             [

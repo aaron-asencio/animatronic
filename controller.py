@@ -30,6 +30,8 @@ elif(args.action == 'lookAround'):
       asyncio.run(mv.lookAround())
 elif(args.action == 'scan'):
       asyncio.run(mv.scan())
+elif(args.action == 'slowScan'):
+      asyncio.run(mv.slowScan())      
 elif(args.action == 'swivelHead'):
     asyncio.run(mv.swivelHead())
 elif(args.action == 'come'):

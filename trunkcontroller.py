@@ -31,6 +31,8 @@ class TrunkController:
     servos[RT_SHOULDER_ROTATOR] = "RT_SHOULDER_ROTATOR"
     servos[RT_ELBOW_PAN] = "RT_ELBOW_PAN"
     servos[RT_ELBOW_TILT] = "RT_ELBOW_TILT"
+    
+    NECK_CENTER = 90
 
     # neck servo pan
     async def neckPan(self, revert=True):
@@ -49,35 +51,9 @@ class TrunkController:
     async def neckTilt(self, min=30, max=95, revert=True):
         await self.move(self.NECK_TILT, min, max, 0.025, revert, .1)
        
-
     async def neckCenter(self, revert=True):
-        NECK_CENTER = 90
-        currentPosition = round(self.kit.servo[self.NECK_PAN].angle)
-        increase = currentPosition < NECK_CENTER
-        print("Current pos: " + str(increase) + ". Should increase? "+ str(increase))
-        # don't move if already at center
-        if currentPosition != NECK_CENTER:
-            # determine increasing or decreasing then use moveByDirection 
-            await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.05, increase)
-            
-    async def neckLtToRt(self, revert=True):
-        NECK_CENTER = 90
-        NECK_LEFT = 110
-        NECK_RIGHT = 70
-        currentPosition = round(self.kit.servo[self.NECK_PAN].angle)
-        if currentPosition != NECK_CENTER:
-            # determine increasing or decreasing then use moveByDirection 
-            await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.05, increase)
-        
-        increase = currentPosition < NECK_LEFT
-        print("Current pos: " + str(increase) + ". Should increase? "+ str(increase))
-        # don't move if already at center
-        await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_LEFT, 0.05, increase)
-        await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_RIGHT, 0.05, increase)
-        await self.moveByDirection(self.NECK_PAN, currentPosition, NECK_CENTER, 0.05, increase)
-        
-          
-
+        await self.returnToStart(self.NECK_PAN, self.NECK_CENTER,delay=0.04)
+   
     async def neckTiltCenter(self):
         NECK_TILT_MIN = 19
         NECK_TILT_MAX = 21
@@ -122,6 +98,59 @@ class TrunkController:
             for i in range(stop, start, -1):
                 servo.angle = i
                 await asyncio.sleep(delay)
+     
+    async def slowScan(self, revert=True):
+        
+        NECK_LEFT = 110
+        NECK_RIGHT = 70
+        print("slow scan ")
+        # don't move if already at center
+        increase = True
+        await self.moveByDir(self.NECK_PAN, self.NECK_CENTER, NECK_LEFT, 0.05, increase)
+        increase = False
+        await self.moveByDir(self.NECK_PAN, self.NECK_CENTER, NECK_RIGHT, 0.05, increase)
+        
+    async def returnToStart(self, servo_num, start, delay=0.1):
+       
+        # if current pos not start, send back to their gently
+        # or just start their
+        print("return to start " + self.servos[servo_num])
+        currentPosition = round(self.kit.servo[servo_num].angle)
+        
+        if(currentPosition != start):
+            if(currentPosition > start):
+                # if decrementing the lower number is second
+                for i in range(currentPosition, start, -1):
+                    self.kit.servo[servo_num].angle = i
+                    await asyncio.sleep(delay)
+            else:
+                for i in range(currentPosition, start, 1):
+                    self.kit.servo[servo_num].angle = i
+                    await asyncio.sleep(delay)
+                    
+    async def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
+        print("moving " + self.servos[servo_num] +
+              "; increasing:" + str(increasing))
+        # TODO: if current pos not start, send back to their gently
+        # or just start their?
+        currentPosition = round(self.kit.servo[servo_num].angle)
+        
+        await self.returnToStart(servo_num, start,delay=0.1)
+        
+        if(increasing):
+            print("increasing " + self.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
+            for i in range(start, stop, 1):
+                self.kit.servo[servo_num].angle = i
+                print(i)
+                await asyncio.sleep(delay)
+        else:
+            print("decreasing " + self.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
+            for i in range(start, stop,-1):
+                self.kit.servo[servo_num].angle = i
+                print(i)
+                await asyncio.sleep(delay)
+                
+        await self.returnToStart(servo_num, start,delay=0.1)
 
     async def moveByDirection(self, servo_num, start, stop, delay=0.1, increasing=True):
         print("moving " + self.servos[servo_num] +
@@ -146,8 +175,9 @@ class TrunkController:
 
     async def test(self):
         # await self.neckTiltCenter()
-        # await self.neckPan()
         await self.neckCenter()
+        # await self.neckPan()
+        #await self.slowScan()
         # await self.neckTiltCenter()
         # await self.neckTilt()
         # await self.neckTiltCenter()

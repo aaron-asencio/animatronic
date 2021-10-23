@@ -25,6 +25,8 @@ class Movements:
     RT_ELBOW_PAN = 2
     RT_ELBOW_TILT = 1
 
+    # Large delay slows the servo movement
+    DEFAULT_DELAY = 0.05
     # map user friendly names
     servos[NECK_TILT] = "NECK_TILT"
     servos[NECK_PAN] = "NECK_PAN"
@@ -54,7 +56,7 @@ class Movements:
         await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
         
         for x in range(3):
-            await self.trunkController.move(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, 0.05)
+            await self.trunkController.move(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, self.DEFAULT_DELAY)
         
         sleep(.2)
        
@@ -85,7 +87,7 @@ class Movements:
         await self.trunkController.moveByDirection(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.0025, increasing)
         
         for x in range(3):
-            await self.trunkController.move(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, 0.05)
+            await self.trunkController.move(self.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, self.DEFAULT_DELAY)
         
         # sleep(.2)
        
@@ -142,6 +144,11 @@ class Movements:
         await asyncio.sleep(1) 
         await self.trunkController.neckCenter()
 
+    async def slowScan(self):
+        await self.trunkController.neckCenter()
+        await self.trunkController.slowScan();
+        
+    
     async def nodYes(self, revert=True):
         NECK_TILT_MIN = 0
         NECK_TILT_MAX = 30
@@ -183,7 +190,7 @@ class Movements:
     async def wave(self):
        
         RT_SHOULDER_ROTATOR_MIN = 10
-        RT_SHOULDER_ROTATOR_MAX = 190
+        RT_SHOULDER_ROTATOR_MAX = 170
         RT_ELBOW_PAN_MIN = 0
         RT_ELBOW_PAN_MAX = 80
         RT_ELBOW_TILT_MIN = 0
@@ -191,13 +198,13 @@ class Movements:
 
         # raise arm
         increasing = True
-        await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
+        await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.006, increasing)
         await self.trunkController.moveByDirection(self.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, increasing)
         sleep(1)
         # rotate elbow to wave
         for i in range(0, 3, 1):
             revert = i % 2 == 0
-            await self.trunkController.move(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.005, revert, 0.05)
+            await self.trunkController.move(self.RT_ELBOW_PAN,  RT_ELBOW_PAN_MIN, RT_ELBOW_PAN_MAX, 0.006, revert, 0.04)
         # lower arm
         increasing = False
         await self.trunkController.moveByDirection(self.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.0025, increasing)
