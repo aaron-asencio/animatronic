@@ -12,8 +12,8 @@ sudo /usr/bin/python3 /home/pi/workspace/animatronic/animatronic.py --action="st
 
 sudo /usr/bin/python3 /home/pi/workspace/lightshowpi/py/synchronized_lights.py --file="/home/pi/Music/sb_party_switch.wav"
 
-To put in input mode - this actually started playing xmas playlist - have to look into that
-sudo /usr/bin/python /home/pi/workspace/animatronic/animatronic.py --config="/home/pi/animatronic/config/overrides-mic.cfg"
+To put in input mode - overrides config file must be in lightshowpi/config. Using full path will result in LSP ignoring the file and using default.
+sudo /usr/bin/python /home/pi/workspace/animatronic/animatronic.py --config="overrides-mic.cfg"
 
 """
 
