@@ -114,13 +114,14 @@ class TrunkController:
        
         # if current pos not start, send back to their gently
         # or just start their
-        print("return to start " + self.servos[servo_num])
-        currentPosition = round(self.kit.servo[servo_num].angle)
         
-        if(currentPosition != start):
+        currentPosition = round(self.kit.servo[servo_num].angle)
+        print("return to start " + self.servos[servo_num] + " which is at " + str(currentPosition))
+        if(currentPosition != start and currentPosition <= 270):
             if(currentPosition > start):
                 # if decrementing the lower number is second
                 for i in range(currentPosition, start, -1):
+                    print("return to start now " + str(i));
                     self.kit.servo[servo_num].angle = i
                     await asyncio.sleep(delay)
             else:

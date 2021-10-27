@@ -26,8 +26,9 @@ class Animatronic:
     lightshowPlayFile2 = '"~/Music/blah.wav"'
     lightshowDir = '/home/pi/Music/'
 
-    music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav',
-             'spongebob-torture.mp3', 'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav', 'yoda-fear.wav']
+    music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav','spongebob-torture.mp3',
+             'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav',
+             'yoda-fear.wav','hello-everyone.wav','happy-halloween.wav','walk.wav','how-yall.wav']
 
     idle = 3
 
@@ -52,6 +53,11 @@ class Animatronic:
         mv = Movements("Orchestrate Movements")
         await asyncio.sleep(self.idle)
         await mv.shakeNo()
+
+    async def wave(self):
+        mv = Movements("Orchestrate Movements")
+        await asyncio.sleep(self.idle)
+        await mv.wave()
 
     async def lookAroundSmall(self):
         mv = Movements("Orchestrate Movements")
@@ -101,9 +107,7 @@ class Animatronic:
     def yoda900(self):
         self.runActionAndAudio("patrol", self.music[9])
 
-    def blah(self):
-       self.runActionAndAudio("no", self.music[1])
-
+  
     def vaderBeaten(self):
         self.runActionAndAudio("patrol", self.music[5])
     
@@ -118,7 +122,20 @@ class Animatronic:
     
     def yodaFear(self):
         self.runActionAndAudio("comeAndLook", self.music[10]) 
-            
+ 
+    def blah(self):
+       self.runActionAndAudio("no", self.music[1])
+        
+    def hello(self):
+        self.runActionAndAudio("wave", self.music[11])
+        print("calling hello")
+ 
+    def happyHalloween(self):
+        self.runActionAndAudio("wave", self.music[12])
+    
+    def niceDay(self):
+        self.runActionAndAudio("wave", self.music[13])
+    
     
 def main(arg):
     #self.startParty() # pretty good
@@ -153,7 +170,13 @@ def main(arg):
     elif(args.action == 'vaderFather'):
         a.vaderFather()      
     elif(args.action == 'krusty'):
-        a.krusty()    
+        a.krusty()
+    elif(args.action == 'hello'):
+        a.hello()
+    elif(args.action == 'happyHalloween'):
+        a.happyHalloween()
+    elif(args.action == 'niceDay'):
+        a.niceDay() 
     elif(args.action == 'mic'):
         #a.lookAroundSmall() 
         cmd = 'sudo /usr/bin/python /home/pi/workspace/lightshowpi/py/synchronized_lights.py --config /home/pi/workspace/lightshowpi/config/overrides-mic.cfg'
