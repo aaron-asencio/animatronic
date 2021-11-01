@@ -28,7 +28,7 @@ class Animatronic:
 
     music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav','spongebob-torture.mp3',
              'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav',
-             'yoda-fear.wav','hello-everyone.wav','happy-halloween.wav','walk.wav','how-yall.wav']
+             'yoda-fear.wav','hello-everyone.wav','happy-halloween.wav','walk.wav','how-yall.wav','cant-hear.wav']
 
     idle = 3
 
@@ -135,7 +135,12 @@ class Animatronic:
     
     def niceDay(self):
         self.runActionAndAudio("wave", self.music[13])
+   
+    def howYallDoin(self):
+        self.runActionAndAudio("wave", self.music[14])
     
+    def cantHear(self):
+        self.runActionAndAudio("wave", self.music[15])  
     
 def main(arg):
     #self.startParty() # pretty good
@@ -176,7 +181,12 @@ def main(arg):
     elif(args.action == 'happyHalloween'):
         a.happyHalloween()
     elif(args.action == 'niceDay'):
-        a.niceDay() 
+        a.niceDay()
+    elif(args.action == 'howYallDoin'):
+        a.howYallDoin()
+    elif(args.action == 'cantHear'):
+        a.cantHear()    
+    
     elif(args.action == 'mic'):
         #a.lookAroundSmall() 
         cmd = 'sudo /usr/bin/python /home/pi/workspace/lightshowpi/py/synchronized_lights.py --config /home/pi/workspace/lightshowpi/config/overrides-mic.cfg'
