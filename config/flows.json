@@ -1,12 +1,5 @@
 [
     {
-        "id": "a91fc266b62a5a29",
-        "type": "tab",
-        "label": "Flow 1",
-        "disabled": false,
-        "info": ""
-    },
-    {
         "id": "eca99d8bf1138501",
         "type": "tab",
         "label": "Main",
@@ -157,7 +150,7 @@
         "id": "98f897b8d51a8fde",
         "type": "exec",
         "z": "eca99d8bf1138501",
-        "command": "sudo python3 /home/pi/workspace/animatronic/animatronic.py",
+        "command": "export SYNCHRONIZED_LIGHTS_HOME=/home/pi/workspace/lightshowpi; sudo python3 /home/pi/workspace/animatronic/animatronic.py",
         "addpay": "payload",
         "append": "",
         "useSpawn": "false",
@@ -168,12 +161,14 @@
         "x": 490,
         "y": 360,
         "wires": [
-            [],
             [
                 "2752ac7a55ca1391"
             ],
             [
-                "98735ffb3f1ed999"
+                "2752ac7a55ca1391"
+            ],
+            [
+                "2752ac7a55ca1391"
             ]
         ],
         "inputLabels": [
@@ -195,23 +190,6 @@
         "statusType": "auto",
         "x": 780,
         "y": 360,
-        "wires": []
-    },
-    {
-        "id": "98735ffb3f1ed999",
-        "type": "debug",
-        "z": "eca99d8bf1138501",
-        "name": "Return code",
-        "active": true,
-        "tosidebar": true,
-        "console": false,
-        "tostatus": false,
-        "complete": "payload",
-        "targetType": "msg",
-        "statusVal": "",
-        "statusType": "auto",
-        "x": 730,
-        "y": 440,
         "wires": []
     },
     {
@@ -386,6 +364,7 @@
         "id": "f55b1577f4d68762",
         "type": "ui_button",
         "z": "eca99d8bf1138501",
+        "d": true,
         "name": "Test",
         "group": "52ac967c2860f372",
         "order": 9,
@@ -402,8 +381,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 110,
-        "y": 600,
+        "x": 90,
+        "y": 560,
         "wires": [
             [
                 "98f897b8d51a8fde"
@@ -486,8 +465,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 110,
-        "y": 680,
+        "x": 450,
+        "y": 960,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -506,8 +485,8 @@
         "winHide": false,
         "oldrc": false,
         "name": "Exec Controller Action",
-        "x": 480,
-        "y": 800,
+        "x": 820,
+        "y": 1080,
         "wires": [
             [],
             [
@@ -534,8 +513,8 @@
         "targetType": "msg",
         "statusVal": "",
         "statusType": "auto",
-        "x": 730,
-        "y": 820,
+        "x": 1070,
+        "y": 1100,
         "wires": []
     },
     {
@@ -551,8 +530,8 @@
         "targetType": "msg",
         "statusVal": "",
         "statusType": "auto",
-        "x": 720,
-        "y": 780,
+        "x": 1060,
+        "y": 1060,
         "wires": []
     },
     {
@@ -575,8 +554,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 110,
-        "y": 720,
+        "x": 450,
+        "y": 1000,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -603,8 +582,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 110,
-        "y": 760,
+        "x": 450,
+        "y": 1040,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -631,8 +610,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 120,
-        "y": 800,
+        "x": 460,
+        "y": 1080,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -659,8 +638,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 130,
-        "y": 840,
+        "x": 470,
+        "y": 1120,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -687,8 +666,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 130,
-        "y": 1000,
+        "x": 470,
+        "y": 1240,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -715,8 +694,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 130,
-        "y": 1040,
+        "x": 470,
+        "y": 1280,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -743,8 +722,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 110,
-        "y": 1080,
+        "x": 450,
+        "y": 1320,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -771,8 +750,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 120,
-        "y": 1120,
+        "x": 460,
+        "y": 1360,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -799,8 +778,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 156,
-        "y": 879,
+        "x": 496,
+        "y": 1159,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -827,8 +806,8 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 110,
-        "y": 920,
+        "x": 450,
+        "y": 1200,
         "wires": [
             [
                 "0d8063b75ac27300"
@@ -855,62 +834,430 @@
         "payloadType": "str",
         "topic": "topic",
         "topicType": "msg",
-        "x": 130,
-        "y": 960,
+        "x": 470,
+        "y": 1420,
         "wires": [
             [
+                "0d8063b75ac27300"
+            ]
+        ],
+        "inputLabels": [
+            "OnClick"
+        ],
+        "outputLabels": [
+            "ClickOut"
+        ]
+    },
+    {
+        "id": "57cff6638f1e77ca",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Hello!",
+        "group": "52ac967c2860f372",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Hello!",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": " --action=\"hello\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 620,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "b7fbbbadb386eb6d",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Happy Halloween",
+        "group": "52ac967c2860f372",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Happy Halloween",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": " --action=\"happyHalloween\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 150,
+        "y": 780,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "dc6252e48ed23fad",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Nice Day for Walk",
+        "group": "52ac967c2860f372",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Nice Day for Walk",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": " --action=\"niceDay\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 130,
+        "y": 680,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "a2110cc49ef4f67a",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "How Ya'll Doin",
+        "group": "52ac967c2860f372",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "How Ya'll Doin",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": " --action=\"howYallDoin\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 140,
+        "y": 720,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "2b15a89491e1074d",
+        "type": "ui_button",
+        "z": "eca99d8bf1138501",
+        "name": "Can't Hear",
+        "group": "52ac967c2860f372",
+        "order": 9,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "Can't Hear",
+        "tooltip": "",
+        "color": "black",
+        "bgcolor": "orange",
+        "className": "",
+        "icon": "",
+        "payload": " --action=\"cantHear\"",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 150,
+        "y": 820,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "6f88eb09cac2b21e",
+        "type": "looptimer",
+        "z": "eca99d8bf1138501",
+        "duration": "45",
+        "units": "Second",
+        "maxloops": "500",
+        "maxtimeout": "4",
+        "maxtimeoutunits": "Hour",
+        "name": "",
+        "x": 420,
+        "y": 1580,
+        "wires": [
+            [
+                "1e80592f220697dd"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "4e93fb26b72b29d0",
+        "type": "ui_switch",
+        "z": "eca99d8bf1138501",
+        "name": "Movement Automation",
+        "label": "Movement Automation",
+        "tooltip": "Turn on to run props randomly",
+        "group": "37b2385f694838f9",
+        "order": 14,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "decouple": "false",
+        "topic": "topic",
+        "topicType": "msg",
+        "style": "",
+        "onvalue": "true",
+        "onvalueType": "bool",
+        "onicon": "",
+        "oncolor": "",
+        "offvalue": "false",
+        "offvalueType": "bool",
+        "officon": "",
+        "offcolor": "",
+        "animate": false,
+        "className": "",
+        "x": 140,
+        "y": 1600,
+        "wires": [
+            [
+                "abc9a84cddd2326c"
+            ]
+        ]
+    },
+    {
+        "id": "1e80592f220697dd",
+        "type": "random",
+        "z": "eca99d8bf1138501",
+        "name": "",
+        "low": "0",
+        "high": "2",
+        "inte": "true",
+        "property": "payload",
+        "x": 670,
+        "y": 1600,
+        "wires": [
+            [
+                "f4fda516ba8802fd",
+                "3fe3e0ad2efb2e3f"
+            ]
+        ]
+    },
+    {
+        "id": "f4fda516ba8802fd",
+        "type": "function",
+        "z": "eca99d8bf1138501",
+        "name": "Switch",
+        "func": "node.warn(\"switch payload is: \" + msg.payload);\nswitch (msg.payload) {\n\tcase 0:\n\t    msg.payload = '--action=\"slowScan\"';\n\t    return msg;\n\t\tbreak;\n\tcase 1:\n\t\tmsg.payload = '--action=\"yes\"';\n\t\treturn msg;\n\t\tbreak;\n\tcase 2:\n        msg.payload = '--action=\"no\"';\n        return msg;\n        break;\n    case 3:\n        msg.payload = '--action=\"lookAround\"';\n        return msg;\n        break;\n    case 4:\n\t\tmsg.payload = '--action=\"lookAroundSmall\"';\n\t\treturn msg;\n\t\tbreak;\n\tcase 4:\n        msg.payload = '--action=\"scan\"';\n        return msg;\n        break;\n    case 6:\n        msg.payload = '--action=\"neckEllipse\"';\n        return msg;\n        break;\n    case 7:\n\t\tmsg.payload = '--action=\"swivelHead\"';\n\t\treturn msg;\n\t\tbreak;\n\tcase 8:\n        msg.payload = '--action=\"come\"';\n        return msg;\n        break;\n    case 9:\n        msg.payload = '--action=\"comin\"';\n        return msg;\n        break;\n    case 10:\n        msg.payload = '--action=\"wave\"';\n        return msg;\n        break;\n\tdefault:\n\t\tmsg.payload = '--action=\"slowScan\"';\n\t\treturn msg;\n\t\tbreak;\n}\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 1580,
+        "wires": [
+            [
+                "c5cec34ffdef1007",
                 "0d8063b75ac27300"
             ]
         ]
     },
     {
-        "id": "eb2fe32819c58556",
-        "type": "exec",
+        "id": "c5cec34ffdef1007",
+        "type": "debug",
         "z": "eca99d8bf1138501",
-        "command": "sudo /usr/bin/python3 /home/pi/workspace/lightshowpi/py/synchronized_lights.py --config overrides-mic.cfg",
-        "addpay": "payload",
-        "append": "",
-        "useSpawn": "false",
-        "timer": "",
-        "winHide": false,
-        "oldrc": false,
-        "name": "Exec LSP Mic Stream",
-        "x": 540,
-        "y": 1100,
+        "name": "Random action",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1030,
+        "y": 1580,
+        "wires": []
+    },
+    {
+        "id": "3fe3e0ad2efb2e3f",
+        "type": "debug",
+        "z": "eca99d8bf1138501",
+        "name": "Random Num",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 910,
+        "y": 1700,
+        "wires": []
+    },
+    {
+        "id": "92012d04dfe9f47e",
+        "type": "looptimer",
+        "z": "eca99d8bf1138501",
+        "duration": "5",
+        "units": "Minute",
+        "maxloops": "500",
+        "maxtimeout": "4",
+        "maxtimeoutunits": "Hour",
+        "name": "",
+        "x": 720,
+        "y": 680,
         "wires": [
-            [],
-            [],
+            [
+                "a2bab70d51d7758e"
+            ],
             []
-        ],
-        "inputLabels": [
-            "action"
         ]
     },
     {
-        "id": "0788c1d62f7be02a",
-        "type": "ui_button",
+        "id": "201e4c076b6b067a",
+        "type": "ui_switch",
         "z": "eca99d8bf1138501",
-        "name": "Mic",
-        "group": "4f55fa1d13dfa10e",
-        "order": 9,
-        "width": "3",
-        "height": "2",
+        "name": "Movement Automation",
+        "label": "Routine Automation",
+        "tooltip": "Turn on to run props randomly",
+        "group": "52ac967c2860f372",
+        "order": 14,
+        "width": 0,
+        "height": 0,
         "passthru": false,
-        "label": "Mic",
-        "tooltip": "",
-        "color": "white",
-        "bgcolor": "blue",
-        "className": "",
-        "icon": "fa-microphone fa-2x",
-        "payload": "",
-        "payloadType": "str",
+        "decouple": "false",
         "topic": "topic",
         "topicType": "msg",
-        "x": 130,
-        "y": 1200,
+        "style": "",
+        "onvalue": "true",
+        "onvalueType": "bool",
+        "onicon": "",
+        "oncolor": "",
+        "offvalue": "false",
+        "offvalueType": "bool",
+        "officon": "",
+        "offcolor": "",
+        "animate": false,
+        "className": "",
+        "x": 500,
+        "y": 680,
         "wires": [
             [
-                "eb2fe32819c58556"
+                "92012d04dfe9f47e",
+                "295f88d26c99283e"
+            ]
+        ]
+    },
+    {
+        "id": "a2bab70d51d7758e",
+        "type": "random",
+        "z": "eca99d8bf1138501",
+        "name": "",
+        "low": "0",
+        "high": "2",
+        "inte": "true",
+        "property": "payload",
+        "x": 980,
+        "y": 680,
+        "wires": [
+            [
+                "8633fe1b799b29ee"
+            ]
+        ]
+    },
+    {
+        "id": "8633fe1b799b29ee",
+        "type": "function",
+        "z": "eca99d8bf1138501",
+        "name": "Switch",
+        "func": "node.warn(\"switch payload is: \" + msg.payload);\nswitch (msg.payload) {\n\tcase 0:\n\t    msg.payload = '--action=\"blah\"';\n\t    return msg;\n\t\tbreak;\n\tcase 1:\n\t\tmsg.payload = '--action=\"exorcist\"';\n\t\treturn msg;\n\t\tbreak;\n\tcase 2:\n        msg.payload = '--action=\"startParty\"';\n        return msg;\n        break;\n    case 3:\n        msg.payload = '--action=\"waiting\"';\n        return msg;\n        break;\n    case 4:\n\t\tmsg.payload = '--action=\"krusty\"';\n\t\treturn msg;\n\t\tbreak;\n\tcase 5:\n        msg.payload = '--action=\"vaderFather\"';\n        return msg;\n        break;\n  \n\tdefault:\n\t\tmsg.payload = '--action=\"krusty\"';\n\t\treturn msg;\n\t\tbreak;\n}\n",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1200,
+        "y": 660,
+        "wires": [
+            [
+                "98f897b8d51a8fde"
+            ]
+        ]
+    },
+    {
+        "id": "295f88d26c99283e",
+        "type": "change",
+        "z": "eca99d8bf1138501",
+        "name": "",
+        "rules": [
+            {
+                "t": "change",
+                "p": "payload",
+                "pt": "msg",
+                "from": "false",
+                "fromt": "bool",
+                "to": "STOP",
+                "tot": "str"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 580,
+        "y": 800,
+        "wires": [
+            [
+                "92012d04dfe9f47e"
+            ]
+        ]
+    },
+    {
+        "id": "abc9a84cddd2326c",
+        "type": "change",
+        "z": "eca99d8bf1138501",
+        "name": "",
+        "rules": [
+            {
+                "t": "change",
+                "p": "payload",
+                "pt": "msg",
+                "from": "false",
+                "fromt": "bool",
+                "to": "stop",
+                "tot": "str"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 280,
+        "y": 1700,
+        "wires": [
+            [
+                "6f88eb09cac2b21e"
             ]
         ]
     }
