@@ -1,0 +1,21 @@
+#4-7 ARM
+RT_SHOULDER_ROTATOR = 7
+RT_SHOULDER_TILT = 6
+RT_ELBOW_TILT = 5
+RT_ELBOW_ROTATOR = 4
+
+# 0-3 HEAD
+NECK_TILT = 1
+NECK_PAN = 0
+
+servos = {}
+# map user friendly names
+servos[NECK_TILT] = "NECK_TILT"
+servos[NECK_PAN] = "NECK_PAN"
+servos[RT_SHOULDER_ROTATOR] = "RT_SHOULDER_ROTATOR"
+servos[RT_SHOULDER_TILT] = "RT_SHOULDER_TILT"
+servos[RT_ELBOW_TILT] = "RT_ELBOW_TILT"
+servos[RT_ELBOW_ROTATOR] = "RT_ELBOW_ROTATOR"
+
+# default center positions
+NECK_CENTER = 90

@@ -8,7 +8,7 @@ def lookAround():
     controller = TrunkController("Servo TrunkController")
     neckTilt = loop.create_task(controller.neckTilt())
     neckPan = loop.create_task(controller.neckPan())
-    shoulder = loop.create_task(controller.shoulder())
+    shoulder = loop.create_task(controller.shoulderRotate())
     loop.run_until_complete(asyncio.gather(neckTilt, neckPan, shoulder))
     #asyncio.run_coroutine_threadsafe(controller.neckCenter(), loop) 
     #center = loop.create_task(controller.neckCenter())
