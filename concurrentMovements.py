@@ -49,6 +49,16 @@ class ConcurrentMovements:
         self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
 
     def move(self, servo_num=0, start=0, stop=180, delay=0.1, revert=True, revertDelay=0.5):
+        """
+        Moves a servo in a positive direction and if revert is true, will return back to origin.
+        servo_num -- number identifying server
+        start -- start angle of servo
+        stop -- stop angle of servo
+        delay -- delay between each degree of turn in the servo motor. 
+        Lower number increases speed.
+        revert -- if true, servo reverts back to start position. If false, do nothing.
+     
+        """
         print("moving " + constants.servos[servo_num])
         servo = self.kit.servo[servo_num]
         for i in range(start, stop, 1):
@@ -62,6 +72,43 @@ class ConcurrentMovements:
             for i in range(stop, start, -1):
                 servo.angle = i
                 sleep(delay)
+
+    
+    def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
+        """
+        Moves a servo in a positive or negative direction. Useful for reverting 
+        servo back to original position as you can use can call it twice with same args except 
+        set increasing=false to return to origin.
+        TODO: add pass argument to pause in between. 
+        servo_num -- number identifying server
+        start -- start angle of servo
+        stop -- stop angle of servo
+        delay -- delay between each degree of turn in the servo motor. 
+        Lower number increases speed.
+        increasing -- if true, servo turns from start to stop. 
+        If false, turns from stop to start.
+        """
+        print("moving " + constants.servos[servo_num] +
+                "; increasing:" + str(increasing))
+
+        # currentPosition = round(self.kit.servo[servo_num].angle)
+        
+        #self.returnToStart(servo_num, start,delay=0.1)
+        
+        if(increasing):
+            print("increasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
+            for i in range(start, stop, 1):
+                self.kit.servo[servo_num].angle = i
+                print(i)
+                sleep(delay)
+        else:
+            print("decreasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
+            for i in range(start, stop,-1):
+                self.kit.servo[servo_num].angle = i
+                print(i)
+                sleep(delay)
+                
+        #self.returnToStart(servo_num, start,delay=0.01)
 
     def returnToStart(self, servo_num, start = 0, delay=0.1):
     
@@ -93,29 +140,7 @@ class ConcurrentMovements:
                     self.kit.servo[servo_num].angle = i
                     sleep(delay)
     
-    def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
-
-        print("moving " + constants.servos[servo_num] +
-                "; increasing:" + str(increasing))
-
-        # currentPosition = round(self.kit.servo[servo_num].angle)
-        
-        #self.returnToStart(servo_num, start,delay=0.1)
-        
-        if(increasing):
-            print("increasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
-            for i in range(start, stop, 1):
-                self.kit.servo[servo_num].angle = i
-                print(i)
-                sleep(delay)
-        else:
-            print("decreasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
-            for i in range(start, stop,-1):
-                self.kit.servo[servo_num].angle = i
-                print(i)
-                sleep(delay)
-                
-        #self.returnToStart(servo_num, start,delay=0.01)
+   
     
     def facePalm(self):
         RT_SHOULDER_ROTATOR_MIN = 0
@@ -128,15 +153,19 @@ class ConcurrentMovements:
         RT_ELBOW_TILT_MAX = 140 # cover mouth at 170, 150 for eyes, 140 for head
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 150
+        NECK_TILT_MIN = 30
+        NECK_TILT_MAX = 50
         increasing = True
-
+        self.returnToStart(constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
         start = perf_counter()
         with ThreadPoolExecutor(max_workers=5) as exe:
             future1 = exe.submit(self.moveByDir, constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
-            future3 = exe.submit(self.moveByDir, constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.005, increasing)
-            future4 = exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
+            exe.submit(self.moveByDir, constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.005, increasing)
+            exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
+            # need to set elbow from moving
             sleep(1.25)
-            future2 = exe.submit(self.shakeHead)
+            exe.submit(self.moveByDir, constants.NECK_TILT,  NECK_TILT_MIN, NECK_TILT_MAX, 0.03, increasing)
+            exe.submit(self.shakeHead) # returns to start
 
             # Maps the method 'cube' with a list of values.
             #result = exe.map(ConcurrentMovements.moveByDir,values)
@@ -151,15 +180,20 @@ class ConcurrentMovements:
         
         self.returnToStart(constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
         self.returnToStart(constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.005)
+        self.returnToStart(constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
         self.returnToStart(constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,delay=0.005 )
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-        self.returnToStart(constants.RT_SHOULDER_TILT, RT_SHOULDER_TILT_MIN,delay=0.005)
+        
+        #self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+       
+        #self.returnToStart(constants.RT_SHOULDER_TILT, RT_SHOULDER_TILT_MIN,delay=0.005)
+       
 
     
         finish = perf_counter()
         print(f"It took {finish-start} second(s) to finish.")
 
 def main():
+    # motions should not be completely linear but quickly increase at the beginning and quickly decrease at the end
     mv = ConcurrentMovements("ConcurrentMovements");
     mv.facePalm()
 

@@ -4,7 +4,7 @@ RT_SHOULDER_TILT = 6
 RT_ELBOW_TILT = 5
 RT_ELBOW_ROTATOR = 4
 
-# 0-3 HEAD
+# 0-3 HEAD - bottom bank of pins
 NECK_TILT = 1
 NECK_PAN = 0
 
