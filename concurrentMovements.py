@@ -18,36 +18,7 @@ class ConcurrentMovements:
     for i in range(0, 15):
         kit.servo[i].actuation_range = 270
 
-    def shakeNo(self, revert=True):
-        print("shake head no ")
-        NECK_PAN_MIN = 30
-        NECK_PAN_MAX = 150
-        #self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-
-        NECK_LEFT = 140
-        NECK_RIGHT = 40
-        
-        # don't move if already at center
-        increase = True
-   
-        self.moveByDir(constants.NECK_PAN, constants.NECK_CENTER, NECK_LEFT, 0.05, increase)
-        #self.move(constants.NECK_PAN, self.NECK_CENTER, NECK_LEFT, 0.05, True, .02 )
-        increase = False
-        self.moveByDir( constants.NECK_PAN, constants.NECK_CENTER, NECK_RIGHT, 0.05, increase)
-        
-        sleep(1)            
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-
-
-    def shakeHead(self, revert=True):
-        NECK_PAN_MIN = 70
-        NECK_PAN_MAX = 80
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-        for _ in range(4):
-            self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.02, revert, .1)
-          
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-
+    
     def move(self, servo_num=0, start=0, stop=180, delay=0.1, revert=True, revertDelay=0.5):
         """
         Moves a servo in a positive direction and if revert is true, will return back to origin.
@@ -73,13 +44,40 @@ class ConcurrentMovements:
                 servo.angle = i
                 sleep(delay)
 
+    def shakeNo(self, revert=True):
+        print("shake head no ")
+        NECK_PAN_MIN = 30
+        NECK_PAN_MAX = 150
     
+        NECK_LEFT = 140
+        NECK_RIGHT = 40
+        
+        # don't move if already at center
+        increase = True
+   
+        self.moveByDir(constants.NECK_PAN, constants.NECK_CENTER, NECK_LEFT, 0.05, increase)
+        #self.move(constants.NECK_PAN, self.NECK_CENTER, NECK_LEFT, 0.05, True, .02 )
+        increase = False
+        self.moveByDir( constants.NECK_PAN, constants.NECK_CENTER, NECK_RIGHT, 0.05, increase)
+        
+        sleep(1)            
+        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+
+
+    def shakeHead(self, revert=True):
+        NECK_PAN_MIN = 70
+        NECK_PAN_MAX = 95
+        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+        for _ in range(2):
+            self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.03, revert, .1)
+          
+        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+
     def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
         """
         Moves a servo in a positive or negative direction. Useful for reverting 
         servo back to original position as you can use can call it twice with same args except 
         set increasing=false to return to origin.
-        TODO: add pass argument to pause in between. 
         servo_num -- number identifying server
         start -- start angle of servo
         stop -- stop angle of servo
@@ -110,6 +108,23 @@ class ConcurrentMovements:
                 
         #self.returnToStart(servo_num, start,delay=0.01)
 
+    def graduatedDelay(delay, current, start, stop):
+        """
+        Increase the delay near the stop and start of a motion to slow it down.
+        """
+        # change should be gradual and based on a small fraction of the total movement
+        if(abs(start - stop) >= 20):
+            iteration = abs()
+            denominator = 4
+
+            if(current < start + denominator or current > stop -denominator):
+                graduateDelay = delay * (2 - iteration/denominator)
+                if(graduateDelay >= delay):
+                    return graduateDelay
+        
+        return delay
+
+        
     def returnToStart(self, servo_num, start = 0, delay=0.1):
     
         # if current pos not start, send back to their gently
@@ -119,14 +134,12 @@ class ConcurrentMovements:
         print( self.kit.servo[servo_num])
         print(f"angle: {self.kit.servo[servo_num].angle}")
         
-
         # check if value is None - it should have been setup with starting value no? Need to move it slowly to start if it isn't
         if self.kit.servo[servo_num].angle == None:
             self.kit.servo[servo_num].angle = start
 
         currentPosition = round(self.kit.servo[servo_num].angle)
     
-
         print("return to start " + constants.servos[servo_num] + " which is at " + str(currentPosition))
         if(currentPosition != start and currentPosition <= 270):
             if(currentPosition > start):
@@ -140,29 +153,26 @@ class ConcurrentMovements:
                     self.kit.servo[servo_num].angle = i
                     sleep(delay)
     
-   
-    
+       
     def facePalm(self):
-        RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 260 # cover mouth at 200, 230 eyes, 260 head
         RT_SHOULDER_TILT_MIN = 0
         RT_SHOULDER_TILT_MAX = 90
+        RT_SHOULDER_ROTATOR_MIN = 0
+        RT_SHOULDER_ROTATOR_MAX = 240 # cover mouth at 200, 230 eyes, 260 head
         RT_ELBOW_ROTATE_MIN = 0
         RT_ELBOW_ROTATE_MAX = 140 # cover mouth at 140
         RT_ELBOW_TILT_MIN = 0
-        RT_ELBOW_TILT_MAX = 140 # cover mouth at 170, 150 for eyes, 140 for head
-        NECK_PAN_MIN = 30
-        NECK_PAN_MAX = 150
+        RT_ELBOW_TILT_MAX = 145 # cover mouth at 170, 150 for eyes, 140 for head
         NECK_TILT_MIN = 30
-        NECK_TILT_MAX = 50
+        NECK_TILT_MAX = 45
         increasing = True
         self.returnToStart(constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
         start = perf_counter()
         with ThreadPoolExecutor(max_workers=5) as exe:
-            future1 = exe.submit(self.moveByDir, constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
+            future1 = exe.submit(self.moveByDir, constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.004, increasing)
             exe.submit(self.moveByDir, constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.005, increasing)
             exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
-            # need to set elbow from moving
+            # need to set elbow from moving?
             sleep(1.25)
             exe.submit(self.moveByDir, constants.NECK_TILT,  NECK_TILT_MIN, NECK_TILT_MAX, 0.03, increasing)
             exe.submit(self.shakeHead) # returns to start
@@ -172,23 +182,12 @@ class ConcurrentMovements:
         
         #print(future1.result())
 
-        #print(future2.result())
-        # TODO 
-        # shake head while hand on it - diff versions of face palm can have head down, up or middle to give nuance
-        #  
-        sleep(3)
+        with ThreadPoolExecutor(max_workers=5) as exe:
+            exe.submit(self.returnToStart,constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
+            exe.submit(self.returnToStart,constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.005)
+            exe.submit(self.returnToStart,constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
+            exe.submit(self.returnToStart,constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,delay=0.005)
         
-        self.returnToStart(constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
-        self.returnToStart(constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.005)
-        self.returnToStart(constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
-        self.returnToStart(constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,delay=0.005 )
-        
-        #self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-       
-        #self.returnToStart(constants.RT_SHOULDER_TILT, RT_SHOULDER_TILT_MIN,delay=0.005)
-       
-
-    
         finish = perf_counter()
         print(f"It took {finish-start} second(s) to finish.")
 
@@ -197,8 +196,6 @@ def main():
     mv = ConcurrentMovements("ConcurrentMovements");
     mv.facePalm()
 
-   
-   
 
 if __name__ == '__main__':
    main()
