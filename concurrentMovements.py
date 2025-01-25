@@ -191,10 +191,55 @@ class ConcurrentMovements:
         finish = perf_counter()
         print(f"It took {finish-start} second(s) to finish.")
 
+    def yawn(self):
+        """ 
+        Yawn
+        """
+        RT_SHOULDER_ROTATOR_MIN = 0
+        RT_SHOULDER_ROTATOR_MAX = 230 # cover mouth at 200, 230 eyes, 260 head
+        RT_ELBOW_ROTATE_MIN = 0
+        RT_ELBOW_ROTATE_MAX = 150 # cover mouth at 140
+        RT_ELBOW_TILT_MIN = 0
+        RT_ELBOW_TILT_MAX = 145 # cover mouth at 170, 150 for eyes, 140 for head
+        NECK_TILT_MIN = 0
+        NECK_TILT_MAX = 20
+        increasing = True
+        self.returnToStart(constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
+        start = perf_counter()
+        with ThreadPoolExecutor(max_workers=5) as exe:
+            future1 = exe.submit(self.moveByDir, constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.006, increasing)
+           
+            exe.submit(self.moveByDir, constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.005, increasing)
+             # elbow needs to go back and forth
+            exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
+            # these have to be same method so they are sequential
+            #exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MAX - 15, RT_ELBOW_TILT_MAX, 0.005, False)
+            # need to set elbow from moving?
+            sleep(.5)
+            
+            exe.submit(self.moveByDir, constants.NECK_TILT,  NECK_TILT_MIN, NECK_TILT_MAX, 0.03, False)
+            #exe.submit(self.shakeHead) # returns to start
+
+            # Maps the method 'cube' with a list of values.
+            #result = exe.map(ConcurrentMovements.moveByDir,values)
+        
+        #print(future1.result())
+
+        with ThreadPoolExecutor(max_workers=5) as exe:
+            exe.submit(self.returnToStart,constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
+            exe.submit(self.returnToStart,constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.003)
+            exe.submit(self.returnToStart,constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
+            exe.submit(self.returnToStart,constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,delay=0.005)
+        
+        finish = perf_counter()
+        print(f"It took {finish-start} second(s) to finish.")
+
+
 def main():
     # motions should not be completely linear but quickly increase at the beginning and quickly decrease at the end
     mv = ConcurrentMovements("ConcurrentMovements");
-    mv.facePalm()
+    #mv.facePalm()
+    mv.yawn()
 
 
 if __name__ == '__main__':
