@@ -163,17 +163,17 @@ class ConcurrentMovements:
         RT_ELBOW_ROTATE_MAX = 140 # cover mouth at 140
         RT_ELBOW_TILT_MIN = 0
         RT_ELBOW_TILT_MAX = 145 # cover mouth at 170, 150 for eyes, 140 for head
-        NECK_TILT_MIN = 30
+        NECK_TILT_MIN = 20
         NECK_TILT_MAX = 45
         increasing = True
         self.returnToStart(constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
         start = perf_counter()
         with ThreadPoolExecutor(max_workers=5) as exe:
-            future1 = exe.submit(self.moveByDir, constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.004, increasing)
+            future1 = exe.submit(self.moveByDir, constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
             exe.submit(self.moveByDir, constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.005, increasing)
             exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
             # need to set elbow from moving?
-            sleep(1.25)
+            sleep(.3)
             exe.submit(self.moveByDir, constants.NECK_TILT,  NECK_TILT_MIN, NECK_TILT_MAX, 0.03, increasing)
             exe.submit(self.shakeHead) # returns to start
 
@@ -184,7 +184,7 @@ class ConcurrentMovements:
 
         with ThreadPoolExecutor(max_workers=5) as exe:
             exe.submit(self.returnToStart,constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
-            exe.submit(self.returnToStart,constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.005)
+            exe.submit(self.returnToStart,constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.003)
             exe.submit(self.returnToStart,constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
             exe.submit(self.returnToStart,constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,delay=0.005)
         
