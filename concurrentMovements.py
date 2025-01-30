@@ -30,19 +30,26 @@ class ConcurrentMovements:
         revert -- if true, servo reverts back to start position. If false, do nothing.
      
         """
-        print("moving " + constants.servos[servo_num])
+        print("move() - moving" + constants.servos[servo_num])
         servo = self.kit.servo[servo_num]
+        iterations =5
         for i in range(start, stop, 1):
             servo.angle = i
             currentPosition = round(servo.angle)
-            print("Servo angle set " +str(i) + "; angle returned: " + str(currentPosition) )
-            sleep(delay)
+           
+            smoothness = self.smoothFactor(start, stop, i, iterations)
+            modDelay = delay * smoothness
+            print("moveByDir() incr servo" +constants.servos[servo_num] + "; smooth factor: " + str(smoothness) + ", orig delay: " + str(delay)+ ", mod delay: "+ str(modDelay) + ", angle set " +str(i))
+            sleep(modDelay)
 
         if(revert):
             sleep(revertDelay)
             for i in range(stop, start, -1):
                 servo.angle = i
-                sleep(delay)
+                smoothness = self.smoothFactor(start, stop, i, iterations)
+                modDelay = delay * smoothness
+                print("moveByDir() decr servo" +constants.servos[servo_num] + "; smooth factor: " + str(smoothness) + ", orig delay: " + str(delay)+ ", mod delay: "+ str(modDelay) + ", angle set " +str(i))
+                sleep(modDelay)
 
     def shakeNo(self, revert=True):
         print("shake head no ")
@@ -68,8 +75,14 @@ class ConcurrentMovements:
         NECK_PAN_MIN = 70
         NECK_PAN_MAX = 95
         self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-        for _ in range(2):
-            self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.03, revert, .1)
+        for _ in range(2): # only runing once here when there is a try WTF
+            self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
+            # try:
+            #     self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
+            #     break
+            # except Exception as e:
+            #     print("Shit!", e)    
+
           
         self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
 
@@ -86,43 +99,47 @@ class ConcurrentMovements:
         increasing -- if true, servo turns from start to stop. 
         If false, turns from stop to start.
         """
-        print("moving " + constants.servos[servo_num] +
+        print("moveByDir() - moving " + constants.servos[servo_num] +
                 "; increasing:" + str(increasing))
 
         # currentPosition = round(self.kit.servo[servo_num].angle)
         
         #self.returnToStart(servo_num, start,delay=0.1)
-        
+        iterations = 5
         if(increasing):
             print("increasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
             for i in range(start, stop, 1):
                 self.kit.servo[servo_num].angle = i
-                print(i)
-                sleep(delay)
+                smoothness = self.smoothFactor(start, stop, i, iterations)
+                modDelay = delay * smoothness
+                print("moveByDir() incr servo" +constants.servos[servo_num] + "; smooth factor: " + str(smoothness) + ", orig delay: " + str(delay)+ ", mod delay: "+ str(modDelay) + ", angle set " +str(i) )
+                sleep(modDelay)
         else:
             print("decreasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
             for i in range(start, stop,-1):
                 self.kit.servo[servo_num].angle = i
-                print(i)
-                sleep(delay)
+                smoothness = self.smoothFactor(start, stop, i, iterations)
+                modDelay = delay * smoothness
+                print("moveByDir() decr servo" +constants.servos[servo_num] + "; smooth factor: " + str(smoothness) + ", orig delay: " + str(delay)+ ", mod delay: "+ str(modDelay) + ", angle set " +str(i) )
+                sleep(modDelay)
                 
         #self.returnToStart(servo_num, start,delay=0.01)
 
-    def graduatedDelay(delay, current, start, stop):
-        """
-        Increase the delay near the stop and start of a motion to slow it down.
-        """
-        # change should be gradual and based on a small fraction of the total movement
-        if(abs(start - stop) >= 20):
-            iteration = abs()
-            denominator = 4
+    # def graduatedDelay(delay, current, start, stop):
+    #     """
+    #     Increase the delay near the stop and start of a motion to slow it down.
+    #     """
+    #     # change should be gradual and based on a small fraction of the total movement
+    #     if(abs(start - stop) >= 20):
+    #         iteration = abs()
+    #         denominator = 4
 
-            if(current < start + denominator or current > stop -denominator):
-                graduateDelay = delay * (2 - iteration/denominator)
-                if(graduateDelay >= delay):
-                    return graduateDelay
+    #         if(current < start + denominator or current > stop -denominator):
+    #             graduateDelay = delay * (2 - iteration/denominator)
+    #             if(graduateDelay >= delay):
+    #                 return graduateDelay
         
-        return delay
+    #     return delay
 
         
     def returnToStart(self, servo_num, start = 0, delay=0.1):
@@ -141,17 +158,22 @@ class ConcurrentMovements:
         currentPosition = round(self.kit.servo[servo_num].angle)
     
         print("return to start " + constants.servos[servo_num] + " which is at " + str(currentPosition))
+        iterations = 8
         if(currentPosition != start and currentPosition <= 270):
             if(currentPosition > start):
                 # if decrementing the lower number is second
                 for i in range(currentPosition, start, -1):
                     print("return to start now " + str(i));
                     self.kit.servo[servo_num].angle = i
-                    sleep(delay)
+                    smoothness = self.smoothFactor(start, currentPosition, i, iterations)
+                    modDelay = delay * smoothness
+                    sleep(modDelay)
             else:
                 for i in range(currentPosition, start, 1):
                     self.kit.servo[servo_num].angle = i
-                    sleep(delay)
+                    smoothness = self.smoothFactor(start, currentPosition, i, iterations)
+                    modDelay = delay * smoothness
+                    sleep(modDelay)
     
        
     def facePalm(self):
@@ -174,18 +196,18 @@ class ConcurrentMovements:
             exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
             # need to set elbow from moving?
             sleep(.3)
-            exe.submit(self.moveByDir, constants.NECK_TILT,  NECK_TILT_MIN, NECK_TILT_MAX, 0.03, increasing)
+            exe.submit(self.moveByDir, constants.NECK_TILT,  NECK_TILT_MIN, NECK_TILT_MAX, 0.02, increasing)
             exe.submit(self.shakeHead) # returns to start
 
             # Maps the method 'cube' with a list of values.
             #result = exe.map(ConcurrentMovements.moveByDir,values)
         
         #print(future1.result())
-
+        sleep(.25)
         with ThreadPoolExecutor(max_workers=5) as exe:
             exe.submit(self.returnToStart,constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
             exe.submit(self.returnToStart,constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.003)
-            exe.submit(self.returnToStart,constants.NECK_TILT, NECK_TILT_MIN,delay=0.005)
+            exe.submit(self.returnToStart,constants.NECK_TILT, NECK_TILT_MIN,delay=0.01)
             exe.submit(self.returnToStart,constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,delay=0.005)
         
         finish = perf_counter()
@@ -234,12 +256,26 @@ class ConcurrentMovements:
         finish = perf_counter()
         print(f"It took {finish-start} second(s) to finish.")
 
+    """ 
+    Returns a float value between iterations and 1 based on the distance between the current value and the start and end values.
+    Multiply this factor by the delay value.
+    """
+    def smoothFactor(self, start, end, current, iterations):
+        
+        # should we determine the iteration value based on the difference between start and end?
+        #iterations = round(abs(start - end) / 10) # if 270 then it will be 27. If 27 then it will be 3. 
+        if(abs(start - current) <= iterations):
+            return iterations/ (1 + abs(start - current))
+        elif(abs(end - current) <= iterations):
+            return iterations/(1+ abs(end - current))
+        else: 
+            return 1
 
 def main():
     # motions should not be completely linear but quickly increase at the beginning and quickly decrease at the end
     mv = ConcurrentMovements("ConcurrentMovements");
-    #mv.facePalm()
-    mv.yawn()
+    mv.facePalm()
+    #mv.yawn()
 
 
 if __name__ == '__main__':
