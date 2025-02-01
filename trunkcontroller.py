@@ -1,7 +1,7 @@
 from adafruit_servokit import ServoKit
 from time import sleep
 import asyncio
-import constants
+import model.constants as constants
 
 """
 Class for basic movements of the trunk

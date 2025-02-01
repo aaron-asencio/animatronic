@@ -2,7 +2,7 @@ from time import sleep
 import asyncio
 from trunkcontroller import TrunkController
 import concurrent.futures
-import constants
+import model.constants as constants
 
 """
 Macro movements built from trunkcontroller functions

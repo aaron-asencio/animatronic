@@ -4,7 +4,7 @@ from movements import Movements
 from time import sleep, perf_counter
 from adafruit_servokit import ServoKit
 
-import constants
+import model.constants as constants
 
 class ConcurrentMovements:
 
@@ -203,7 +203,7 @@ class ConcurrentMovements:
             #result = exe.map(ConcurrentMovements.moveByDir,values)
         
         #print(future1.result())
-        sleep(.25)
+        #sleep(.25)
         with ThreadPoolExecutor(max_workers=5) as exe:
             exe.submit(self.returnToStart,constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
             exe.submit(self.returnToStart,constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.003)
