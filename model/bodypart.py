@@ -1,3 +1,4 @@
+from concurrentMovements import ConcurrentMovements
 """
 Class to store everything a body part needs to move.
 BodyPart have servo number, name, description, default pos , start position and end position, delay between each position
@@ -15,6 +16,8 @@ class BodyPart:
     
     def move(self, start_pos, end_pos, delay):
         print(f"Moving {self.name} to {end_pos} from {start_pos} with delay {delay}")
+        concurrentMovements = ConcurrentMovements()
+        concurrentMovements.moveByDir()
     
     
     

@@ -85,6 +85,8 @@ class ConcurrentMovements:
 
           
         self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+    
+    
 
     def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
         """

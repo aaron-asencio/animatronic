@@ -143,6 +143,7 @@ class TrunkController:
                     self.kit.servo[servo_num].angle = i
                     await asyncio.sleep(delay)
                     
+                    
     async def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
         print("moving " + constants.servos[servo_num] +
               "; increasing:" + str(increasing))
