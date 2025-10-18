@@ -1,7 +1,8 @@
-from adafruit_servokit import ServoKit
 from time import sleep
 import asyncio
 import model.constants as constants
+from model.bodyparts import BodyParts
+from adafruit_servokit import ServoKit
 
 """
 Class for basic movements of the trunk
@@ -21,12 +22,12 @@ class TrunkController:
 
     servos = {}
     # map user friendly names
-    servos[constants.NECK_TILT] = "NECK_TILT"
-    servos[constants.NECK_PAN] = "NECK_PAN"
-    servos[constants.RT_SHOULDER_ROTATOR] = "RT_SHOULDER_ROTATOR"
-    servos[constants.RT_SHOULDER_TILT] = "RT_SHOULDER_TILT"
-    servos[constants.RT_ELBOW_TILT] = "RT_ELBOW_TILT"
-    servos[constants.RT_ELBOW_ROTATOR] = "RT_ELBOW_ROTATOR"
+    servos[BodyParts.NECK_TILT] = "NECK_TILT"
+    servos[BodyParts.NECK_PAN] = "NECK_PAN"
+    servos[BodyParts.RT_SHOULDER_ROTATOR] = "RT_SHOULDER_ROTATOR"
+    servos[BodyParts.RT_SHOULDER_TILT] = "RT_SHOULDER_TILT"
+    servos[BodyParts.RT_ELBOW_TILT] = "RT_ELBOW_TILT"
+    servos[BodyParts.RT_ELBOW_ROTATOR] = "RT_ELBOW_ROTATOR"
     
     NECK_CENTER = 90
 
@@ -34,52 +35,52 @@ class TrunkController:
     async def neckPan(self, revert=True):
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 150
-        await self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
+        await self.move(BodyParts.NECK_PAN.value, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
         await asyncio.sleep(.5)
 
     async def neckFullPan(self, revert=True):
         NECK_PAN_MIN = 0
         NECK_PAN_MAX = 180
-        await self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
+        await self.move(BodyParts.NECK_PAN.value, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
         await asyncio.sleep(.5)    
 
     # neck servo tilt
     async def neckTilt(self, min=30, max=95, revert=True):
-        await self.move(constants.NECK_TILT, min, max, 0.025, revert, .1)
+        await self.move(BodyParts.NECK_TILT.value, min, max, 0.025, revert, .1)
        
     async def neckCenter(self, revert=True):
-        await self.returnToStart(constants.NECK_PAN, self.NECK_CENTER,delay=0.04)
+        await self.returnToStart(BodyParts.NECK_PAN.value, self.NECK_CENTER,delay=0.04)
    
     async def neckTiltCenter(self):
         NECK_TILT_MIN = 19
         NECK_TILT_MAX = 21
-        await self.move(constants.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.1, False, 1)
+        await self.move(BodyParts.NECK_TILT.value, NECK_TILT_MIN, NECK_TILT_MAX, 0.1, False, 1)
 
     # shoulder servo pan
     async def shoulderTilt(self, revert=True):
         RT_SHOULDER_TILT_MIN = 0
         RT_SHOULDER_TILT_MAX = 230
-        await self.move(constants.self.RT_SHOULDER_TILT, RT_SHOULDER_TILT_MIN,
+        await self.move(BodyParts.RT_SHOULDER_TILT.value, RT_SHOULDER_TILT_MIN,
                         RT_SHOULDER_TILT_MAX, 0.01, revert, 1)
 
     # elbow servo tilt
     async def elbowTilt(self, revert=True):
         RT_ELBOW_TILT_MIN = 0
         RT_ELBOW_TILT_MAX = 120
-        await self.move(constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,
+        await self.move(BodyParts.RT_ELBOW_TILT.value, RT_ELBOW_TILT_MIN,
                         RT_ELBOW_TILT_MAX, 0.01, revert, 1)
     # elbow servo pan   
     async def elbowRotate(self, revert=True):
         RT_ELBOW_ROTATE_MIN = 30
         RT_ELBOW_ROTATE_MAX = 150
-        await self.move(constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.01, revert, .1)
+        await self.move(BodyParts.RT_ELBOW_ROTATOR.value, RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.01, revert, .1)
         await asyncio.sleep(.5)
   
     # rt shoulder servo
     async def shoulderRotate(self, revert=True):
         RT_SHOULDER_ROTATOR_MIN = 60
         RT_SHOULDER_ROTATOR_MAX = 270
-        await self.move(constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,
+        await self.move(BodyParts.RT_SHOULDER_ROTATOR.value, RT_SHOULDER_ROTATOR_MIN,
                         RT_SHOULDER_ROTATOR_MAX, 0.01, revert, 1)
         #self.kit.servo[self.RT_SHOULDER_ROTATOR].angle = RT_SHOULDER_ROTATOR_MIN 
 
@@ -109,10 +110,10 @@ class TrunkController:
         print("slow scan ")
         # don't move if already at center
         increase = True
-        await self.moveByDir(constants.NECK_PAN, self.NECK_CENTER, NECK_LEFT, 0.05, increase)
+        await self.moveByDir(BodyParts.NECK_PAN.value, self.NECK_CENTER, NECK_LEFT, 0.05, increase)
         increase = False
-        await self.moveByDir(constants.NECK_PAN, self.NECK_CENTER, NECK_RIGHT, 0.05, increase)
-        
+        await self.moveByDir(BodyParts.NECK_PAN.value, self.NECK_CENTER, NECK_RIGHT, 0.05, increase)
+
     async def returnToStart(self, servo_num, start, delay=0.1):
        
         # if current pos not start, send back to their gently
@@ -147,8 +148,8 @@ class TrunkController:
     async def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
         print("moving " + constants.servos[servo_num] +
               "; increasing:" + str(increasing))
-        # TODO: if current pos not start, send back to their gently
-        # or just start their?
+        # TODO: if current pos not start, send back to there gently
+        # or just start there?
         currentPosition = round(self.kit.servo[servo_num].angle)
         
         await self.returnToStart(servo_num, start,delay=0.1)
@@ -169,6 +170,7 @@ class TrunkController:
         await self.returnToStart(servo_num, start,delay=0.1)
 
     async def moveByDirection(self, servo_num, start, stop, delay=0.1, increasing=True):
+        print(f"serveo num: {servo_num}");
         print("moving " + constants.servos[servo_num] +
               "; increasing:" + str(increasing))
 

@@ -1,4 +1,3 @@
-#from trunkcontroller import TrunkController
 from movements import Movements
 import asyncio
 import concurrent.futures
@@ -9,8 +8,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--action', default=None, help='Action to perform')
 
-#trunkController = TrunkController("Servo TrunkController")
- 
+
 args = parser.parse_args()
 
 mv = Movements("Orchstrate Movements")

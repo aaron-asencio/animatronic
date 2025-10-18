@@ -3,6 +3,7 @@ import asyncio
 from trunkcontroller import TrunkController
 import concurrent.futures
 import model.constants as constants
+from model.bodyparts import BodyParts
 
 """
 Macro movements built from trunkcontroller functions
@@ -36,21 +37,21 @@ class Movements:
             
         increasing = True
         # raise arm
-        await self.trunkController.moveByDirection(constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_SHOULDER_ROTATOR.value,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
         # palm up
-        await self.trunkController.moveByDirection(constants.RT_ELBOW_ROTATE,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_ELBOW_ROTATOR.value,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
         
         for x in range(3):
-            await self.trunkController.move(constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, self.DEFAULT_DELAY)
-        
+            await self.trunkController.move(BodyParts.RT_ELBOW_TILT.value,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, self.DEFAULT_DELAY)
+
         sleep(.2)
        
         increasing = False
         # lower arm
-        await self.trunkController.moveByDirection(constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_SHOULDER_ROTATOR.value,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
         # palm down
-        await self.trunkController.moveByDirection(constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-      
+        await self.trunkController.moveByDirection(BodyParts.RT_ELBOW_ROTATOR.value,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
+
     async def comein(self):
         RT_SHOULDER_ROTATOR_MIN = 0
         RT_SHOULDER_ROTATOR_MAX = 40
@@ -67,22 +68,22 @@ class Movements:
             
         increasing = True
         # raise arm
-        await self.trunkController.moveByDirection(constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_SHOULDER_ROTATOR.value,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
         # palm up
-        await self.trunkController.moveByDirection(constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-        
+        await self.trunkController.moveByDirection(BodyParts.RT_ELBOW_ROTATOR.value,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
+
         for x in range(3):
-            await self.trunkController.move(constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, self.DEFAULT_DELAY)
+            await self.trunkController.move(BodyParts.RT_ELBOW_TILT.value,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, revert, self.DEFAULT_DELAY)
         
         # sleep(.2)
        
         increasing = False
         # lower arm
-        await self.trunkController.moveByDirection(constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_SHOULDER_ROTATOR.value,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
         # # palm down
-        await self.trunkController.moveByDirection(constants.RT_ELBOW_ROTATOR,  RT_ELBOW_TILT_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-          
-        
+        await self.trunkController.moveByDirection(BodyParts.RT_ELBOW_ROTATOR.value,  RT_ELBOW_TILT_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
+
+
     async def lookAround(self):
         loop = asyncio.get_event_loop()
         await self.trunkController.neckCenter()
@@ -138,14 +139,14 @@ class Movements:
         NECK_TILT_MIN = 0
         NECK_TILT_MAX = 30
         for _ in range(2):
-            await self.trunkController.move(constants.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.015, revert, .05)
+            await self.trunkController.move(BodyParts.NECK_TILT.value, NECK_TILT_MIN, NECK_TILT_MAX, 0.015, revert, .05)
 
     async def shakeHead(self, revert=True):
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 120
         await self.trunkController.neckCenter()
         for _ in range(3):
-            await self.trunkController.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, 1)
+            await self.trunkController.move(BodyParts.NECK_PAN.value    , NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, 1)
         
         await asyncio.sleep(1)
         await self.trunkController.neckCenter()
@@ -156,7 +157,7 @@ class Movements:
         NECK_PAN_MAX = 150
         await self.trunkController.neckCenter()
         for _ in range(2):
-            await self.trunkController.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
+            await self.trunkController.move(BodyParts.NECK_PAN.value, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
         
         await asyncio.sleep(.5)            
         await self.trunkController.neckCenter()
@@ -167,7 +168,7 @@ class Movements:
         NECK_PAN_MAX = 110
         await self.trunkController.neckCenter()
         for _ in range(2):
-            await self.trunkController.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
+            await self.trunkController.move(BodyParts.NECK_PAN.value, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, revert, 0.01)
         
         await asyncio.sleep(1)            
         await self.trunkController.neckCenter()        
@@ -183,18 +184,18 @@ class Movements:
 
         # raise arm at shoulder
         increasing = True
-        await self.trunkController.moveByDirection(constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.001, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_SHOULDER_ROTATOR.value,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.001, increasing)
          # raise forearm at elbow
-        await self.trunkController.moveByDirection(constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_ELBOW_TILT.value, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, increasing)
         #sleep(.25)
         # rotate elbow to wave
         for i in range(0, 3, 1):
             revert = i % 2 == 0
-            await self.trunkController.move(constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.002, revert, 0.04)
+            await self.trunkController.move(BodyParts.RT_ELBOW_ROTATOR.value,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.002, revert, 0.04)
         # lower arm
         increasing = False
-        await self.trunkController.moveByDirection(constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
-        await self.trunkController.moveByDirection(constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, False)
+        await self.trunkController.moveByDirection(BodyParts.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
+        await self.trunkController.moveByDirection(BodyParts.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.002, False)
 
 
 mv = Movements("Servo Movements")

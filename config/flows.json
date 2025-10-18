@@ -150,7 +150,7 @@
         "id": "98f897b8d51a8fde",
         "type": "exec",
         "z": "eca99d8bf1138501",
-        "command": "export SYNCHRONIZED_LIGHTS_HOME=/home/pi/workspace/lightshowpi; sudo python3 /home/pi/workspace/animatronic/animatronic.py",
+        "command": "export SYNCHRONIZED_LIGHTS_HOME=/home/aaron/workspace/lightshowpi; /home/aaron/workspace/animatronic-v2/.venv/bin/python3 /home/aaron/workspace/animatronic-v2/animatronic.py",
         "addpay": "payload",
         "append": "",
         "useSpawn": "false",
@@ -477,7 +477,7 @@
         "id": "0d8063b75ac27300",
         "type": "exec",
         "z": "eca99d8bf1138501",
-        "command": "sudo python3 /home/pi/workspace/animatronic/controller.py",
+        "command": "sudo /home/aaron/workspace/animatronic-v2/.venv/bin/python3 /home/aaron/workspace/animatronic-v2/controller.py",
         "addpay": "payload",
         "append": "",
         "useSpawn": "false",
@@ -1224,8 +1224,8 @@
         "from": "",
         "to": "",
         "reg": false,
-        "x": 580,
-        "y": 800,
+        "x": 540,
+        "y": 780,
         "wires": [
             [
                 "92012d04dfe9f47e"

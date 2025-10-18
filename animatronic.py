@@ -7,13 +7,13 @@ from subprocess import Popen
 import argparse
 
 """
-Be careful using ~ for shortcut to /home/pi esp. with LSP
-sudo /usr/bin/python3 /home/pi/workspace/animatronic/animatronic.py --action="startParty"
+Be careful using ~ for shortcut to /home/aaron esp. with LSP
+sudo /usr/bin/python3 /home/aaron/workspace/animatronic/animatronic.py --action="startParty"
 
-sudo /usr/bin/python3 /home/pi/workspace/lightshowpi/py/synchronized_lights.py --file="/home/pi/Music/sb_party_switch.wav"
+sudo /usr/bin/python3 /home/aaron/workspace/lightshowpi/py/synchronized_lights.py --file="/home/aaron/Music/sb_party_switch.wav"
 
 To put in input mode - overrides config file must be in lightshowpi/config. Using full path will result in LSP ignoring the file and using default.
-sudo /usr/bin/python3 /home/pi/workspace/lightshowpi/py/synchronized_lights.py --config="overrides-mic.cfg"
+sudo /usr/bin/python3 /home/aaron/workspace/lightshowpi/py/synchronized_lights.py --config="overrides-mic.cfg"
 
 """
 
@@ -21,10 +21,10 @@ sudo /usr/bin/python3 /home/pi/workspace/lightshowpi/py/synchronized_lights.py -
 class Animatronic:
     # def __init__(self):
 
-    lightshowPlayCmd = 'sudo /usr/bin/python /home/pi/workspace/lightshowpi/py/synchronized_lights.py --file='
+    lightshowPlayCmd = 'sudo /usr/bin/python /home/aaron/workspace/lightshowpi/py/synchronized_lights.py --file='
     lightshowPlayFile1 = '"~/Music/sb_party_switch.wav"'
     lightshowPlayFile2 = '"~/Music/blah.wav"'
-    lightshowDir = '/home/pi/Music/'
+    lightshowDir = '/home/aaron/Music/'
 
     music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav','spongebob-torture.mp3',
              'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav',
@@ -189,7 +189,7 @@ def main(arg):
     
     elif(args.action == 'mic'):
         #a.lookAroundSmall() 
-        cmd = 'sudo /usr/bin/python /home/pi/workspace/lightshowpi/py/synchronized_lights.py --config /home/pi/workspace/lightshowpi/config/overrides-mic.cfg'
+        cmd = 'sudo /usr/bin/python /home/aaron/workspace/lightshowpi/py/synchronized_lights.py --config /home/aaron/workspace/lightshowpi/config/overrides-mic.cfg'
         print(cmd)
         proc = subprocess.Popen(cmd, shell=True)
         # run an action to go with audio

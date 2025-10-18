@@ -3,12 +3,12 @@ from model.bodyparts import BodyParts
 
 servos = {}
 # map user friendly names
-servos[BodyParts.NECK_TILT] = "NECK_TILT"
-servos[BodyParts.NECK_PAN] = "NECK_PAN"
-servos[BodyParts.RT_SHOULDER_ROTATOR] = "RT_SHOULDER_ROTATOR"
-servos[BodyParts.RT_SHOULDER_TILT] = "RT_SHOULDER_TILT"
-servos[BodyParts.RT_ELBOW_TILT] = "RT_ELBOW_TILT"
-servos[BodyParts.RT_ELBOW_ROTATOR] = "RT_ELBOW_ROTATOR"
+servos[BodyParts.NECK_TILT.value] = "NECK_TILT"
+servos[BodyParts.NECK_PAN.value] = "NECK_PAN"
+servos[BodyParts.RT_SHOULDER_ROTATOR.value] = "RT_SHOULDER_ROTATOR"
+servos[BodyParts.RT_SHOULDER_TILT.value] = "RT_SHOULDER_TILT"
+servos[BodyParts.RT_ELBOW_TILT.value] = "RT_ELBOW_TILT"
+servos[BodyParts.RT_ELBOW_ROTATOR.value] = "RT_ELBOW_ROTATOR"
 
 
 # default center positions
