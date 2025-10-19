@@ -13,3 +13,6 @@ servos[BodyParts.RT_ELBOW_ROTATOR.value] = "RT_ELBOW_ROTATOR"
 
 # default center positions
 NECK_CENTER = 90
+
+EYE_LIGHT_PIN = 6
+MOUTH_MOTOR_PIN = 18
