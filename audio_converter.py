@@ -109,6 +109,7 @@ class AudioConverter:
                 data = input_stream.read(self.CHUNK, exception_on_overflow=False)
 
                 self.visualize_audio_level(data, start_time)
+                
                   # Write to speakers
                 output_stream.write(data)
 
@@ -123,13 +124,28 @@ class AudioConverter:
         print("\nStreaming stopped.")
 
     def visualize_audio_level(self, data, start_time):
+        self.led_eye_light.value 
         # Convert to numpy array
         audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
 
         rms = np.sqrt(np.mean(audio_data**2))
         print(f"Audio Data: {np.mean(audio_data**2)}")
         print(f"Audio Data: {np.sqrt(np.mean(audio_data**2))}")
+        # different peak calculations don't change jaw movement much
         peak = np.max(np.abs(audio_data))
+        #peak = np.abs(audio_data).mean()
+        
+        #amplitude = np.abs(audio_data).mean()
+        #jaw_value = int(min(amplitude / 50, 150))
+        # adjust jaw calculation for better responsiveness and not open as much
+        
+        # over 51 works about the same as 51      
+        jaw_value = int(min(peak / 50, 51))
+        
+        normalized_jaw_value = round(jaw_value / 100) # normalize to 0-0.5
+        print(f"Peak: {peak}; Jaw Value: {jaw_value}; Normalized jaw value: {normalized_jaw_value}" )
+        self.led_eye_light.value = normalized_jaw_value 
+        
         
         # Normalize to 0-1 range
         rms_normalized = rms / 32768
@@ -201,78 +217,7 @@ class AudioConverter:
         return np.concatenate(audio_buffer)
     
         
-    def process_audio(self):
-        # Open the audio file
-        wf = wave.open(self.audio_file, 'rb')
-
-        # Initialize PyAudio
-        p = pyaudio.PyAudio()
-
-        # Open stream based on the wave file's properties
-        stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
-                        channels=wf.getnchannels(),
-                        rate=wf.getframerate(),
-                        output=True)  # Set to True to play audio through speakers
-
-        CHUNK = 1024
-
-        print(f"Processing audio file: {self.audio_file}")
-        print(f"Sample rate: {wf.getframerate()} Hz")
-        print(f"Channels: {wf.getnchannels()}")
-        print(f"Duration: {wf.getnframes() / wf.getframerate():.2f} seconds")
-        print("\nPress Ctrl+C to stop\n")
-
-        try:
-            # Read data in chunks
-            data = wf.readframes(CHUNK)
-            prev_jaw_value = 0
-            jaw_value = 0
-            while data:
-                # Convert bytes to numpy array for analysis
-                audio_data = np.frombuffer(data, dtype=np.int16)
-                
-                # Calculate amplitude (volume level)
-                amplitude = np.abs(audio_data).mean()
-                
-                # Map amplitude to motor/light range (0-255 for PWM)
-                motor_value = int(min(amplitude / 50, 255))
-                
-                # Display the value
-                print(f"Amplitude: {amplitude:6.1f} | Motor Value: {motor_value:3d} | {'█' * (motor_value // 10)}")
-                # self.eye_light.pulse(fade_in_time=0.1, fade_out_time=0.1, n=1, background=True)
-                # Fade the eyes in and out based on amplitude
-                # track the previous jaw value and if the new value is 30% less or more, turn off the light
-                if 'prev_jaw_value' in locals():
-                    if abs(jaw_value - prev_jaw_value) > 30:
-                        self.jaw_motor.off()
-                prev_jaw_value = jaw_value
-                
-
-                jaw_value = int(min(amplitude / 50, 150))
-                
-                jaw_value = round(jaw_value / 100)
-                print(f"Jaw Value: {jaw_value}" )
-                self.led_eye_light.value = jaw_value 
-                #self.eye_light.on()
-                # Send to motor controller here
-                #self.jaw_motor.value = motor_value / 255.0
-                
-                # Play the audio chunk (optional - remove if you don't want playback)
-                stream.write(data)
-                
-                # Read next chunk
-                data = wf.readframes(CHUNK)
-
-        except KeyboardInterrupt:
-            print("\nStopping...")
-
-        finally:
-            # Clean up
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
-            wf.close()
-            print("Done!")
+   
 
 if __name__ == "__main__":
     import sys
