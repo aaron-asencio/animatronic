@@ -108,7 +108,7 @@ class AudioConverter:
                 # Read audio data
                 data = input_stream.read(self.CHUNK, exception_on_overflow=False)
 
-                self.visualize_audio_level(data, start_time)
+                self.talk(data, start_time)
                 
                   # Write to speakers
                 output_stream.write(data)
@@ -123,30 +123,25 @@ class AudioConverter:
         p.terminate()
         print("\nStreaming stopped.")
 
-    def visualize_audio_level(self, data, start_time):
+    def talk(self, data, start_time):
         self.led_eye_light.value 
         # Convert to numpy array
         audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-
-        rms = np.sqrt(np.mean(audio_data**2))
-        print(f"Audio Data: {np.mean(audio_data**2)}")
-        print(f"Audio Data: {np.sqrt(np.mean(audio_data**2))}")
-        # different peak calculations don't change jaw movement much
+       
         peak = np.max(np.abs(audio_data))
-        #peak = np.abs(audio_data).mean()
-        
-        #amplitude = np.abs(audio_data).mean()
-        #jaw_value = int(min(amplitude / 50, 150))
-        # adjust jaw calculation for better responsiveness and not open as much
-        
+
         # over 51 works about the same as 51      
         jaw_value = int(min(peak / 50, 51))
         
-        normalized_jaw_value = round(jaw_value / 100) # normalize to 0-0.5
+        normalized_jaw_value = round(jaw_value / 100)
         print(f"Peak: {peak}; Jaw Value: {jaw_value}; Normalized jaw value: {normalized_jaw_value}" )
         self.led_eye_light.value = normalized_jaw_value 
-        
-        
+        self.bar_graph(audio_data, peak, start_time)
+       
+    
+    def bar_graph(self, audio_data, peak, start_time):
+ 
+        rms = np.sqrt(np.mean(audio_data**2))
         # Normalize to 0-1 range
         rms_normalized = rms / 32768
         peak_normalized = peak / 32768
