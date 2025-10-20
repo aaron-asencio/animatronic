@@ -6,6 +6,10 @@ from gpiozero import PWMLED
 from gpiozero import LED
 from gpiozero import Device
 
+# import AudioUtils
+from utils.audio_utils import AudioUtils
+
+
 from model.constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
 
 class AudioConverter:
@@ -39,39 +43,7 @@ class AudioConverter:
             #time.sleep(0.2)
         print("LED test complete.")
      
-    def list_audio_devices(self):
-        p = pyaudio.PyAudio()
-       
-        for i in range(p.get_device_count()):
-            info = p.get_device_info_by_index(i)
-            print(f"{i}: {info['name']}")
-            print(f"   Inputs: {info['maxInputChannels']}, Outputs: {info['maxOutputChannels']}") 
     
-    def list_audio_input_devices(self):
-        """List all available audio input devices."""
-        p = pyaudio.PyAudio()
-       
-        print("-" * 80)
-        
-        for i in range(p.get_device_count()):
-            info = p.get_device_info_by_index(i)
-            print(f"Device {i}: {info['name']}")
-            
-            try:
-                max_inputs = int(float(info['maxInputChannels']))
-            except (ValueError, TypeError):
-                max_inputs = 0
-            if max_inputs > 0:  # Only show input devices
-                print("Available Audio Devices:")
-                print(f"  Max Input Channels: {max_inputs}")
-                try:
-                    default_rate = int(float(info['defaultSampleRate']))
-                except (ValueError, TypeError):
-                    default_rate = 0
-                print(f"  Default Sample Rate: {default_rate} Hz")
-                print()
-        
-        p.terminate()    
         
     def stream_with_realtime_processing(self, input_device_index=None, output_device_index=None, duration=10):
         """
@@ -139,20 +111,7 @@ class AudioConverter:
         self.bar_graph(audio_data, peak, start_time)
        
     
-    def bar_graph(self, audio_data, peak, start_time):
- 
-        rms = np.sqrt(np.mean(audio_data**2))
-        # Normalize to 0-1 range
-        rms_normalized = rms / 32768
-        peak_normalized = peak / 32768
-        
-        # Visual amplitude bar
-        bar_length = int(rms_normalized * 50)
-        bar = '█' * bar_length + '░' * (50 - bar_length)
-        
-        elapsed = time.time() - start_time
-        print(f"[{elapsed:5.1f}s] {bar} RMS: {rms_normalized:.3f} Peak: {peak_normalized:.3f}", end='\r')
-        
+           
     def stream_with_callback(self, device_index=None, duration=10):
         """
         Stream audio using callback method (non-blocking).
