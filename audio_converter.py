@@ -73,7 +73,7 @@ class AudioConverter:
         
         p.terminate()    
         
-    def stream_with_realtime_processing(self, device_index=None, duration=10):
+    def stream_with_realtime_processing(self, input_device_index=None, output_device_index=None, duration=10):
         """
         Stream audio from USB mic with real-time amplitude monitoring.
         """
@@ -81,12 +81,21 @@ class AudioConverter:
         
         p = pyaudio.PyAudio()
         
-        stream = p.open(format=self.FORMAT,
+        input_stream = p.open(format=self.FORMAT,
                         channels=self.CHANNELS,
                         rate=self.RATE,
                         input=True,
                         input_device_index=device_index,
                         frames_per_buffer=self.CHUNK)
+        
+        
+        output_stream = p.open(format=self.FORMAT,
+                       channels=self.CHANNELS,
+                       rate=self.RATE,
+                       output=True,
+                       frames_per_buffer=self.CHUNK,
+                       output_device_index=2) 
+                       
         
         print(f"Streaming audio for {duration} seconds...")
         print("Real-time amplitude monitoring:")
@@ -97,36 +106,42 @@ class AudioConverter:
         try:
             while (time.time() - start_time) < duration:
                 # Read audio data
-                data = stream.read(self.CHUNK, exception_on_overflow=False)
-                
-                # Convert to numpy array
-                audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
-     
-                rms = np.sqrt(np.mean(audio_data**2))
-                print(f"Audio Data: {np.mean(audio_data**2)}")
-                print(f"Audio Data: {np.sqrt(np.mean(audio_data**2))}")
-                peak = np.max(np.abs(audio_data))
-                
-                # Normalize to 0-1 range
-                rms_normalized = rms / 32768
-                peak_normalized = peak / 32768
-                
-                # Visual amplitude bar
-                bar_length = int(rms_normalized * 50)
-                bar = '█' * bar_length + '░' * (50 - bar_length)
-                
-                elapsed = time.time() - start_time
-                print(f"[{elapsed:5.1f}s] {bar} RMS: {rms_normalized:.3f} Peak: {peak_normalized:.3f}", end='\r')
-                
+                data = input_stream.read(self.CHUNK, exception_on_overflow=False)
+
+                self.visualize_audio_level(data, start_time)
+                  # Write to speakers
+                output_stream.write(data)
+
         except KeyboardInterrupt:
             print("\nStopped by user")
         
-        stream.stop_stream()
-        stream.close()
+        input_stream.stop_stream()
+        input_stream.close()
+        output_stream.stop_stream()
+        output_stream.close()
         p.terminate()
         print("\nStreaming stopped.")
 
-   
+    def visualize_audio_level(self, data, start_time):
+        # Convert to numpy array
+        audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+
+        rms = np.sqrt(np.mean(audio_data**2))
+        print(f"Audio Data: {np.mean(audio_data**2)}")
+        print(f"Audio Data: {np.sqrt(np.mean(audio_data**2))}")
+        peak = np.max(np.abs(audio_data))
+        
+        # Normalize to 0-1 range
+        rms_normalized = rms / 32768
+        peak_normalized = peak / 32768
+        
+        # Visual amplitude bar
+        bar_length = int(rms_normalized * 50)
+        bar = '█' * bar_length + '░' * (50 - bar_length)
+        
+        elapsed = time.time() - start_time
+        print(f"[{elapsed:5.1f}s] {bar} RMS: {rms_normalized:.3f} Peak: {peak_normalized:.3f}", end='\r')
+        
     def stream_with_callback(self, device_index=None, duration=10):
         """
         Stream audio using callback method (non-blocking).
@@ -270,7 +285,7 @@ if __name__ == "__main__":
     #c.list_audio_devices()
     # 1 not working
     device_index = 1
-    c.stream_with_realtime_processing(device_index = 1, duration=5)
+    c.stream_with_realtime_processing(input_device_index = 1, output_device_index=2, duration=5)
     
     #converter.test_led()
     # arg = sys.argv[1] if len(sys.argv) > 1 else None
