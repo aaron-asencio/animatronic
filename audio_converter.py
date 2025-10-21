@@ -15,9 +15,8 @@ from model.constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
 class AudioConverter:
     def __init__(self, audio_file):
         self.audio_file = audio_file
-        #self.eye_light = PWMLED(EYE_LIGHT_PIN)
-        self.led_eye_light = LED(MOUTH_MOTOR_PIN)
-        self.jaw_motor = LED(EYE_LIGHT_PIN)
+        self.led_eye_light = LED(EYE_LIGHT_PIN)
+        self.jaw_motor = LED(MOUTH_MOTOR_PIN)
         
         # print the Device.pin_factory being used
         print(f"Eye light pin factory: {Device.pin_factory}")
@@ -29,6 +28,7 @@ class AudioConverter:
         self.CHANNELS = 1  # Mono
         
         self.RATE = 48000  # Sample rate (Hz)
+        self.previous_jaw_value = None
 
     def test_led(self):
         print("Testing LED light...")
@@ -49,8 +49,7 @@ class AudioConverter:
         """
         Stream audio from USB mic with real-time amplitude monitoring.
         """
-
-        
+      
         p = pyaudio.PyAudio()
         
         input_stream = p.open(format=self.FORMAT,
@@ -76,13 +75,15 @@ class AudioConverter:
         start_time = time.time()
         
         try:
+          
+            
             while (time.time() - start_time) < duration:
                 # Read audio data
                 data = input_stream.read(self.CHUNK, exception_on_overflow=False)
-
+                
                 self.talk(data, start_time)
                 
-                  # Write to speakers
+                # Write to speakers
                 output_stream.write(data)
 
         except KeyboardInterrupt:
@@ -96,6 +97,8 @@ class AudioConverter:
         print("\nStreaming stopped.")
 
     def talk(self, data, start_time):
+        
+        print(f"intial previous_jaw_value jaw_value: { self.previous_jaw_value }")
         self.led_eye_light.value 
         # Convert to numpy array
         audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
@@ -103,13 +106,22 @@ class AudioConverter:
         peak = np.max(np.abs(audio_data))
 
         # over 51 works about the same as 51      
-        jaw_value = int(min(peak / 50, 51))
+        jaw_value = int(min(peak / 50, 100))
         
-        normalized_jaw_value = round(jaw_value / 100)
-        print(f"Peak: {peak}; Jaw Value: {jaw_value}; Normalized jaw value: {normalized_jaw_value}" )
-        self.led_eye_light.value = normalized_jaw_value 
-        self.bar_graph(audio_data, peak, start_time)
+        # jaw value is less than previous but may be enough to keep jaw open. if it drops enough, we want the jaw to no stay open
+        if(self.previous_jaw_value is not None and jaw_value < self.previous_jaw_value  ):
+            diff = jaw_value / self.previous_jaw_value
+            print(f"diff is {diff}")
+            if(diff > .20):
+                print(f"greater than 25% ")
+                jaw_value = 0 # setting to a percentage like jaw_value = jaw_value * .75 didn't improve noticably
        
+          
+        normalized_jaw_value = round(jaw_value / 100)
+        print(f"Peak: {peak}; Jaw Value: {jaw_value}; Normalized jaw value: {normalized_jaw_value}; Previous jaw: {self.previous_jaw_value}" )
+        self.led_eye_light.value = normalized_jaw_value 
+        AudioUtils.bar_graph(audio_data, peak, start_time)
+        self.previous_jaw_value = jaw_value   
     
            
     def stream_with_callback(self, device_index=None, duration=10):
@@ -169,9 +181,6 @@ class AudioConverter:
         
         print(f"\nCaptured {len(audio_buffer)} chunks")
         return np.concatenate(audio_buffer)
-    
-        
-   
 
 if __name__ == "__main__":
     import sys
@@ -184,7 +193,7 @@ if __name__ == "__main__":
     #c.list_audio_devices()
     # 1 not working
     device_index = 1
-    c.stream_with_realtime_processing(input_device_index = 1, output_device_index=2, duration=5)
+    c.stream_with_realtime_processing(input_device_index = 1, output_device_index=2, duration=3)
     
     #converter.test_led()
     # arg = sys.argv[1] if len(sys.argv) > 1 else None

@@ -43,8 +43,8 @@ class AudioUtils:
         
         p.terminate()     
     
-    
-    def bar_graph(self, audio_data, peak, start_time):
+    @staticmethod
+    def bar_graph(audio_data, peak, start_time):
  
         rms = np.sqrt(np.mean(audio_data**2))
         # Normalize to 0-1 range
