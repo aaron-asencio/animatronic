@@ -44,6 +44,15 @@ class AudioUtils:
         p.terminate()     
     
     @staticmethod
+    def close_streams(input_stream, output_stream, p):
+        input_stream.stop_stream()
+        input_stream.close()
+        output_stream.stop_stream()
+        output_stream.close()
+        p.terminate()
+        print("\nStreaming stopped.")
+    
+    @staticmethod
     def bar_graph(audio_data, peak, start_time):
  
         rms = np.sqrt(np.mean(audio_data**2))
