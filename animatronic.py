@@ -86,11 +86,8 @@ class Animatronic:
     # take function name and audio file
     def runActionAndAudio(self, methodName, audioFile):
         # works - copy from this - don't change
-        cmd = self.lightshowPlayCmd + '"' + self.lightshowDir + audioFile + '"'
-        print(cmd)
-        proc = subprocess.Popen(cmd, shell=True)
         asyncio.run(getattr(self, methodName)())
-        proc.terminate()
+        
 
     def startParty(self):
        self.runActionAndAudio("swivelHeadAndWave", self.music[3])

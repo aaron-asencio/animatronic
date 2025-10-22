@@ -58,6 +58,35 @@ class AudioConverter:
                        frames_per_buffer=self.CHUNK,
                        output_device_index=output_device_index) 
         return p, input_stream, output_stream
+    
+    def stream_file(self, wave_file, output_device_index=2):
+   
+        p = pyaudio.PyAudio()
+        wf = wave.open(wave_file, 'rb')
+        output_stream = p.open(format=self.FORMAT,
+                       channels=self.CHANNELS,
+                       rate=self.RATE,
+                       output=True,
+                       frames_per_buffer=self.CHUNK,
+                       
+                       output_device_index=output_device_index) 
+
+                
+        
+        print("Real-time amplitude monitoring:")
+        start_time = time.perf_counter()
+        data = wf.readframes(self.CHUNK)
+        while data:
+           
+            data = wf.readframes(self.CHUNK)
+            self.talk(data, start_time)
+            output_stream.write(data)      
+            
+              
+        output_stream.stop_stream()
+        output_stream.close()
+        p.terminate()
+
 
     def talk(self, data, start_time):
         
@@ -108,10 +137,7 @@ class AudioConverter:
             print("\nStopped by user")
         
         AudioUtils.close_streams(input_stream, output_stream, p)    
-                 
-
-
-               
+              
     def stream_with_callback(self, input_device_index=1,output_device_index=2, duration=10):
         """
         Stream audio using callback method (non-blocking).
@@ -161,7 +187,7 @@ class AudioConverter:
 if __name__ == "__main__":
     import sys
 
-    audio_file = "/home/aaron/Music/evil-laugh.wav"  # Replace with your audio file path
+    audio_file = "/home/aaron/Music/krusty-laugh.wav"  # Replace with your audio file path
     # good ones: like-this-one.wav, beetel-exorcist.wav, blah.wav, evil-laugh.wav, krusty-laugh.wav, were-waiting.wav
     # waiting.wav not good
     c = AudioConverter(audio_file)
@@ -170,4 +196,5 @@ if __name__ == "__main__":
     # 1 not working
     device_index = 1
     # c.stream_with_realtime_processing(input_device_index = 1, output_device_index=2, duration=5)
-    c.stream_with_callback(input_device_index = 1, output_device_index=2, duration=5)
+    #c.stream_with_callback(input_device_index = 1, output_device_index=2, duration=5)
+    c.stream_file(audio_file)
