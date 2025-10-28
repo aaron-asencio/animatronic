@@ -66,3 +66,5 @@ class AudioUtils:
         
         elapsed = time.time() - start_time
         print(f"[{elapsed:5.1f}s] {bar} RMS: {rms_normalized:.3f} Peak: {peak_normalized:.3f}", end='\r')
+        
+        

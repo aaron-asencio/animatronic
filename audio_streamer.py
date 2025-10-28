@@ -8,6 +8,7 @@ from gpiozero import DigitalOutputDevice
 from datetime import datetime
 from utils.audio_utils import AudioUtils
 from model.constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
+from collections import deque
 import sys
 
 class AudioStreamer:
@@ -24,6 +25,10 @@ class AudioStreamer:
         self.RATE = 48000  # Sample rate (Hz)
         self.previous_jaw_value = None
         self.drop_threshold = .20
+      
+        self.echo_buffer = deque([np.zeros(self.CHUNK, dtype=np.int16)] * 3, maxlen=3)
+        self.reverb_buffer = np.zeros(8820, dtype=np.float32)
+        self.reverb_pos = 0
 
     def test_led(self):
         print("Testing LED light...")
@@ -57,12 +62,12 @@ class AudioStreamer:
         return p, input_stream, output_stream
       
 
-    def talk(self, data, start_time):
+    def talk(self, audio_data, start_time):
         
         print(f"intial previous_jaw_value jaw_value: { self.previous_jaw_value }")
         self.jaw_motor.value 
         # Convert to numpy array
-        audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+        #audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
        
         peak = np.max(np.abs(audio_data))
         jaw_value = int(min(peak / 50, 100))
@@ -113,6 +118,7 @@ class AudioStreamer:
         stream.stop_stream()
         stream.close()
         p.terminate()            
+        
     def stream_mic_blocking(self, input_device_index=1, output_device_index=2, duration=10):
 
         p, input_stream, output_stream = self.open_streams(input_device_index, output_device_index,)
@@ -135,8 +141,60 @@ class AudioStreamer:
             print("\nStopped by user")
         
         AudioUtils.close_streams(input_stream, output_stream, p)    
+    
+    def ultimate_scary_effect(self, audio_data):
+        """
+        Combines multiple effects for maximum scariness:
+        1. Lower pitch (demonic)
+        2. Add distortion (possessed)
+        3. Add echo (haunting)
+        4. Add reverb (otherworldly)
+        """
+        
+        
+        audio = audio_data.astype(np.float32)
+        
+        # 1. PITCH SHIFT (make it deeper)
+        shift_factor = 0.85
+        num_samples = int(len(audio) * shift_factor)
+        indices = np.linspace(0, len(audio) - 1, num_samples)
+        audio = np.interp(indices, np.arange(len(audio)), audio)
+        if len(audio) < len(audio_data):
+            audio = np.pad(audio, (0, len(audio_data) - len(audio)), 'edge')
+        else:
+            audio = audio[:len(audio_data)]
+        
+        # can't hear audio when this is on
+        # 2. DISTORTION (add grittiness)
+        # audio = audio / 32768.0
+        # threshold = 0.4
+        # audio = np.clip(audio, -threshold, threshold) / threshold
+        
+        # 3. ECHO (haunting repetition)
+        output = audio.copy()
+        for i, old_audio in enumerate(self.echo_buffer):
+            decay = 0.5 ** (i + 1)
+            output += old_audio.astype(np.float32) / 32768.0 * decay
+        self.echo_buffer.append((audio * 32768.0).astype(np.int16))
+        
+        # too choppy - decreasing delay did not help
+        # 4. REVERB (spooky space)
+        # result = np.zeros_like(output)
+        # for i in range(len(output)):
+        #     current = output[i]
+        #     reverb_out = 0
+        #     for delay in [2205, 4410]:
+        #         if self.reverb_pos >= delay:
+        #             reverb_out += self.reverb_buffer[self.reverb_pos - delay] * 0.3
+        #     result[i] = current + reverb_out * 0.6
+        #     self.reverb_buffer[self.reverb_pos] = current + reverb_out * 0.2
+        #     self.reverb_pos = (self.reverb_pos + 1) % len(self.reverb_buffer)
+        
+        # Convert back and prevent clipping
+        #output = np.clip(result * 32768.0, -32768, 32767)
+        return output.astype(np.int16)
               
-    def stream_mic(self, input_device_index=1,output_device_index=2, duration=10):
+    def stream_mic(self, input_device_index=1,output_device_index=2, duration=20):
         """
         Stream audio using callback method (non-blocking).
         More efficient for continuous processing.
@@ -145,14 +203,45 @@ class AudioStreamer:
         # Storage for audio data
         audio_buffer = []
         
-        
+       
+        def scary_pitch_shift(audio_data, shift_factor=0.7):
+            """
+            Lower the pitch to make voice sound demonic/scary
+            shift_factor < 1.0 = deeper/scarier (try 0.6 - 0.8)
+            """
+            # Convert to float for processing
+            audio_float = audio_data.astype(np.float32)
+            
+            # Resample to lower pitch (makes voice deeper)
+            num_samples = int(len(audio_float) * shift_factor)
+            indices = np.linspace(0, len(audio_float) - 1, num_samples)
+            lowered = np.interp(indices, np.arange(len(audio_float)), audio_float)
+            
+            # Pad back to original size
+            if len(lowered) < len(audio_float):
+                lowered = np.pad(lowered, (0, len(audio_float) - len(lowered)), 'edge')
+            else:
+                lowered = lowered[:len(audio_float)]
+            
+            return lowered.astype(np.int16)
+
         def audio_callback(in_data, frame_count, time_info, status):
             """This function is called for each audio chunk."""
             if status:
                 print(f"Status: {status}")
-                
-            self.talk(in_data, start_time =  datetime.now().timestamp())
-            return (in_data, pyaudio.paContinue)
+            
+            audio = np.frombuffer(in_data, dtype=np.int16).astype(np.float32)    
+            self.talk(audio, start_time =  datetime.now().timestamp())
+            # filter stream data to lower voice for output
+                # Apply scary pitch shift
+            #scary_audio = scary_pitch_shift(audio, shift_factor=0.85)
+            # Convert back to bytes
+            #output = scary_audio.tobytes()
+            
+            scary_audio = self.ultimate_scary_effect(audio)
+            return (scary_audio.tobytes(), pyaudio.paContinue)
+            
+            #return (output, pyaudio.paContinue)
         
         p = pyaudio.PyAudio()
         
