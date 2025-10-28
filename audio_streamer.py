@@ -16,6 +16,7 @@ class AudioStreamer:
        
         self.led_eye_light = LED(EYE_LIGHT_PIN)
         self.jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
+        self.stream_timeout_seconds = 30  # 1 hour timeout
   
          # Audio parameters
         self.CHUNK = 1024  # Frames per buffer
@@ -29,7 +30,7 @@ class AudioStreamer:
         self.echo_buffer = deque([np.zeros(self.CHUNK, dtype=np.int16)] * 3, maxlen=3)
         self.reverb_buffer = np.zeros(8820, dtype=np.float32)
         self.reverb_pos = 0
-        self.stream = pyaudio.PyAudio
+        self.stream = None
         self.p = pyaudio.PyAudio()
 
     def test_led(self):
@@ -167,11 +168,30 @@ class AudioStreamer:
         stream_ref.stop_stream()
         stream_ref.close()
         self.p.terminate()
+        
+    def start(self):
+        if self.stream is not None and self.stream.is_active():
+            print("Stream already running. Stopping existing stream...")
+            self.stop()
+        self.stream_mic(input_device_index = 1, output_device_index=2)
+
+        
+    def stop(self):
+        if self.stream is not None and self.stream.is_active():
+            print("Stopping stream...")
+            self.stream.stop_stream()
+            self.stream.close()
+            self.p.terminate()
+        else:
+            print("No active stream to stop.")    
             
 if __name__ == "__main__":
    
     c = AudioStreamer()
-    c.handler(5)
+    #c.handler(5)
+    c.start()
+    time.sleep(5)
+    c.stop()
     #c.stream_mic(input_device_index = 1, output_device_index=2,)
     # try:
     #     while True:
