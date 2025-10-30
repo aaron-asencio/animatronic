@@ -14,7 +14,7 @@ import sys
 class AudioStreamer:
     def __init__(self):
        
-        self.led_eye_light = LED(EYE_LIGHT_PIN)
+        # self.led_eye_light = LED(EYE_LIGHT_PIN)
         self.jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
         self.stream_timeout_seconds = 30  # 1 hour timeout
   
@@ -33,19 +33,19 @@ class AudioStreamer:
         self.stream = None
         self.p = pyaudio.PyAudio()
 
-    def test_led(self):
+    # def test_led(self):
         
-        print("Testing LED light...")
-        for i in range(5):
-            self.led_eye_light.value = 0.05
-            time.sleep(0.2)
-            self.led_eye_light.value = 0.0
-            time.sleep(0.2)
-            # self.led_eye_light.on()
-            # time.sleep(0.2)
-            # self.led_eye_light.off()
-            #time.sleep(0.2)
-        print("LED test complete.")
+    #     print("Testing LED light...")
+    #     for i in range(5):
+    #         self.led_eye_light.value = 0.05
+    #         time.sleep(0.2)
+    #         self.led_eye_light.value = 0.0
+    #         time.sleep(0.2)
+    #         # self.led_eye_light.on()
+    #         # time.sleep(0.2)
+    #         # self.led_eye_light.off()
+    #         #time.sleep(0.2)
+    #     print("LED test complete.")
     
    
 
@@ -186,11 +186,11 @@ class AudioStreamer:
             print("No active stream to stop.")    
             
 if __name__ == "__main__":
-   
+    print("Calling AudioStreamer.")   
     c = AudioStreamer()
-    #c.handler(5)
+    # #c.handler(5)
     c.start()
-    time.sleep(5)
+    time.sleep(3)
     c.stop()
     #c.stream_mic(input_device_index = 1, output_device_index=2,)
     # try:
