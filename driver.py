@@ -21,21 +21,21 @@ def wave():
     controller = TrunkController("Servo TrunkController")
   
     # works
-    asyncio.run(controller.wave())
+    asyncio.run(controller.neckPan())
     
     #    asyncio.run(controller.elbowTilt())
     # asyncio.run(controller.elbowPan())
         
-    #await loop.run_in_executor(None, controller.wave)
+    
     #_event_loop()
     #wave = loop.create_task(controller.wave())
     #loop.run_until_complete(asyncio.gather(wave))
 
 
 def main():
-    #lookAround()
+    lookAround()
     
-    subprocess.call("/home/pi/lightshowpi/py/synchronized_lights.py --file=$MUSIC_HOME/sb_party_switch.mp3", shell=True)
+    #subprocess.call("/home/aaron/lightshowpi/py/synchronized_lights.py --file=$MUSIC_HOME/sb_party_switch.mp3", shell=True)
     #wave()
     #asyncio.run(wave())
     #asyncio.run(controller.wave())
