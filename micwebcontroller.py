@@ -101,7 +101,7 @@ def talk(audio_data, start_time):
     normalized_jaw_value = round(jaw_value / 100)
     print(f"Peak: {peak}; Jaw Value: {jaw_value}; Normalized jaw value: {normalized_jaw_value}; Previous jaw: {previous_jaw_value}" )
     jaw_motor.value = normalized_jaw_value 
-    AudioUtils.bar_graph(audio_data, peak, start_time) 
+    #AudioUtils.bar_graph(audio_data, peak, start_time) 
     previous_jaw_value = jaw_value   
         
 def ultimate_scary_effect(audio_data):
