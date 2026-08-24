@@ -102,3 +102,10 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Accidental venv scaffold directory (not a real venv)
+path/
+
+# Application logs
+*.log
+app.log

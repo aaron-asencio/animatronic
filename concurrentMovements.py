@@ -1,170 +1,249 @@
+"""
+concurrentMovements.py
+
+Synchronous / thread-based movement choreography using ThreadPoolExecutor.
+
+This module provides an alternative to the async-based Movements class for
+situations where true thread-level parallelism is needed (e.g. running
+multiple servos simultaneously without an event loop).  It uses the blocking
+`time.sleep` and the `concurrent.futures.ThreadPoolExecutor` rather than
+asyncio tasks.
+
+Typical entry point: run `python concurrentMovements.py` directly to execute
+the facePalm demo.
+
+Dependency chain:
+    ConcurrentMovements
+        ├── TrunkController  (trunkcontroller.py) — owns the shared ServoKit instance
+        └── Movements        (movements.py)       — async gestures
+"""
+
 from concurrent.futures import ThreadPoolExecutor
-from trunkcontroller import TrunkController
+from trunkcontroller import TrunkController, SERVO_MAX_ANGLE
 from movements import Movements
 from time import sleep, perf_counter
-from adafruit_servokit import ServoKit
 
 import constants
 
+
 class ConcurrentMovements:
+    """Thread-based movement orchestration for concurrent servo control."""
 
     def __init__(self, name):
         self.name = name
 
+    # Shared instances (class-level so hardware is initialised once).
+    # TrunkController owns the sole ServoKit instance; use its kit directly
+    # to avoid creating a second ServoKit object for the same I2C board.
     trunk = TrunkController("Servo TrunkController")
-    mv = Movements("Servo Movements")
+    mv    = Movements("Servo Movements")
 
-    kit = ServoKit(channels=16)
-    for i in range(0, 15):
-        kit.servo[i].actuation_range = 270
+    # Convenience reference to the shared ServoKit — do NOT instantiate a new one.
+    kit = trunk.kit
 
-    def shakeNo(self, revert=True):
-        print("shake head no ")
-        NECK_PAN_MIN = 30
-        NECK_PAN_MAX = 150
-        #self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+    # ------------------------------------------------------------------ #
+    # Synchronous head gestures                                            #
+    # ------------------------------------------------------------------ #
 
-        NECK_LEFT = 140
+    def shake_no(self, revert=True):
+        """Shake the head "no" — wide arc from center to left then to right.
+
+        Moves the neck pan from center (90°) out to NECK_LEFT (140°),
+        then sweeps across to NECK_RIGHT (40°), pauses, and returns to center.
+
+        Args:
+            revert: Reserved for future use; not currently applied.
+        """
+        print("shake head no")
+        NECK_LEFT  = 140
         NECK_RIGHT = 40
-        
-        # don't move if already at center
+
         increase = True
-   
-        self.moveByDir(constants.NECK_PAN, constants.NECK_CENTER, NECK_LEFT, 0.05, increase)
-        #self.move(constants.NECK_PAN, self.NECK_CENTER, NECK_LEFT, 0.05, True, .02 )
+        self.move_by_dir(constants.NECK_PAN, constants.NECK_CENTER, NECK_LEFT, 0.05, increase)
+
         increase = False
-        self.moveByDir( constants.NECK_PAN, constants.NECK_CENTER, NECK_RIGHT, 0.05, increase)
-        
-        sleep(1)            
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+        self.move_by_dir(constants.NECK_PAN, constants.NECK_CENTER, NECK_RIGHT, 0.05, increase)
 
+        sleep(1)
+        self.return_to_start(constants.NECK_PAN, constants.NECK_CENTER, delay=0.04)
 
-    def shakeHead(self, revert=True):
+    def shake_head(self, revert=True):
+        """Shake the head with a small rapid oscillation (70–80°).
+
+        Centres the neck first, repeats the tight pan 4 times, then returns
+        to center.  Faster and more subtle than shake_no.
+
+        Args:
+            revert: Passed through to move(); if True each sweep reverts.
+        """
         NECK_PAN_MIN = 70
         NECK_PAN_MAX = 80
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+        self.return_to_start(constants.NECK_PAN, constants.NECK_CENTER, delay=0.04)
         for _ in range(4):
             self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.02, revert, .1)
-          
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
+        self.return_to_start(constants.NECK_PAN, constants.NECK_CENTER, delay=0.04)
 
-    def move(self, servo_num=0, start=0, stop=180, delay=0.1, revert=True, revertDelay=0.5):
-        print("moving " + constants.servos[servo_num])
+    # ------------------------------------------------------------------ #
+    # Core synchronous movement primitives                                 #
+    # ------------------------------------------------------------------ #
+
+    def move(self, servo_num=0, start=0, stop=180, delay=0.1, revert=True, revert_delay=0.5):
+        """Sweep a servo from start to stop, then optionally back (blocking).
+
+        Mirrors TrunkController.move but uses time.sleep instead of
+        asyncio.sleep, making it safe to call from threads.
+
+        Args:
+            servo_num:    Channel index of the target servo.
+            start:        Starting angle in degrees.
+            stop:         Destination angle in degrees (clamped to SERVO_MAX_ANGLE).
+            delay:        Seconds to wait between each 1-degree step.
+            revert:       If True, sweep back from stop to start after pausing.
+            revert_delay: Seconds to hold at stop before reverting.
+        """
+        stop = min(stop, SERVO_MAX_ANGLE)
+        start = max(start, 0)
+        print(f"moving {constants.servos[servo_num]}")
         servo = self.kit.servo[servo_num]
         for i in range(start, stop, 1):
             servo.angle = i
-            currentPosition = round(servo.angle)
-            print("Servo angle set " +str(i) + "; angle returned: " + str(currentPosition) )
+            current_position = round(servo.angle)
+            print(f"Servo angle set {i}; angle returned: {current_position}")
             sleep(delay)
 
-        if(revert):
-            sleep(revertDelay)
+        if revert:
+            sleep(revert_delay)
             for i in range(stop, start, -1):
                 servo.angle = i
                 sleep(delay)
 
-    def returnToStart(self, servo_num, start = 0, delay=0.1):
-    
-        # if current pos not start, send back to their gently
-        # or just start their
-        print(f"returning servo num: {servo_num} to start: {start}");
-        print(f"number of servo channels: {self.kit._channels}");
-        print( self.kit.servo[servo_num])
-        print(f"angle: {self.kit.servo[servo_num].angle}")
-        
+    def return_to_start(self, servo_num, start=0, delay=0.1):
+        """Gently move a servo back to its resting position (blocking).
 
-        # check if value is None - it should have been setup with starting value no? Need to move it slowly to start if it isn't
-        if self.kit.servo[servo_num].angle == None:
+        Reads the current angle, then steps toward start one degree at a time.
+        Handles None angle (servo not yet positioned) by snapping to start.
+
+        Args:
+            servo_num: Channel index of the target servo.
+            start:     Target resting angle in degrees.
+            delay:     Seconds between each 1-degree step.
+        """
+        print(f"returning servo num: {servo_num} to start: {start}")
+        print(f"number of servo channels: {self.kit._channels}")
+        print(self.kit.servo[servo_num])
+        print(f"angle: {self.kit.servo[servo_num].angle}")
+
+        if self.kit.servo[servo_num].angle is None:
             self.kit.servo[servo_num].angle = start
 
-        currentPosition = round(self.kit.servo[servo_num].angle)
-    
+        current_position = round(self.kit.servo[servo_num].angle)
 
-        print("return to start " + constants.servos[servo_num] + " which is at " + str(currentPosition))
-        if(currentPosition != start and currentPosition <= 270):
-            if(currentPosition > start):
-                # if decrementing the lower number is second
-                for i in range(currentPosition, start, -1):
-                    print("return to start now " + str(i));
+        print(f"return to start {constants.servos[servo_num]} which is at {current_position}")
+        if current_position != start and current_position <= SERVO_MAX_ANGLE:
+            if current_position > start:
+                for i in range(current_position, start, -1):
+                    print(f"return to start now {i}")
                     self.kit.servo[servo_num].angle = i
                     sleep(delay)
             else:
-                for i in range(currentPosition, start, 1):
+                for i in range(current_position, start, 1):
                     self.kit.servo[servo_num].angle = i
                     sleep(delay)
-    
-    def moveByDir(self, servo_num, start, stop, delay=0.1, increasing=True):
 
-        print("moving " + constants.servos[servo_num] +
-                "; increasing:" + str(increasing))
+    def move_by_dir(self, servo_num, start, stop, delay=0.1, increasing=True):
+        """Move a servo in one direction without auto-returning (blocking).
 
-        # currentPosition = round(self.kit.servo[servo_num].angle)
-        
-        #self.returnToStart(servo_num, start,delay=0.1)
-        
-        if(increasing):
-            print("increasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
+        Args:
+            servo_num:  Channel index of the target servo.
+            start:      Origin angle in degrees.
+            stop:       Destination angle in degrees (clamped to SERVO_MAX_ANGLE).
+            delay:      Seconds between each 1-degree step.
+            increasing: True sweeps start→stop; False sweeps start→stop in
+                        reverse (i.e. stop is lower than start).
+        """
+        stop = min(stop, SERVO_MAX_ANGLE)
+        start = max(start, 0)
+        print(f"moving {constants.servos[servo_num]}; increasing: {increasing}")
+
+        if increasing:
+            print(f"increasing {constants.servos[servo_num]}; start {start}; stop: {stop}")
             for i in range(start, stop, 1):
                 self.kit.servo[servo_num].angle = i
                 print(i)
                 sleep(delay)
         else:
-            print("decreasing " + constants.servos[servo_num] + "; start " + str(start) + "; stop:" + str(stop))
-            for i in range(start, stop,-1):
+            print(f"decreasing {constants.servos[servo_num]}; start {start}; stop: {stop}")
+            for i in range(start, stop, -1):
                 self.kit.servo[servo_num].angle = i
                 print(i)
                 sleep(delay)
-                
-        #self.returnToStart(servo_num, start,delay=0.01)
-    
-    def facePalm(self):
+
+    # ------------------------------------------------------------------ #
+    # Compound gestures                                                    #
+    # ------------------------------------------------------------------ #
+
+    def face_palm(self):
+        """Raise the arm to cover the face while shaking the head.
+
+        Uses a ThreadPoolExecutor to run three arm servos concurrently:
+        - RT_SHOULDER_ROTATOR: raises/lowers the whole arm.
+        - RT_ELBOW_ROTATOR:    rotates the forearm toward the face.
+        - RT_ELBOW_TILT:       bends the elbow to reach the face.
+
+        After a 1.25-second delay the head-shake starts in a fourth thread.
+        All servos are returned to their resting positions after the gesture.
+
+        Note: each thread targets a distinct servo channel, so concurrent
+        writes do not contend on the same channel.
+
+        Approximate face-coverage angles:
+            Shoulder rotator : 200° = mouth, 230° = eyes, 260° = top of head
+            Elbow rotator    : 140° = mouth level
+            Elbow tilt       : 140° = head height
+        """
         RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 260 # cover mouth at 200, 230 eyes, 260 head
-        RT_SHOULDER_TILT_MIN = 0
-        RT_SHOULDER_TILT_MAX = 90
-        RT_ELBOW_ROTATE_MIN = 0
-        RT_ELBOW_ROTATE_MAX = 140 # cover mouth at 140
-        RT_ELBOW_TILT_MIN = 0
-        RT_ELBOW_TILT_MAX = 140 # cover mouth at 170, 150 for eyes, 140 for head
-        NECK_PAN_MIN = 30
-        NECK_PAN_MAX = 150
-        increasing = True
+        RT_SHOULDER_ROTATOR_MAX = 260
+        RT_SHOULDER_TILT_MIN    = 0
+        RT_SHOULDER_TILT_MAX    = 90
+        RT_ELBOW_ROTATE_MIN     = 0
+        RT_ELBOW_ROTATE_MAX     = 140
+        RT_ELBOW_TILT_MIN       = 0
+        RT_ELBOW_TILT_MAX       = 140
+        increasing              = True
 
         start = perf_counter()
+
         with ThreadPoolExecutor(max_workers=5) as exe:
-            future1 = exe.submit(self.moveByDir, constants.RT_SHOULDER_ROTATOR,  RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
-            future3 = exe.submit(self.moveByDir, constants.RT_ELBOW_ROTATOR,  RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.005, increasing)
-            future4 = exe.submit(self.moveByDir, constants.RT_ELBOW_TILT,  RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
+            # Raise arm and position elbow simultaneously.
+            # Each future targets a distinct servo channel — no write contention.
+            future1 = exe.submit(self.move_by_dir, constants.RT_SHOULDER_ROTATOR,
+                                 RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
+            future3 = exe.submit(self.move_by_dir, constants.RT_ELBOW_ROTATOR,
+                                 RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.005, increasing)
+            future4 = exe.submit(self.move_by_dir, constants.RT_ELBOW_TILT,
+                                 RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, increasing)
+            # Delay slightly so arm is in position before head shakes.
             sleep(1.25)
-            future2 = exe.submit(self.shakeHead)
+            future2 = exe.submit(self.shake_head)
 
-            # Maps the method 'cube' with a list of values.
-            #result = exe.map(ConcurrentMovements.moveByDir,values)
-        
-        #print(future1.result())
-
-        #print(future2.result())
-        # TODO 
-        # shake head while hand on it - diff versions of face palm can have head down, up or middle to give nuance
-        #  
+        # Hold the face-palm pose briefly before resetting.
         sleep(3)
-        
-        self.returnToStart(constants.RT_ELBOW_TILT, RT_ELBOW_TILT_MIN,delay=0.005)
-        self.returnToStart(constants.RT_ELBOW_ROTATOR, RT_ELBOW_ROTATE_MIN,delay=0.005)
-        self.returnToStart(constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN,delay=0.005 )
-        self.returnToStart(constants.NECK_PAN, constants.NECK_CENTER,delay=0.04)
-        self.returnToStart(constants.RT_SHOULDER_TILT, RT_SHOULDER_TILT_MIN,delay=0.005)
 
-    
+        # Return all joints to their resting positions.
+        self.return_to_start(constants.RT_ELBOW_TILT,       RT_ELBOW_TILT_MIN,       delay=0.005)
+        self.return_to_start(constants.RT_ELBOW_ROTATOR,    RT_ELBOW_ROTATE_MIN,     delay=0.005)
+        self.return_to_start(constants.RT_SHOULDER_ROTATOR, RT_SHOULDER_ROTATOR_MIN, delay=0.005)
+        self.return_to_start(constants.NECK_PAN,            constants.NECK_CENTER,   delay=0.04)
+        self.return_to_start(constants.RT_SHOULDER_TILT,    RT_SHOULDER_TILT_MIN,    delay=0.005)
+
         finish = perf_counter()
-        print(f"It took {finish-start} second(s) to finish.")
+        print(f"It took {finish - start} second(s) to finish.")
+
 
 def main():
-    mv = ConcurrentMovements("ConcurrentMovements");
-    mv.facePalm()
+    mv = ConcurrentMovements("ConcurrentMovements")
+    mv.face_palm()
 
-   
-   
 
 if __name__ == '__main__':
-   main()
+    main()
