@@ -3,27 +3,33 @@ concurrentMovements.py
 
 Synchronous / thread-based movement choreography using ThreadPoolExecutor.
 
-This module provides an alternative to the async-based Movements class for
-situations where true thread-level parallelism is needed (e.g. running
-multiple servos simultaneously without an event loop).  It uses the blocking
-`time.sleep` and the `concurrent.futures.ThreadPoolExecutor` rather than
-asyncio tasks.
+This module handles gestures that require multiple servos to move at precisely
+the same instant — something asyncio's cooperative scheduling cannot guarantee
+because only one coroutine step executes at a time.  Here each servo gets its
+own OS thread so the loops truly run in parallel.
 
-Typical entry point: run `python concurrentMovements.py` directly to execute
-the facePalm demo.
+When to use this vs movements.py
+---------------------------------
+- movements.py (async):  arm + head run concurrently via asyncio.gather().
+  Good enough for most gestures; interleaving is imperceptible at normal
+  servo speeds.
+- concurrentMovements.py (threads): use when two or more ARM servos must
+  start and track together simultaneously (e.g. face_palm needs shoulder,
+  elbow-tilt, and elbow-rotator all moving at once).
+
+Safety rule: each thread must own distinct servo channels.  Never submit two
+threads that write the same channel — the writes will interleave arbitrarily.
 
 Dependency chain:
     ConcurrentMovements
-        ├── TrunkController  (trunkcontroller.py) — owns the shared ServoKit instance
-        └── Movements        (movements.py)       — async gestures
+        └── TrunkController (trunkcontroller.py) — owns the shared ServoKit instance
 """
 
 from concurrent.futures import ThreadPoolExecutor
 from trunkcontroller import TrunkController, SERVO_MAX_ANGLE
-from movements import Movements
 from time import sleep, perf_counter
 
-import model.constants as constants
+import constants
 
 
 class ConcurrentMovements:
@@ -32,14 +38,10 @@ class ConcurrentMovements:
     def __init__(self, name):
         self.name = name
 
-    # Shared instances (class-level so hardware is initialised once).
-    # TrunkController owns the sole ServoKit instance; use its kit directly
-    # to avoid creating a second ServoKit object for the same I2C board.
+    # TrunkController owns the sole ServoKit instance.  Reference its kit
+    # directly — never instantiate a second ServoKit for the same I2C board.
     trunk = TrunkController("Servo TrunkController")
-    mv    = Movements("Servo Movements")
-
-    # Convenience reference to the shared ServoKit — do NOT instantiate a new one.
-    kit = trunk.kit
+    kit   = trunk.kit
 
     # ------------------------------------------------------------------ #
     # Synchronous head gestures                                            #
@@ -144,9 +146,7 @@ class ConcurrentMovements:
                 for i in range(current_position, start, -1):
                     print(f"return to start now {i}")
                     self.kit.servo[servo_num].angle = i
-                    smoothness = self.smoothFactor(start, currentPosition, i, iterations)
-                    modDelay = delay * smoothness
-                    sleep(modDelay)
+                    sleep(delay)
             else:
                 for i in range(current_position, start, 1):
                     self.kit.servo[servo_num].angle = i
@@ -241,21 +241,6 @@ class ConcurrentMovements:
         finish = perf_counter()
         print(f"It took {finish - start} second(s) to finish.")
 
-
-    """ 
-    Returns a float value between iterations and 1 based on the distance between the current value and the start and end values.
-    Multiply this factor by the delay value.
-    """
-    def smoothFactor(self, start, end, current, iterations):
-        
-        # should we determine the iteration value based on the difference between start and end?
-        #iterations = round(abs(start - end) / 10) # if 270 then it will be 27. If 27 then it will be 3. 
-        if(abs(start - current) <= iterations):
-            return iterations/ (1 + abs(start - current))
-        elif(abs(end - current) <= iterations):
-            return iterations/(1+ abs(end - current))
-        else: 
-            return 1
 
 def main():
     mv = ConcurrentMovements("ConcurrentMovements")

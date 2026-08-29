@@ -15,12 +15,8 @@ Hardware assumptions
 """
 
 from adafruit_servokit import ServoKit
-from time import sleep
 import asyncio
-import math
-import model.constants as constants
-from model.bodyparts import BodyParts
-from adafruit_servokit import ServoKit
+import constants
 
 # Maximum safe angle for all servos on this hardware.
 SERVO_MAX_ANGLE = 270
@@ -64,7 +60,7 @@ class TrunkController:
         """
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 150
-        await self.move(BodyParts.NECK_PAN.value, NECK_PAN_MIN, NECK_PAN_MAX, 1, revert, .1)
+        await self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
         await asyncio.sleep(.5)
 
     async def neck_full_pan(self, revert=True):
@@ -97,7 +93,7 @@ class TrunkController:
         """Nudge the neck tilt servo to its mechanical center (~20°)."""
         NECK_TILT_MIN = 19
         NECK_TILT_MAX = 21
-        await self.move(BodyParts.NECK_TILT.value, NECK_TILT_MIN, NECK_TILT_MAX, 0.005, False, 1)
+        await self.move(constants.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.1, False, 1)
 
     # ------------------------------------------------------------------ #
     # Arm movements                                                        #
@@ -174,7 +170,7 @@ class TrunkController:
             await asyncio.sleep(delay)
 
         if revert:
-            sleep(revert_delay)
+            await asyncio.sleep(revert_delay)
             for i in range(stop, start, -1):
                 servo.angle = i
                 await asyncio.sleep(delay)
