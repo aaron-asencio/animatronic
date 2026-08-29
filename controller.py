@@ -1,46 +1,86 @@
+"""
+controller.py
+
+CLI entry point for testing individual gestures without audio.
+
+Accepts --action and runs the matching Movements coroutine directly.
+Useful for tuning angles and timing before wiring up audio routines.
+
+Usage:
+    python3 controller.py --action=<action_name>
+
+ARM gestures (channels 4–7):
+    wave, come, comein, reachOut, yawnCover
+
+HEAD gestures (channels 0–1):
+    nod, nodYes, lookUp, lookAround, lookAroundSmall, neckEllipse,
+    swivelHead, scan, slowScan, shakeHead, shakeNo, smallShakeNo
+
+COMPOSITE gestures (arm + head simultaneously):
+    waveAndNod, waveAndLookAround, waveAndSwivel,
+    comeAndLook, comeAndSwivel, reachAndLook, yawnAndLookUp, patrol
+"""
+
 from movements import Movements
 import asyncio
-import concurrent.futures
 import argparse
 
-# Arguments
-parser = argparse.ArgumentParser()
 
-parser.add_argument('--action', default=None, help='Action to perform')
+def main(args):
+    """Dispatch --action to the corresponding Movements coroutine.
+
+    Args:
+        args: Parsed argparse Namespace with an 'action' attribute.
+    """
+    mv = Movements("Controller")
+
+    action_map = {
+        # --- ARM gestures ---
+        'wave':             mv.wave,
+        'come':             mv.come,
+        'comein':           mv.comein,
+        'reachOut':         mv.reach_out,
+        'yawnCover':        mv.yawn_cover,
+
+        # --- HEAD gestures ---
+        'nod':              mv.nod,
+        'nodYes':           mv.nod_yes,
+        'lookUp':           mv.look_up,
+        'lookAround':       mv.look_around,
+        'lookAroundSmall':  mv.look_around_small,
+        'neckEllipse':      mv.neck_ellipse,
+        'swivelHead':       mv.swivel_head,
+        'scan':             mv.scan,
+        'slowScan':         mv.slow_scan,
+        'shakeHead':        mv.shake_head,
+        'no':               mv.shake_no,
+        'smno':             mv.small_shake_no,
+
+        # --- COMPOSITE gestures ---
+        'waveAndNod':       mv.wave_and_nod,
+        'waveAndLookAround': mv.wave_and_look_around,
+        'waveAndSwivel':    mv.wave_and_swivel,
+        'comeAndLook':      mv.come_and_look,
+        'comeAndSwivel':    mv.come_and_swivel,
+        'reachAndLook':     mv.reach_and_look,
+        'yawnAndLookUp':    mv.yawn_and_look_up,
+        'patrol':           mv.patrol,
+    }
+
+    print(args.action)
+
+    if args.action in action_map:
+        asyncio.run(action_map[args.action]())
+    elif args.action is not None:
+        print(f"Unknown action: {args.action}")
+        print(f"Available: {', '.join(sorted(action_map))}")
 
 
-args = parser.parse_args()
-
-mv = Movements("Orchstrate Movements")
-       
-#async def main():
-print(args.action)
-
-if (args.action == 'wave'):
-    asyncio.run(mv.wave())
-elif(args.action == 'yes'):
-    asyncio.run(mv.nodYes())
-elif(args.action == 'no'):
-    asyncio.run(mv.shakeNo())
-elif(args.action == 'smno'):
-    asyncio.run(mv.smallShakeNo())    
-elif(args.action == 'lookAround'):
-      asyncio.run(mv.lookAround())
-elif(args.action == 'scan'):
-      asyncio.run(mv.scan())
-elif(args.action == 'slowScan'):
-      asyncio.run(mv.slowScan())      
-elif(args.action == 'swivelHead'):
-    asyncio.run(mv.swivelHead())
-elif(args.action == 'come'):
-    asyncio.run(mv.come())   
-elif(args.action == 'comein'):
-    asyncio.run(mv.comein())       
-elif(args.action == 'neckEllipse'):
-    asyncio.run(mv.neckEllipse())    
-elif(args.action == 'lookAroundSmall'):
-    asyncio.run(mv.lookAroundSmall())    
-    
-
-#asyncio.run(main())
-
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description="Test a single animatronic gesture (no audio)."
+    )
+    parser.add_argument('--action', default=None,
+                        help='Gesture to perform (e.g. wave, comeAndLook, patrol).')
+    args = parser.parse_args()
+    main(args)

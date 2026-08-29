@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Ship It",
+      "trigger": "UserPromptSubmit",
+      "description": "When the user types \"ship it\", pull latest main, create a timestamped branch, commit all changes, push to origin, and open a PR.",
+      "action": {
+        "type": "command",
+        "command": "bash /home/aaron/workspace/animatronic-v2/.kiro/hooks/ship-it.sh"
+      }
+    }
+  ]
+}
