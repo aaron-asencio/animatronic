@@ -27,6 +27,7 @@ class Movements:
 
     def __init__(self, name):
         self.name = name
+        self.DEFAULT_DELAY = 0.05
 
     # Shared controller instance (class-level).
     trunkController = TrunkController("Servo TrunkController")
@@ -45,7 +46,7 @@ class Movements:
         4. Lower the arm and rotate palm back down.
         """
         RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 40
+        RT_SHOULDER_ROTATOR_MAX = 110
 
         RT_ELBOW_ROTATE_MIN = 10
         RT_ELBOW_ROTATE_MAX = 260
@@ -131,9 +132,10 @@ class Movements:
         RT_SHOULDER_ROTATOR_MIN = 0
         RT_SHOULDER_ROTATOR_MAX = 270
         RT_ELBOW_ROTATE_MIN = 0
-        RT_ELBOW_ROTATE_MAX = 80
+        RT_ELBOW_ROTATE_MAX = 45
+        # elbow is reversed here but works for come() so we can't flip
         RT_ELBOW_TILT_MIN = 0
-        RT_ELBOW_TILT_MAX = 50
+        RT_ELBOW_TILT_MAX = 0
 
         increasing = True
 

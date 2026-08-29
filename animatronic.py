@@ -34,6 +34,7 @@ import asyncio
 import shlex
 import subprocess
 import argparse
+#from audio_player import AudioPlayer as player
 
 
 class Animatronic:
@@ -99,7 +100,7 @@ class Animatronic:
     async def wave(self):
         """Wave the arm."""
         mv = Movements("Orchestrate Movements")
-        await asyncio.sleep(self.idle)
+        # await asyncio.sleep(self.idle)
         await mv.wave()
 
     async def look_around_small(self):

@@ -23,7 +23,7 @@ from trunkcontroller import TrunkController, SERVO_MAX_ANGLE
 from movements import Movements
 from time import sleep, perf_counter
 
-import constants
+import model.constants as constants
 
 
 class ConcurrentMovements:
@@ -144,7 +144,9 @@ class ConcurrentMovements:
                 for i in range(current_position, start, -1):
                     print(f"return to start now {i}")
                     self.kit.servo[servo_num].angle = i
-                    sleep(delay)
+                    smoothness = self.smoothFactor(start, currentPosition, i, iterations)
+                    modDelay = delay * smoothness
+                    sleep(modDelay)
             else:
                 for i in range(current_position, start, 1):
                     self.kit.servo[servo_num].angle = i
@@ -239,6 +241,21 @@ class ConcurrentMovements:
         finish = perf_counter()
         print(f"It took {finish - start} second(s) to finish.")
 
+
+    """ 
+    Returns a float value between iterations and 1 based on the distance between the current value and the start and end values.
+    Multiply this factor by the delay value.
+    """
+    def smoothFactor(self, start, end, current, iterations):
+        
+        # should we determine the iteration value based on the difference between start and end?
+        #iterations = round(abs(start - end) / 10) # if 270 then it will be 27. If 27 then it will be 3. 
+        if(abs(start - current) <= iterations):
+            return iterations/ (1 + abs(start - current))
+        elif(abs(end - current) <= iterations):
+            return iterations/(1+ abs(end - current))
+        else: 
+            return 1
 
 def main():
     mv = ConcurrentMovements("ConcurrentMovements")
