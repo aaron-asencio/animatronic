@@ -170,6 +170,77 @@ sudo .venv/bin/python3 src/concurrentMovements.py
 
 ---
 
+## Hardware troubleshooting
+
+Quick standalone scripts to verify each piece of hardware in isolation. All
+require `sudo` (GPIO/I2C access) and are run from the repo root. Each script
+returns the hardware to a safe resting state (LED off, jaw closed) when it
+finishes, even on Ctrl+C.
+
+### Test the LED eyes
+
+Flashes the eye LED on `EYE_LIGHT_PIN` on and off to confirm wiring:
+
+```bash
+# 5 blinks at the default 0.5s on/off
+sudo .venv/bin/python3 src/eyetest.py
+
+# Custom: 10 fast blinks
+sudo .venv/bin/python3 src/eyetest.py --count 10 --on-time 0.25 --off-time 0.25
+```
+
+Options: `--count` (blink cycles, default 5), `--on-time` / `--off-time`
+(seconds, default 0.5).
+
+### Test the jaw motor
+
+Triggers the jaw motor on `MOUTH_MOTOR_PIN` open and closed — the same device
+the audio pipeline pulses from amplitude:
+
+```bash
+# 5 open/close cycles at the default 0.3s
+sudo .venv/bin/python3 src/jawtest.py
+
+# Custom: 10 quick cycles
+sudo .venv/bin/python3 src/jawtest.py --count 10 --on-time 0.15 --off-time 0.15
+```
+
+Options: `--count` (cycles, default 5), `--on-time` / `--off-time` (seconds,
+default 0.3).
+
+### Test / calibrate the servos
+
+`calibrate.py` moves a single servo channel one degree at a time so you can find
+each joint's safe travel and record it in `SAFE_LIMITS` (`src/constants.py`).
+Angles are clamped to the known-safe `SAFE_LIMITS` by default.
+
+```bash
+# Read a channel's current angle (no movement)
+sudo .venv/bin/python3 src/calibrate.py --channel 1 --read
+
+# Move channel 1 to 45 degrees (clamped to SAFE_LIMITS)
+sudo .venv/bin/python3 src/calibrate.py --channel 1 --angle 45
+
+# Nudge a few degrees from the current position (safer for probing)
+sudo .venv/bin/python3 src/calibrate.py --channel 1 --nudge 5
+
+# Bus / wiring health check (no channel needed)
+sudo .venv/bin/python3 src/calibrate.py --health
+```
+
+Key options: `--channel N` (servo channel; see the channel table above),
+`--angle N` (absolute target, clamped to safe limits), `--nudge N` (relative
+move from current angle), `--read` (report angle without moving), `--health`
+(bus/wiring check), `--step-delay S` (seconds per degree, default 0.20),
+`--hold S` (seconds to hold at target, default 3.0).
+
+> **Safety:** driving a servo past its mechanical stop stalls the motor at
+> locked-rotor current, which overheats and can burn it out. Only probe beyond
+> the known-safe range with `--unsafe`, one small `--nudge` at a time, with a
+> hand on the power switch.
+
+---
+
 ## ALSA audio configuration
 
 ALSA config files for the sound card are in `src/config/alsa/`. Copy or symlink
