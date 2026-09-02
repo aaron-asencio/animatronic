@@ -19,8 +19,8 @@ from contextlib import contextmanager
 import pytest
 from hypothesis import given, settings, strategies as st
 
-# Ensure the project root is importable when pytest is run from the repo root.
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure the src/ directory is importable when pytest is run from the repo root.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 import config_store  # noqa: E402
 from config_store import (  # noqa: E402

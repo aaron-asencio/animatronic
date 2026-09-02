@@ -1,0 +1,394 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.0 Create the module scaffold, constants, and path resolution": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320208474
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320222408
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320293424
+      }
+    ],
+    "2.1 Implement `load_profiles()` and `load_profile(name)`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320209778
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320301805
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320355719
+      }
+    ],
+    "3.1 Implement `save_profiles(profiles)`, `update_profile(name, updates)`, and module-level wrappers": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320210355
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320403162
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788324099413
+      }
+    ],
+    "4. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320210816
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326258162
+      }
+    ],
+    "5.1 Load File_Profile in `AudioPlayer.__init__`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320211242
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325473898
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325543700
+      }
+    ],
+    "6.1 Load Mic_Profile in `AudioStreamer.__init__`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320211675
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325475610
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325550152
+      }
+    ],
+    "7.1 Replace `jaw_config` with a `ConfigStore` instance and profile pair": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320212044
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325561305
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325671705
+      }
+    ],
+    "7.2 Add profile selector and validation to `POST /config`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320212506
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325681716
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325906404
+      }
+    ],
+    "7.3 Update `GET /status` to return both profiles": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320212855
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325906969
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325951243
+      }
+    ],
+    "8. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320213259
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326262478
+      }
+    ],
+    "1. Create the `config_store.py` module with defaults and path resolution": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320293861
+      }
+    ],
+    "2. Implement profile read logic in `ConfigStore`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320356131
+      }
+    ],
+    "1.1 Write property test for deterministic path resolution": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320371195
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320404717
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788324158829
+      }
+    ],
+    "1.2 Write unit tests for path-resolution branches": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320372212
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320405444
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788324160216
+      }
+    ],
+    "2.2 Write property test for corrupt or missing config yielding defaults": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320373653
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320407008
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788324160998
+      }
+    ],
+    "2.3 Write unit tests for loaded config shape and missing-file defaults": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320374483
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320407894
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788324162278
+      }
+    ],
+    "3.2 Write property test for profile update isolation": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320378998
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326153791
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326250268
+      }
+    ],
+    "3.3 Write property test for persistence round-trip": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320380005
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326154805
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326251578
+      }
+    ],
+    "3.4 Write unit test for single-file both-profile persistence": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320381342
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326155797
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326252412
+      }
+    ],
+    "6.2 Write property test for the shared jaw-value mapping": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320382779
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325564107
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325669341
+      }
+    ],
+    "7.4 Write property test for out-of-bounds rejection without mutation": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320383752
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325958173
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326146560
+      }
+    ],
+    "7.5 Write property test for unknown-profile rejection without mutation": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320385170
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325959123
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326146742
+      }
+    ],
+    "7.6 Write unit tests for valid updates and status echo": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788320385994
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325959943
+      },
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788326147521
+      }
+    ],
+    "3. Implement profile write and update logic in `ConfigStore`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788324100019
+      }
+    ],
+    "5. Wire the store into `audio_player.py`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325551515
+      }
+    ],
+    "6. Wire the store into `audio_streamer.py`": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325553268
+      }
+    ],
+    "7. Make `micwebcontroller.py` profile-aware": [
+      {
+        "executionId": "b644f868-38a3-47e3-b51a-d8ce222f5964",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788325951945
+      }
+    ]
+  }
+}

@@ -352,7 +352,7 @@
       document.getElementById('v-' + key).textContent =
         (key === 'drop_threshold') ? (+v).toFixed(2) : v;
     }
-    function setJaw(key, value) { post('/jaw', null, {[key]: value}); }
+    function setJaw(key, value) { post('/jaw', null, {profile: 'mic', [key]: value}); }
 
     // ── Automation ───────────────────────────────────────────────────────────
     function setAuto(key, value) {
