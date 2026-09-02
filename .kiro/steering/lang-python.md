@@ -5,7 +5,7 @@ fileMatchPattern: "**/*.py"
 
 # Python Guidelines — animatronic-v2
 
-This project controls a Raspberry Pi-based animatronic figure using servo motors (Adafruit PCA9685/ServoKit) and synchronized audio playback (lightshowpi). All runtime scripts execute as root on the Pi.
+This project controls a Raspberry Pi-based animatronic figure using servo motors (Adafruit PCA9685/ServoKit) and synchronized audio playback (AudioPlayer / AudioStreamer). All runtime scripts execute as root on the Pi.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ constants.py                        ← servo channel assignments and shared con
 
 - `TrunkController` owns the `ServoKit` instance at **class level** (shared across all instances). Never create multiple `ServoKit` objects.
 - `Movements` composes `TrunkController` calls into recognizable gestures.
-- `Animatronic` pairs a `Movements` coroutine with a lightshowpi subprocess to synchronize gesture and audio.
+- `Animatronic` pairs a `Movements` coroutine with `AudioPlayer` (file playback) or `AudioStreamer` (live mic) to synchronize gesture and audio.
 - `ConcurrentMovements` is a thread-based alternative to `Movements` for gestures that need `ThreadPoolExecutor` parallelism (e.g. `facePalm`).
 - `driver.py` is a legacy sandbox — do not import from it or add production logic to it.
 
@@ -60,9 +60,9 @@ constants.py                        ← servo channel assignments and shared con
 ## Audio
 
 - Audio files live in `~/Music/` on the Pi. The local `audio/` folder mirrors them for development reference.
-- lightshowpi is invoked via `subprocess.Popen(cmd, shell=True)`. The command is built by string concatenation — always quote file paths properly to handle spaces.
-- Start the audio subprocess before `asyncio.run(gesture_coroutine())`, and terminate it after the coroutine returns.
-- lightshowpi config files must reside inside the lightshowpi `config/` directory — absolute paths cause lightshowpi to silently fall back to defaults.
+- File playback uses `AudioPlayer.play_audio_file(path)` — runs in a daemon thread started before `asyncio.run(gesture_coroutine())`. The thread is joined after the coroutine returns.
+- Live mic passthrough uses `AudioStreamer.start()` / `AudioStreamer.stop()` — manages its own PyAudio stream lifecycle. Call `start()` before the gesture and `stop()` after.
+- Both classes drive the jaw motor (`MOUTH_MOTOR_PIN`) from the audio amplitude on each chunk. Do not run both simultaneously on the same motor.
 
 ## Running
 

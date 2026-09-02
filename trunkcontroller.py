@@ -14,26 +14,158 @@ Hardware assumptions
 - Channel assignments defined in constants.py.
 """
 
-from adafruit_servokit import ServoKit
 import asyncio
+import os
 import constants
 
 # Maximum safe angle for all servos on this hardware.
 SERVO_MAX_ANGLE = 270
 
+# Expected PWM frequency for hobby servos (Hz). ServoKit sets ~50 Hz on
+# construction. If the PCA9685 browns out (e.g. a loose VCC/logic wire) it can
+# reset and lose this setting, which stops clean PWM output — servos then
+# ignore commands or move erratically. The startup health check reads this back
+# and warns / restores it. Tolerance accounts for the chip's prescaler rounding.
+SERVO_PWM_FREQ_HZ = 50
+SERVO_PWM_FREQ_TOLERANCE = 5  # Hz
+
+# Simulation mode: set SERVO_SIM=1 to run WITHOUT touching real hardware. Every
+# servo write is logged instead of sent over I2C. Lets us verify program flow
+# and exactly what angles WOULD be commanded, with zero risk of a servo moving.
+SERVO_SIM = os.environ.get('SERVO_SIM') == '1'
+
+
+class _FakeServo:
+    """Stand-in for a single servo channel in simulation mode."""
+    def __init__(self, channel):
+        self._channel = channel
+        self._angle = None  # unknown until commanded, mirrors real hardware
+
+    @property
+    def angle(self):
+        return self._angle
+
+    @angle.setter
+    def angle(self, value):
+        self._angle = value
+        print(f"[SIM] servo[{self._channel}].angle = {value}")
+
+    @property
+    def actuation_range(self):
+        return SERVO_MAX_ANGLE
+
+    @actuation_range.setter
+    def actuation_range(self, value):
+        # Deliberately does nothing but log — proves configuration never
+        # commands motion in sim.
+        print(f"[SIM] servo[{self._channel}].actuation_range = {value} (no motion)")
+
+
+class _FakePCA:
+    """Stand-in for the underlying PCA9685 in simulation mode."""
+    def __init__(self):
+        self.frequency = SERVO_PWM_FREQ_HZ
+
+
+class _FakeKit:
+    """Stand-in for ServoKit in simulation mode."""
+    def __init__(self, channels=16):
+        self._channels = channels
+        self.servo = {i: _FakeServo(i) for i in range(channels)}
+        self._pca = _FakePCA()
+
+
+def _make_kit():
+    """Construct the real ServoKit, or a simulated one if SERVO_SIM=1."""
+    if SERVO_SIM:
+        print("SERVO_SIM=1 -> using simulated servo kit (NO hardware writes)")
+        return _FakeKit(channels=16)
+    # Imported lazily so sim mode doesn't require the hardware libs/board.
+    from adafruit_servokit import ServoKit
+    return ServoKit(channels=16)
+
 
 class TrunkController:
     """Controls individual servo joints on the animatronic body."""
 
+    # Shared kit instance (class-level so all instances share one board).
+    # NOTE: constructing the kit does NOT command any servo to move.
+    kit = _make_kit()
+
+    # Track which channels we've configured so we only do it once.
+    _configured = False
+
     def __init__(self, name):
         self.name = name
+        # Configure actuation range lazily on first construction, and ONLY for
+        # the channels we actually drive. Doing this at import time / for all
+        # 16 channels was making unused and attached servos twitch on startup
+        # (constructing a Servo sets its pulse-width range, which can emit a
+        # pulse and jerk the horn — this is what slammed the neck down).
+        if not TrunkController._configured:
+            self._configure_channels()
+            self.health_check()
+            TrunkController._configured = True
 
-    # Shared ServoKit instance (class-level so all instances share one board).
-    kit = ServoKit(channels=16)
-    for i in range(0, 16):
-        kit.servo[i].actuation_range = SERVO_MAX_ANGLE
+    @classmethod
+    def health_check(cls, fix=True):
+        """Verify the PCA9685 is initialised and warn on a brownout signature.
 
-    print("servo setup")
+        Reads back the PWM frequency. If it's missing/zero or far from the
+        expected servo frequency, the chip likely reset (commonly a loose VCC /
+        logic-power wire) — a state where servos accept commands over I2C but
+        never actually move, or move erratically. When fix=True we re-set the
+        frequency to recover without a manual power-cycle.
+
+        Returns:
+            True if the frequency looks healthy (after any fix), False otherwise.
+        """
+        try:
+            pca = cls.kit._pca
+            freq = pca.frequency
+        except Exception as e:
+            print(f"HEALTH CHECK: could not read PWM frequency from PCA9685: {e}. "
+                  f"Check the board's VCC/logic power and I2C wiring.")
+            return False
+
+        low = SERVO_PWM_FREQ_HZ - SERVO_PWM_FREQ_TOLERANCE
+        high = SERVO_PWM_FREQ_HZ + SERVO_PWM_FREQ_TOLERANCE
+        if freq is None or not (low <= freq <= high):
+            print(f"HEALTH CHECK WARNING: PWM frequency is {freq} Hz, expected "
+                  f"~{SERVO_PWM_FREQ_HZ} Hz. The PCA9685 likely browned out / "
+                  f"reset (check the VCC/logic-power wire — a loose VCC causes "
+                  f"servos to ignore commands or move erratically).")
+            if fix:
+                try:
+                    pca.frequency = SERVO_PWM_FREQ_HZ
+                    print(f"HEALTH CHECK: reset PWM frequency to "
+                          f"{SERVO_PWM_FREQ_HZ} Hz. If servos still don't move, "
+                          f"the VCC connection is likely still intermittent.")
+                    return low <= pca.frequency <= high
+                except Exception as e:
+                    print(f"HEALTH CHECK: failed to reset frequency: {e}")
+                    return False
+            return False
+
+        print(f"HEALTH CHECK OK: PWM frequency {freq} Hz.")
+        return True
+
+    @classmethod
+    def _configure_channels(cls):
+        """Set actuation_range on the channels we use, without commanding motion.
+
+        We do NOT write .angle here — only .actuation_range — so no servo is
+        told to move. Any per-channel error is caught so one bad channel can't
+        crash startup.
+        """
+        for channel in constants.servos:  # only our real joints, not all 16
+            try:
+                cls.kit.servo[channel].actuation_range = SERVO_MAX_ANGLE
+            except Exception as e:
+                name = constants.servos.get(channel, f"ch{channel}")
+                print(f"WARN: could not configure {name} (ch{channel}): {e}")
+        print("servo setup (configured channels: "
+              f"{sorted(constants.servos)})")
 
     # Human-readable servo name map (mirrors constants.servos).
     servos = {}
@@ -46,6 +178,53 @@ class TrunkController:
 
     # Neutral/center angle for the neck pan servo (degrees).
     NECK_CENTER = 90
+
+    # ------------------------------------------------------------------ #
+    # Safety: clamp every write to the mechanism's SAFE_LIMITS             #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def clamp_angle(servo_num, angle):
+        """Clamp a commanded angle to the safe range for this channel.
+
+        Falls back to the servo electrical range [0, SERVO_MAX_ANGLE] for any
+        channel without an explicit SAFE_LIMITS entry. This is the single point
+        that guarantees no gesture can drive a servo into a mechanical jam.
+
+        Args:
+            servo_num: Channel index.
+            angle:     Requested angle in degrees.
+
+        Returns:
+            The clamped angle (float/int) guaranteed within the safe range.
+        """
+        lo, hi = constants.SAFE_LIMITS.get(servo_num, (0, SERVO_MAX_ANGLE))
+        if angle < lo:
+            return lo
+        if angle > hi:
+            return hi
+        return angle
+
+    def set_angle(self, servo_num, angle):
+        """Write an angle to a servo AFTER clamping to its safe range.
+
+        Every servo write in this class MUST go through here. Logs when a
+        requested angle is clamped so out-of-range gestures are visible.
+
+        Args:
+            servo_num: Channel index.
+            angle:     Requested angle in degrees.
+
+        Returns:
+            The angle actually written (post-clamp).
+        """
+        safe = self.clamp_angle(servo_num, angle)
+        if safe != angle:
+            name = constants.servos.get(servo_num, f"ch{servo_num}")
+            print(f"CLAMPED {name}: requested {angle} -> {safe} "
+                  f"(safe range {constants.SAFE_LIMITS.get(servo_num)})")
+        self.kit.servo[servo_num].angle = safe
+        return safe
 
     # ------------------------------------------------------------------ #
     # Neck movements                                                       #
@@ -159,20 +338,20 @@ class TrunkController:
             revert:      If True, sweep back from stop to start after pausing.
             revert_delay: Seconds to pause at the stop position before reverting.
         """
-        stop = min(stop, SERVO_MAX_ANGLE)
-        start = max(start, 0)
+        # Clamp the sweep endpoints to the mechanism's safe range so the loop
+        # never even iterates into a jam. set_angle re-clamps each write too.
+        start = self.clamp_angle(servo_num, max(start, 0))
+        stop = self.clamp_angle(servo_num, min(stop, SERVO_MAX_ANGLE))
         print(f"moving {constants.servos[servo_num]}")
-        servo = self.kit.servo[servo_num]
-        for i in range(start, stop, 1):
-            servo.angle = i
-            current_position = round(servo.angle)
-            print(f"Servo angle set {i}; angle returned: {current_position}")
+        step = 1 if stop >= start else -1
+        for i in range(start, stop, step):
+            self.set_angle(servo_num, i)
             await asyncio.sleep(delay)
 
         if revert:
             await asyncio.sleep(revert_delay)
-            for i in range(stop, start, -1):
-                servo.angle = i
+            for i in range(stop, start, -step):
+                self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
 
     async def slow_scan(self, revert=True):
@@ -206,9 +385,12 @@ class TrunkController:
         print(self.kit.servo[servo_num])
         print(f"angle: {self.kit.servo[servo_num].angle}")
 
-        # If the servo has never been commanded, snap it to start.
+        # Clamp the target so a caller can't ask us to rest into a jam.
+        start = self.clamp_angle(servo_num, start)
+
+        # If the servo has never been commanded, snap it to start (clamped).
         if self.kit.servo[servo_num].angle is None:
-            self.kit.servo[servo_num].angle = start
+            self.set_angle(servo_num, start)
 
         current_position = round(self.kit.servo[servo_num].angle)
 
@@ -216,12 +398,11 @@ class TrunkController:
         if current_position != start and current_position <= SERVO_MAX_ANGLE:
             if current_position > start:
                 for i in range(current_position, start, -1):
-                    print(f"return to start now {i}")
-                    self.kit.servo[servo_num].angle = i
+                    self.set_angle(servo_num, i)
                     await asyncio.sleep(delay)
             else:
                 for i in range(current_position, start, 1):
-                    self.kit.servo[servo_num].angle = i
+                    self.set_angle(servo_num, i)
                     await asyncio.sleep(delay)
 
     async def move_by_dir(self, servo_num, start, stop, delay=0.1, increasing=True):
@@ -237,22 +418,20 @@ class TrunkController:
             delay:      Seconds between each 1-degree step.
             increasing: True to sweep from start→stop; False for stop→start.
         """
-        stop = min(stop, SERVO_MAX_ANGLE)
-        start = max(start, 0)
+        start = self.clamp_angle(servo_num, max(start, 0))
+        stop = self.clamp_angle(servo_num, min(stop, SERVO_MAX_ANGLE))
         print(f"moving {constants.servos[servo_num]}; increasing: {increasing}")
         await self.return_to_start(servo_num, start, delay=0.1)
 
         if increasing:
             print(f"increasing {constants.servos[servo_num]}; start {start}; stop: {stop}")
             for i in range(start, stop, 1):
-                self.kit.servo[servo_num].angle = i
-                print(i)
+                self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
         else:
             print(f"decreasing {constants.servos[servo_num]}; start {start}; stop: {stop}")
             for i in range(start, stop, -1):
-                self.kit.servo[servo_num].angle = i
-                print(i)
+                self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
 
         await self.return_to_start(servo_num, start, delay=0.1)
@@ -271,25 +450,41 @@ class TrunkController:
             delay:      Seconds between each 1-degree step.
             increasing: True sweeps start→stop; False sweeps stop→start.
         """
-        stop = min(stop, SERVO_MAX_ANGLE)
-        start = max(start, 0)
+        start = self.clamp_angle(servo_num, max(start, 0))
+        stop = self.clamp_angle(servo_num, min(stop, SERVO_MAX_ANGLE))
         print(f"moving {constants.servos[servo_num]}; increasing: {increasing}")
 
         if increasing:
             for i in range(start, stop, 1):
-                self.kit.servo[servo_num].angle = i
+                self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
 
         if not increasing:
             print(f"not increasing {constants.servos[servo_num]}")
             print(f"start {start}; stop: {stop}")
             for i in range(stop, start, -1):
-                self.kit.servo[servo_num].angle = i
+                self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
 
     # ------------------------------------------------------------------ #
     # Diagnostics & composite tests                                        #
     # ------------------------------------------------------------------ #
+
+    async def return_to_rest(self):
+        """Drive every configured servo to its safe REST_POSITION.
+
+        Called between routines and — critically — after any error, so servos
+        are never left energized against a jam. Moves gently (step-by-step via
+        return_to_start) and never raises: a failure here must not mask the
+        original error, and we still want to attempt every other servo.
+        """
+        print("return_to_rest: moving all servos to safe resting positions")
+        for servo_num, rest_angle in constants.REST_POSITIONS.items():
+            try:
+                await self.return_to_start(servo_num, rest_angle, delay=0.03)
+            except Exception as e:
+                name = constants.servos.get(servo_num, f"ch{servo_num}")
+                print(f"return_to_rest: failed to rest {name}: {e}")
 
     def display_position(self):
         """Print the current angle of every configured servo channel."""

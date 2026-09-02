@@ -109,3 +109,6 @@ path/
 # Application logs
 *.log
 app.log
+
+# Servo mutual-exclusion lockfile (runtime, machine-local)
+.servo.lock
