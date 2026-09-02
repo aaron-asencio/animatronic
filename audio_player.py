@@ -8,47 +8,76 @@ from gpiozero import DigitalOutputDevice
 from datetime import datetime
 from utils.audio_utils import AudioUtils
 from model.constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
+from config_store import load_profile, PROFILE_FILE
 import logging
 import sys
 
 class AudioPlayer:
-    def __init__(self):
+    def __init__(self, sensitivity=None, noise_floor=None, drop_threshold=None):
+        """Initialise the audio player and jaw motor.
+
+        Jaw-tuning parameters default to the persisted File_Profile loaded from
+        the Config_Store. Explicit arguments, when provided, override the
+        corresponding profile value.
+
+        Args:
+            sensitivity:     Optional override for the peak amplitude divisor.
+                             When None, the File_Profile value is used. Lower =
+                             more sensitive. Voice audio typically peaks
+                             1000–8000; the profile default is 500.
+            noise_floor:     Optional override for the noise-floor gate. When
+                             None, the File_Profile value is used. Absolute peak
+                             value below which the jaw stays closed, eliminating
+                             jitter from background noise between words.
+            drop_threshold:  Optional override for the snap-shut ratio. When
+                             None, the File_Profile value is used. Ratio below
+                             which a falling jaw value snaps closed: sharp drop
+                             (ratio < threshold) → close jaw; gradual drop
+                             (ratio >= threshold) → hold open.
+        """
         logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.led_eye_light = LED(EYE_LIGHT_PIN)
-        #self.jaw_motor = LED(MOUTH_MOTOR_PIN)
         self.jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
-         # Audio parameters
-        self.CHUNK = 1024  # Frames per buffer
-        self.FORMAT = pa.paInt16  # 16-bit audio
-        self.CHANNELS = 1  # Mono
-        
-        self.RATE = 48000  # Sample rate (Hz)
+
+        # Audio parameters
+        self.CHUNK = 1024       # Frames per buffer
+        self.FORMAT = pa.paInt16
+        self.CHANNELS = 1       # Mono
+        self.RATE = 48000       # Sample rate (Hz)
+
+        # Jaw tuning — sourced from the persisted File_Profile; explicit args
+        # override. Adjustable at runtime via /config on micwebcontroller.
+        profile = load_profile(PROFILE_FILE)
+        self.sensitivity = sensitivity if sensitivity is not None else profile["sensitivity"]
+        self.noise_floor = noise_floor if noise_floor is not None else profile["noise_floor"]
+        self.drop_threshold = drop_threshold if drop_threshold is not None else profile["drop_threshold"]
         self.previous_jaw_value = None
-        self.drop_threshold = .20
-    
+
     def talk(self, audio_data, start_time):
-       
-                   
-        print(f"intial previous_jaw_value jaw_value: { self.previous_jaw_value }")
-        self.jaw_motor.value 
-        # copy audio_data otherwise the buffer gets messed up
+        # copy audio_data so the PyAudio buffer is not modified in place
         data = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
         peak = np.max(np.abs(data))
-        jaw_value = int(min(peak / 50, 100))
-        
-        # # jaw value is less than previous but may be enough to keep jaw open. if it drops enough, we want the jaw to no stay open
-        if(self.previous_jaw_value is not None and jaw_value < self.previous_jaw_value  ):
-            diff = jaw_value / self.previous_jaw_value
-            
-            if(diff > self.drop_threshold):
-                print(f"Drop greater than {self.drop_threshold}")
-                jaw_value = 0 # setting to a percentage like jaw_value = jaw_value * .75 didn't improve noticably
-        
-        normalized_jaw_value = round(jaw_value / 100)
-        print(f"Peak: {peak}; Jaw Value: {jaw_value}; Normalized jaw value: {normalized_jaw_value}; Previous jaw: {self.previous_jaw_value}" )
-        self.jaw_motor.value = normalized_jaw_value 
-        #AudioUtils.bar_graph(data, peak, start_time) # this breaks call from nodered
-        previous_jaw_value = jaw_value   
+
+        # Noise floor gate: close jaw and bail if this is just background noise.
+        if peak < self.noise_floor:
+            self.jaw_motor.value = 0.0
+            self.previous_jaw_value = 0.0
+            return
+
+        # Scale peak to 0–100 using sensitivity divisor.
+        jaw_value = float(min(peak / self.sensitivity * 100, 100))
+
+        # Drop-threshold: sharp drop (ratio < threshold) → close jaw.
+        # Gradual drop (ratio >= threshold) → hold open (natural speech decay).
+        if self.previous_jaw_value is not None and self.previous_jaw_value > 0 and jaw_value < self.previous_jaw_value:
+            ratio = jaw_value / self.previous_jaw_value
+            if ratio < self.drop_threshold:
+                jaw_value = 0.0
+
+        motor_value = jaw_value / 100.0
+        print(f"Peak: {peak:.0f}; Jaw: {jaw_value:.1f}%; Motor: {motor_value:.2f}; Prev: {self.previous_jaw_value}")
+        self.jaw_motor.value = motor_value
+        self.previous_jaw_value = jaw_value
             
 
     def play_audio_file(self, audio_file, output_device_index=2):

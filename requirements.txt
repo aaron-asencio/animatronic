@@ -24,8 +24,15 @@ RPi.GPIO==0.7.1
 lgpio==0.2.2.0
 gpiozero==2.0.1
 
-# Audio input (used by lightshowpi mic mode)
+# Audio playback and mic streaming (AudioPlayer, AudioStreamer)
 PyAudio==0.2.14
 
-# Numerical processing (FFT used by lightshowpi)
+# Numerical processing (amplitude analysis for jaw motor sync)
 numpy==2.3.4
+
+# Web control UI (micwebcontroller)
+flask==3.1.2
+
+# Test dependencies (dev)
+pytest==9.1.1
+hypothesis==6.167.1
