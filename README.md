@@ -33,24 +33,31 @@ physical gestures with audio playback via PyAudio (`AudioPlayer` /
 
 ```
 animatronic-v2/
-├── constants.py            # Servo channel numbers and default positions
-├── trunkcontroller.py      # Low-level async servo primitives (move, pan, tilt …)
-├── movements.py            # High-level async gesture choreography (wave, nod …)
-├── concurrentMovements.py  # Thread-based gestures using ThreadPoolExecutor
-├── animatronic.py          # Named routines pairing gestures with audio
-├── controller.py           # CLI entry point for individual gesture testing
-├── audio_player.py         # PyAudio WAV/MP3 file player with jaw-motor sync
-├── audio_streamer.py       # Live mic passthrough with effects and jaw-motor sync
-├── micwebcontroller.py     # Flask app: mic stream + jaw tuning + voice effects (port 5000)
-├── webapp.py               # Flask control panel — replaces the Node-RED dashboard (port 8000)
-├── templates/
-│   └── index.html          # Control-panel UI served by webapp.py
-├── audio/                  # WAV/MP3 files (deployed to ~/Music/ on the Pi)
-├── requirements.txt        # Pinned Python dependencies
-└── config/
-    ├── flows.json           # Node-RED flow definitions (legacy dashboard)
-    ├── murdercity_flows.json
-    └── alsa/               # ALSA sound-card configuration
+├── src/
+│   ├── constants.py            # Servo channels, SAFE_LIMITS, REST_POSITIONS
+│   ├── trunkcontroller.py      # Low-level async servo primitives
+│   ├── movements.py            # High-level async gesture choreography
+│   ├── concurrentMovements.py  # Thread-based gestures (ThreadPoolExecutor)
+│   ├── animatronic.py          # Named routines pairing gestures with audio
+│   ├── controller.py           # CLI entry point for gesture testing
+│   ├── audio_player.py         # WAV/MP3 file player with jaw-motor sync
+│   ├── audio_streamer.py       # Live mic passthrough + effects + jaw sync
+│   ├── config_store.py         # Shared tuning config (jaw profiles; servo limits later)
+│   ├── servo_lock.py           # Cross-process servo mutex (fcntl)
+│   ├── calibrate.py            # Interactive single-servo limit finder
+│   ├── eyetest.py              # Flash the eye LED (EYE_LIGHT_PIN) hardware test
+│   ├── micwebcontroller.py     # Flask: mic stream + jaw tuning + voice FX (port 5000)
+│   ├── webapp.py               # Flask control panel UI (port 8000)
+│   ├── model/  utils/  action/ # Supporting packages
+│   ├── templates/index.html    # Control-panel UI served by webapp.py
+│   └── config/
+│       ├── tuning.json         # Jaw tuning profiles (auto-created; version-controlled)
+│       └── alsa/               # ALSA sound-card configuration
+├── tests/                      # pytest suite (hypothesis property + unit tests)
+├── audio/                      # WAV/MP3 files (deployed to ~/Music/ on the Pi)
+├── .venv/                      # Python virtualenv (repo root)
+├── requirements.txt
+└── README.md
 ```
 
 ### Layer overview
@@ -119,8 +126,10 @@ pip install -r requirements.txt
 
 ### Run a named animatronic routine (gesture + audio)
 
+Run from the repo root (the venv lives at the repo root):
+
 ```bash
-sudo python3 animatronic.py --action=<action>
+sudo .venv/bin/python3 src/animatronic.py --action=<action>
 ```
 
 Available actions:
@@ -146,7 +155,7 @@ Available actions:
 ### Test an individual gesture (no audio)
 
 ```bash
-python3 controller.py --action=<action>
+sudo .venv/bin/python3 src/controller.py --action=<action>
 ```
 
 Available gesture actions: `wave`, `yes`, `no`, `smno`, `lookAround`,
@@ -156,14 +165,14 @@ Available gesture actions: `wave`, `yes`, `no`, `smno`, `lookAround`,
 ### Run the face-palm concurrent movement demo
 
 ```bash
-python3 concurrentMovements.py
+sudo .venv/bin/python3 src/concurrentMovements.py
 ```
 
 ---
 
 ## ALSA audio configuration
 
-ALSA config files for the sound card are in `config/alsa/`. Copy or symlink
+ALSA config files for the sound card are in `src/config/alsa/`. Copy or symlink
 them to their system locations on the Pi:
 
 ```bash
@@ -177,19 +186,18 @@ arecord -l  # capture devices
 
 ---
 
-## Web control panel (recommended)
+## Web control panel
 
-`webapp.py` is a self-contained Flask + HTML control panel that replaces the
-Node-RED dashboard. It serves a single page with all the controls and talks to
-the same underlying scripts, so there is no `flows.json` to import and no
-Node-RED process to run.
+`webapp.py` is a self-contained Flask + HTML control panel — the only UI for the
+system. It serves a single page with all the controls and talks to the same
+underlying scripts.
 
 ### What it controls
 
 | Section | What it does | How |
 |---------|--------------|-----|
-| **Routines** | Full gesture + audio routines | Runs `animatronic.py --action=<name>` as a subprocess |
-| **Movements** | Gesture-only tests (no audio) | Runs `controller.py --action=<name>` as a subprocess |
+| **Routines** | Full gesture + audio routines | Runs `src/animatronic.py --action=<name>` as a subprocess |
+| **Movements** | Gesture-only tests (no audio) | Runs `src/controller.py --action=<name>` as a subprocess |
 | **Voice FX** | Mic start/stop, style presets, per-effect toggles/sliders | Proxied to `micwebcontroller.py` |
 | **Jaw Tuning** | Sensitivity / noise floor / drop threshold | Proxied to `micwebcontroller.py` |
 | **Automation** | Timed random routine (5 min) and movement (45 sec) loops | Background threads in `webapp.py` |
@@ -200,17 +208,17 @@ Node-RED process to run.
 Tuning tabs to work (that process owns the mic stream and effects engine).
 
 ```bash
-cd /home/pi/workspace/animatronic-v2
+# Run from the repo root
 
 # 1. Start the mic controller (owns the PyAudio stream + effects) on port 5000
-sudo .venv/bin/python3 micwebcontroller.py &
+sudo .venv/bin/python3 src/micwebcontroller.py &
 
 # 2. Start the control panel on port 8000 (auto-reload is on by default)
-sudo .venv/bin/python3 webapp.py
+sudo .venv/bin/python3 src/webapp.py
 ```
 
 > Auto-reload restarts the app when you edit code. For the live display, run
-> `WEBAPP_DEV=0 sudo .venv/bin/python3 webapp.py` to disable it — see
+> `WEBAPP_DEV=0 sudo .venv/bin/python3 src/webapp.py` to disable it — see
 > [Dev auto-reload](#dev-auto-reload) below.
 
 Then open the panel in a browser on the same network:
@@ -234,8 +242,8 @@ Two layers enforce this:
 
 - **Hardware-level lock** — `servo_lock.py` holds a cross-process file lock
   (`/tmp/animatronic_servo.lock`) for the duration of every routine. Any second
-  process that tries to move the servos (web app, automation loop, manual CLI,
-  or a leftover Node-RED exec) fails fast and exits with code 3. The OS releases
+  process that tries to move the servos (web app, automation loop, or manual
+  CLI) fails fast and exits with code 3. The OS releases
   the lock automatically if a process crashes, so there are no stale locks.
 - **UI interlock** — while a routine runs, the control panel shows a "moving"
   banner, disables all Routine and Movement buttons, and marks the status bar
@@ -253,104 +261,35 @@ edit `webapp.py` or any of the sibling project modules (`servo_lock.py`,
 `animatronic.py`, `controller.py`, etc.). Just run it normally:
 
 ```bash
-.venv/bin/python3 webapp.py
+.venv/bin/python3 src/webapp.py
 ```
 
 For the **live display**, disable auto-reload so a reload triggered mid-routine
 can't interrupt servo motion. Set `WEBAPP_DEV=0` (also accepts `false`/`no`/`off`):
 
 ```bash
-WEBAPP_DEV=0 sudo .venv/bin/python3 webapp.py
+WEBAPP_DEV=0 sudo .venv/bin/python3 src/webapp.py
 ```
 
 (The reloader is reloader-safe: the automation threads start only in the worker
 process, never doubled across the watcher and worker.)
 
-### How it maps to the old Node-RED dashboard
+### Running the mic controller in the background
 
-Everything the Node-RED "Halloween Controller" did is preserved:
-
-- The **Routines** and **Movements** button groups became button grids that POST
-  to `/routine/<action>` and `/movement/<action>`. Actions are validated against
-  an allowlist before a subprocess is launched — the same security boundary the
-  old `exec` nodes relied on.
-- The **Voice FX** and **Jaw Tuning** tabs POST to `/effects` and `/jaw`, which
-  proxy straight through to `micwebcontroller.py` — the same endpoints the
-  Node-RED sliders hit.
-- The two **Automation** toggles replace the `looptimer` + `random` + `Switch`
-  node chains with plain background threads. This also fixes the old bug where
-  the random generator only produced 0–2 while the switch handled up to 10
-  cases: the loops now pick uniformly from the full action pools.
-
-The Node-RED flow (`config/flows.json`) is kept as a legacy option but is no
-longer required.
-
----
-
-## Starting Node-RED (legacy)
-
-If you prefer the original Node-RED dashboard instead of the web control panel,
-the system needs two services running on the Pi: the Flask mic controller and
-Node-RED.
-
-### Flask web app (`micwebcontroller.py`)
-
-Handles mic stream start/stop requests from Node-RED via HTTP. Node-RED's
-"Enable Mic Streaming" toggle POSTs to `http://localhost:5000/handler`.
+`micwebcontroller.py` (port 5000) owns the PyAudio stream and effects engine, so
+it must be running for the Voice FX and Jaw Tuning tabs to work. To run it in the
+background and keep it alive across SSH sessions:
 
 ```bash
-# Run as root (requires GPIO access for the jaw motor)
-cd /home/pi/workspace/animatronic-v2
-sudo .venv/bin/python3 micwebcontroller.py
+sudo nohup .venv/bin/python3 src/micwebcontroller.py > /tmp/micwebcontroller.log 2>&1 &
 ```
 
-The server starts on port 5000. Verify it's up:
+Verify it's up:
 
 ```bash
 curl http://localhost:5000/status
 # {"streaming": false}
 ```
-
-To run it in the background and keep it alive across SSH sessions:
-
-```bash
-sudo nohup .venv/bin/python3 micwebcontroller.py > /tmp/webcontroller.log 2>&1 &
-```
-
-### Node-RED
-
-Node-RED provides the "Halloween Controller" dashboard UI. If it's not
-already running as a service:
-
-```bash
-# Start Node-RED (runs on port 1880)
-node-red
-
-# Or if installed as a service on the Pi
-sudo systemctl start nodered
-sudo systemctl enable nodered   # auto-start on boot
-```
-
-Open the dashboard in a browser on the same network:
-
-```
-http://<pi-ip-address>:1880/ui
-```
-
-To edit flows or import an updated `flows.json`:
-
-```
-http://<pi-ip-address>:1880
-```
-
-Menu → Import → select `config/flows.json`.
-
-### Typical startup order
-
-1. `sudo .venv/bin/python3 micwebcontroller.py` — start the Flask web app
-2. `sudo systemctl start nodered` (or `node-red`) — start Node-RED
-3. Open `http://<pi-ip>:1880/ui` in a browser
-4. Use the dashboard buttons to trigger routines or enable automation
 
 ---
 
@@ -358,10 +297,10 @@ Menu → Import → select `config/flows.json`.
 
 When the mic stream is running (`micwebcontroller.py`), live audio is analysed
 to drive the jaw motor and passed through a chain of voice effects before
-playback. Everything is tunable at runtime from the Node-RED dashboard — no
+playback. Everything is tunable at runtime from the web control panel — no
 restart needed while you experiment.
 
-The dashboard is split across three tabs to keep it uncluttered:
+The control panel is split across three tabs to keep it uncluttered:
 
 - **Controller** — Routines and Movements
 - **Voice FX** — voice style presets and per-effect toggles/sliders
@@ -458,8 +397,8 @@ styles.
 ## Adding a new routine
 
 1. Add an audio file to `audio/` and copy it to `~/Music/` on the Pi.
-2. Add the filename to the `music` list in `animatronic.py` (with an index comment).
+2. Add the filename to the `music` list in `src/animatronic.py` (with an index comment).
 3. Create a method on `Animatronic` calling `self.run_action_and_audio("gesture_name", self.music[n])`.
-4. Add the action name to the `action_map` dict in `main()` in `animatronic.py`.
-5. Optionally register the gesture in `controller.py` for audio-free testing.
-6. Test the gesture alone first: `python3 controller.py --action=<gesture>`.
+4. Add the action name to the `action_map` dict in `main()` in `src/animatronic.py`.
+5. Optionally register the gesture in `src/controller.py` for audio-free testing.
+6. Test the gesture alone first: `sudo .venv/bin/python3 src/controller.py --action=<gesture>`.

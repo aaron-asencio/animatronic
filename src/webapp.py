@@ -43,8 +43,12 @@ app = Flask(__name__)
 # ── Paths / config ───────────────────────────────────────────────────────────
 # Absolute paths so subprocess launches work regardless of cwd (matches the
 # hardcoded deployment paths used elsewhere in the project).
+# PROJECT_DIR is the src/ directory containing this module. The .venv lives at
+# the repo root (the parent of src/), while the gesture scripts (animatronic.py
+# and controller.py) are siblings of this module inside src/.
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-VENV_PYTHON = os.path.join(PROJECT_DIR, '.venv', 'bin', 'python3')
+REPO_ROOT = os.path.dirname(PROJECT_DIR)
+VENV_PYTHON = os.path.join(REPO_ROOT, '.venv', 'bin', 'python3')
 ANIMATRONIC = os.path.join(PROJECT_DIR, 'animatronic.py')
 CONTROLLER = os.path.join(PROJECT_DIR, 'controller.py')
 
@@ -370,6 +374,10 @@ def mic(state):
 @app.route('/jaw', methods=['POST'])
 def jaw():
     data = request.json or {}
+    # This control panel drives the live mic passthrough, so jaw tuning
+    # here targets the mic profile. Default it if the client omitted it so
+    # micwebcontroller's profile allowlist check passes.
+    data.setdefault('profile', 'mic')
     body, code = _proxy('POST', '/config', data)
     return jsonify(body), code
 

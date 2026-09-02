@@ -9,7 +9,7 @@ This project controls a Raspberry Pi-based animatronic figure using servo motors
 
 ## Architecture
 
-The codebase is layered. Higher layers call lower ones — never the reverse.
+The codebase is layered. Higher layers call lower ones — never the reverse. All modules below live under `src/`.
 
 ```
 animatronic.py / controller.py      ← top-level: gesture + audio routines / CLI dispatch
@@ -55,7 +55,7 @@ constants.py                        ← servo channel assignments and shared con
 1. Add any new servo primitive to `TrunkController` as an `async` method if it doesn't already exist.
 2. Compose the gesture in `Movements` using `TrunkController` calls.
 3. To pair with audio: add the filename to `Animatronic.music` (with an index comment), add a method calling `self.runActionAndAudio(gesture, self.music[n])`, and register it in `action_map` in `main()`.
-4. Register the gesture in `controller.py` if gesture-only CLI testing is needed.
+4. Register the gesture in `src/controller.py` if gesture-only CLI testing is needed.
 
 ## Audio
 
@@ -66,6 +66,6 @@ constants.py                        ← servo channel assignments and shared con
 
 ## Running
 
-- Full routines require root: `sudo /usr/bin/python3 animatronic.py --action=<name>`
-- Gesture-only testing (no audio): `python3 controller.py --action=<name>`
-- Thread-based gesture demo: `python3 concurrentMovements.py` (has `__main__` guard)
+- Full routines require root: `sudo /usr/bin/python3 src/animatronic.py --action=<name>`
+- Gesture-only testing (no audio): `python3 src/controller.py --action=<name>`
+- Thread-based gesture demo: `python3 src/concurrentMovements.py` (has `__main__` guard)

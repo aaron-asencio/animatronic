@@ -38,8 +38,8 @@ from unittest.mock import MagicMock
 import pytest
 from hypothesis import assume, given, settings, strategies as st
 
-# Ensure the project root is importable when pytest is run from the repo root.
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure the src/ directory is importable when pytest is run from the repo root.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 # ---------------------------------------------------------------------------
 # Install hardware/dependency stubs BEFORE importing micwebcontroller.
