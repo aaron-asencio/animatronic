@@ -4,8 +4,9 @@ animatronic.py
 Top-level named routines that pair servo gestures with audio playback.
 
 Each public method on Animatronic calls run_action_and_audio(), which starts
-a lightshowpi subprocess for audio then runs the named async coroutine to
-completion before terminating the audio.
+audio via AudioPlayer in a background thread then runs the named async
+coroutine to completion.  For live mic passthrough, AudioStreamer handles
+both input capture and jaw-sync output.
 
 Gesture coroutines on this class are thin wrappers — they add an idle delay
 (so audio starts before movement) then delegate entirely to Movements.  All
@@ -23,21 +24,33 @@ Note on asyncio:
 """
 
 from movements import Movements
+from audio_player import AudioPlayer
+from audio_streamer import AudioStreamer
+from servo_lock import servo_lock, ServoBusyError, BUSY_EXIT_CODE
 import asyncio
-import shlex
-import subprocess
+import threading
 import argparse
+import sys
+import os
 
 
 class Animatronic:
     """Pairs named audio tracks with matching servo gesture routines."""
 
-    # --- lightshowpi configuration ---
-    # All Pi-specific paths live here — single place to update on deployment.
-    lightshow_python     = '/usr/bin/python3'
-    lightshow_script     = '/home/pi/workspace/lightshowpi/py/synchronized_lights.py'
-    lightshow_dir        = '/home/pi/Music/'
-    lightshow_mic_config = '/home/pi/workspace/lightshowpi/config/overrides-mic.cfg'
+    # Audio directory — resolves to the invoking user's ~/Music so it works for
+    # 'pi', 'aaron', etc. Under sudo, HOME/expanduser may resolve to /root, so
+    # prefer the SUDO_USER's home. Override with ANIMATRONIC_AUDIO_DIR.
+    @staticmethod
+    def _resolve_audio_dir():
+        override = os.environ.get('ANIMATRONIC_AUDIO_DIR')
+        if override:
+            return override
+        sudo_user = os.environ.get('SUDO_USER')
+        if sudo_user:
+            return os.path.join('/home', sudo_user, 'Music')
+        return os.path.join(os.path.expanduser('~'), 'Music')
+
+
 
     # Audio file list — indices referenced by the routine methods below.
     music = [
@@ -93,29 +106,48 @@ class Animatronic:
     # ------------------------------------------------------------------ #
 
     def run_action_and_audio(self, method_name, audio_file):
-        """Start lightshowpi, run the named gesture coroutine, stop audio.
+        """Play an audio file via AudioPlayer while running a gesture coroutine.
 
-        The subprocess is always terminated even if the gesture raises.
+        AudioPlayer runs in a background thread so the gesture coroutine can
+        start immediately after the idle delay.  The thread is joined after
+        the coroutine completes so resources are always cleaned up.
 
         Args:
-            method_name: Name of an async method on this class (e.g. 'wave').
-            audio_file:  Filename (not full path) of the audio file in Music/.
+            method_name: Name of an async method on this class (e.g. '_do_wave').
+            audio_file:  Filename (not full path) of the audio file in audio_dir.
         """
-        audio_path = self.lightshow_dir + audio_file
-        cmd = [
-            'sudo',
-            self.lightshow_python,
-            self.lightshow_script,
-            f'--file={shlex.quote(audio_path)}',
-        ]
-        print(' '.join(cmd))
-        proc = subprocess.Popen(cmd)
+        audio_path = os.path.join(self._resolve_audio_dir(), audio_file)
+        player = AudioPlayer()
+
+        audio_thread = threading.Thread(
+            target=player.play_audio_file,
+            args=(audio_path,),
+            daemon=True,
+        )
+        audio_thread.start()
+        print(f"Playing audio: {audio_path}")
         try:
             asyncio.run(getattr(self, method_name)())
         except Exception as e:
             print(f"Error during gesture '{method_name}': {e}")
+            # SAFETY: a gesture that raised (e.g. I2C brownout from a stalled
+            # servo) may have left a servo energized against a mechanical jam.
+            # Drive everything back to safe resting positions before returning.
+            self._safe_rest()
         finally:
-            proc.terminate()
+            audio_thread.join(timeout=2)
+
+    @staticmethod
+    def _safe_rest():
+        """Best-effort: return all servos to safe rest after a failed gesture.
+
+        Runs its own event loop since the gesture's asyncio.run() loop is gone
+        by the time we get here. Never raises — this is a recovery path.
+        """
+        try:
+            asyncio.run(Movements.trunkController.return_to_rest())
+        except Exception as e:
+            print(f"_safe_rest failed: {e}")
 
     # ------------------------------------------------------------------ #
     # Named routines — gesture + audio pairings                           #
@@ -291,18 +323,24 @@ def main(args):
     }
 
     if args.action in action_map:
-        action_map[args.action]()
+        # SAFETY: hold the system-wide servo lock for the whole routine so no
+        # other process can drive the servos at the same time. Two concurrent
+        # routines can stall a servo against a mechanical block, causing it to
+        # overheat and burn out — a fire hazard. Fail fast if already running.
+        try:
+            with servo_lock():
+                action_map[args.action]()
+        except ServoBusyError:
+            print("Servos busy — another routine is already running. Aborting.")
+            sys.exit(BUSY_EXIT_CODE)
     elif args.action == 'mic':
-        cmd = [
-            'sudo',
-            a.lightshow_python,
-            a.lightshow_script,
-            f'--config={shlex.quote(a.lightshow_mic_config)}',
-        ]
-        print(' '.join(cmd))
-        proc = subprocess.Popen(cmd)
+        # Mic mode is audio-only and does not move servos, so it does NOT take
+        # the servo lock (that would needlessly block gesture routines).
+        streamer = AudioStreamer()
+        streamer.start()
         # TODO: run a complementary movement while mic mode is active.
-        proc.terminate()
+        input("Mic streaming — press Enter to stop...\n")
+        streamer.stop()
     else:
         print(f"Unknown action: {args.action}")
 

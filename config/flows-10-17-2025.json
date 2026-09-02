@@ -136,21 +136,10 @@
         "className": ""
     },
     {
-        "id": "4f55fa1d13dfa10e",
-        "type": "ui_group",
-        "name": "LightshowPi",
-        "tab": "de5243fddd4ea70f",
-        "order": 3,
-        "disp": true,
-        "width": "6",
-        "collapse": false,
-        "className": ""
-    },
-    {
         "id": "98f897b8d51a8fde",
         "type": "exec",
         "z": "eca99d8bf1138501",
-        "command": "export SYNCHRONIZED_LIGHTS_HOME=/home/aaron/workspace/lightshowpi; sudo python3 /home/aaron/workspace/animatronic/animatronic.py",
+        "command": "source /home/aaron/workspace/animatronic-v2/.venv/bin/activate && python3 /home/aaron/workspace/animatronic-v2/animatronic.py",
         "addpay": "payload",
         "append": "",
         "useSpawn": "false",

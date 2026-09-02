@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Halloween Controller</title>
+  <style>
+    :root {
+      --bg: #1a1a1f;
+      --panel: #26262e;
+      --panel-2: #2f2f3a;
+      --accent: #ff8c1a;
+      --accent-2: #b06bff;
+      --text: #f2f2f5;
+      --muted: #9a9aa8;
+      --ok: #3ecf6b;
+      --border: #3a3a46;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+    }
+    h1 { font-size: 1.4rem; margin: 0 0 4px; }
+    .status-bar {
+      font-size: 0.8rem; color: var(--muted); margin-bottom: 16px;
+    }
+    .status-bar .dot { color: var(--ok); }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+    .tab-btn {
+      background: var(--panel); color: var(--text); border: 1px solid var(--border);
+      padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+    }
+    .tab-btn.active { background: var(--accent); color: #1a1a1f; font-weight: 600; border-color: var(--accent); }
+    .panel { display: none; background: var(--panel); border: 1px solid var(--border);
+             border-radius: 12px; padding: 16px; }
+    .panel.active { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    button.action {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      padding: 14px 10px; border-radius: 10px; cursor: pointer; font-size: 0.9rem;
+      transition: transform 0.05s, background 0.15s;
+    }
+    button.action:hover { background: var(--accent); color: #1a1a1f; }
+    button.action:active { transform: scale(0.96); }
+    .row { display: flex; align-items: center; justify-content: space-between;
+           gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .row:last-child { border-bottom: none; }
+    .row label { font-size: 0.9rem; }
+    .row .val { color: var(--accent); font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
+    input[type=range] { flex: 1; accent-color: var(--accent); }
+    select {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      padding: 8px; border-radius: 8px; font-size: 0.95rem; width: 100%;
+    }
+    .switch { position: relative; display: inline-block; width: 48px; height: 26px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider-sw { position: absolute; cursor: pointer; inset: 0; background: var(--border);
+                 transition: .2s; border-radius: 26px; }
+    .slider-sw:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px;
+                        bottom: 3px; background: white; transition: .2s; border-radius: 50%; }
+    input:checked + .slider-sw { background: var(--ok); }
+    input:checked + .slider-sw:before { transform: translateX(22px); }
+    .fx-row { display: grid; grid-template-columns: 90px 48px 1fr 46px; align-items: center;
+              gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .fx-row:last-child { border-bottom: none; }
+    .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+                     color: var(--muted); margin: 4px 0 8px; }
+    #toast {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+      padding: 10px 18px; border-radius: 8px; font-size: 0.85rem; opacity: 0;
+      transition: opacity 0.2s; pointer-events: none; max-width: 90vw;
+    }
+    #toast.show { opacity: 1; }
+    #toast.err { border-color: #ff5c5c; color: #ff9c9c; }
+    .hint { font-size: 0.78rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+
+    /* Busy banner shown while a routine is running */
+    #busy-banner {
+      display: none; align-items: center; gap: 10px;
+      background: #3a2a12; border: 1px solid var(--accent); color: var(--accent);
+      padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 0.9rem;
+    }
+    #busy-banner.show { display: flex; }
+    .spinner {
+      width: 16px; height: 16px; border: 2px solid rgba(255,140,26,0.35);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.8s linear infinite; flex: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Disabled gesture buttons while busy */
+    button.action:disabled {
+      opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5);
+    }
+    button.action:disabled:hover { background: var(--panel-2); color: var(--text); }
+
+    /* Force-stop button */
+    .stop-btn {
+      background: #c0392b; color: #fff; border: 1px solid #e74c3c;
+      padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+      font-weight: 600; flex: none;
+    }
+    .stop-btn:hover { background: #e74c3c; }
+    .stop-btn:active { transform: scale(0.96); }
+    #busy-banner .stop-btn { margin-left: auto; }
+  </style>
+</head>
+<body>
+  <h1>🎃 Halloween Controller</h1>
+  <div class="status-bar">
+    <span class="dot">●</span> <span id="mic-status">mic: unknown</span>
+    &nbsp;|&nbsp; <span id="servo-status">servos: idle</span>
+    &nbsp;|&nbsp; last: <span id="last-action">idle</span>
+  </div>
+
+  <div id="busy-banner">
+    <span class="spinner"></span>
+    <span>Animatronic is moving — controls locked until the current routine finishes</span>
+    <button class="stop-btn" onclick="forceStop()">■ Force Stop</button>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="routines">Routines</button>
+    <button class="tab-btn" data-tab="movements">Movements</button>
+    <button class="tab-btn" data-tab="voicefx">Voice FX</button>
+    <button class="tab-btn" data-tab="jaw">Jaw Tuning</button>
+    <button class="tab-btn" data-tab="automation">Automation</button>
+  </div>
+
+  <!-- ROUTINES -->
+  <div class="panel active" id="routines">
+    <div class="section-title">Gesture + audio routines</div>
+    <div class="grid">
+      {% for r in routines %}
+      <button class="action gesture-btn" onclick="post('/routine/{{ r }}', this)">{{ r }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- MOVEMENTS -->
+  <div class="panel" id="movements">
+    <div class="section-title">Gesture-only (no audio)</div>
+    <div class="grid">
+      {% for m in movements %}
+      <button class="action gesture-btn" onclick="post('/movement/{{ m }}', this)">{{ m }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- VOICE FX -->
+  <div class="panel" id="voicefx">
+    <div class="section-title">Mic stream</div>
+    <div class="row">
+      <label>Live mic passthrough</label>
+      <label class="switch">
+        <input type="checkbox" id="mic-toggle" onchange="toggleMic(this.checked)">
+        <span class="slider-sw"></span>
+      </label>
+    </div>
+
+    <div class="section-title" style="margin-top:16px;">Voice style preset</div>
+    <select id="style-select" onchange="setStyle(this.value)">
+      <option value="" disabled selected>Select a style…</option>
+      {% for s in styles %}
+      <option value="{{ s }}">{{ s|capitalize }}</option>
+      {% endfor %}
+    </select>
+
+    <div class="section-title" style="margin-top:16px;">Individual effects</div>
+    <div id="fx-list">
+      {% for fx in effects %}
+      <div class="fx-row">
+        <span>{{ fx.replace('_',' ')|title }}</span>
+        <label class="switch">
+          <input type="checkbox" data-fx="{{ fx }}" onchange="toggleEffect('{{ fx }}', this.checked)">
+          <span class="slider-sw"></span>
+        </label>
+        <input type="range" data-fx-amt="{{ fx }}"
+               min="{{ '0.4' if fx == 'pitch' else '0' }}"
+               max="{{ '1.6' if fx == 'pitch' else '1' }}"
+               step="0.05" value="{{ '0.85' if fx == 'pitch' else '0.5' }}"
+               oninput="this.nextElementSibling.textContent = (+this.value).toFixed(2)"
+               onchange="setEffectAmount('{{ fx }}', +this.value)">
+        <span class="val">{{ '0.85' if fx == 'pitch' else '0.50' }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="hint">Try <strong>possessed</strong> or <strong>demon</strong> for a scary voice.
+       For harsher, load <strong>demon</strong> then push Distortion above 0.8 and drop Pitch toward 0.6.</p>
+  </div>
+
+  <!-- JAW TUNING -->
+  <div class="panel" id="jaw">
+    <div class="section-title">Jaw motor response</div>
+    <div class="row">
+      <label>Sensitivity<br><small style="color:var(--muted)">lower = more sensitive</small></label>
+      <input type="range" min="50" max="2000" step="50" value="500"
+             oninput="jawVal('sensitivity', this.value)"
+             onchange="setJaw('sensitivity', +this.value)">
+      <span class="val" id="v-sensitivity">500</span>
+    </div>
+    <div class="row">
+      <label>Noise Floor<br><small style="color:var(--muted)">close jaw below this peak</small></label>
+      <input type="range" min="0" max="2000" step="50" value="600"
+             oninput="jawVal('noise_floor', this.value)"
+             onchange="setJaw('noise_floor', +this.value)">
+      <span class="val" id="v-noise_floor">600</span>
+    </div>
+    <div class="row">
+      <label>Drop Threshold<br><small style="color:var(--muted)">lower = closes eagerly</small></label>
+      <input type="range" min="0" max="1" step="0.05" value="0.20"
+             oninput="jawVal('drop_threshold', this.value)"
+             onchange="setJaw('drop_threshold', +this.value)">
+      <span class="val" id="v-drop_threshold">0.20</span>
+    </div>
+    <p class="hint">Raise Noise Floor until the jaw stops twitching in silence (ambient noise
+       peaks ~150–400, so 600–850 works). Then lower Sensitivity until speech opens it fully.</p>
+  </div>
+
+  <!-- AUTOMATION -->
+  <div class="panel" id="automation">
+    <div class="section-title">Timed random playback</div>
+    <div class="row">
+      <label>Routine Automation<br><small style="color:var(--muted)">random routine every 5 min</small></label>
+      <label class="switch">
+        <input type="checkbox" data-auto="routine_enabled" onchange="setAuto('routine_enabled', this.checked)">
+        <span class="slider-sw"></span>
+      </label>
+    </div>
+    <div class="row">
+      <label>Movement Automation<br><small style="color:var(--muted)">random movement every 45 sec</small></label>
+      <label class="switch">
+        <input type="checkbox" data-auto="movement_enabled" onchange="setAuto('movement_enabled', this.checked)">
+        <span class="slider-sw"></span>
+      </label>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    // ── Tab switching ──────────────────────────────────────────────────────
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ── Toast helper ───────────────────────────────────────────────────────
+    let toastTimer;
+    function toast(msg, isErr) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.toggle('err', !!isErr);
+      t.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+    }
+
+    // ── Busy state ───────────────────────────────────────────────────────────
+    // Toggles the banner and disables gesture buttons so users can't try to
+    // stack routines (which the server would reject anyway).
+    function setBusy(busy) {
+      document.getElementById('busy-banner').classList.toggle('show', busy);
+      document.querySelectorAll('.gesture-btn').forEach(b => { b.disabled = busy; });
+      const ss = document.getElementById('servo-status');
+      ss.textContent = 'servos: ' + (busy ? 'RUNNING' : 'idle');
+      ss.style.color = busy ? 'var(--accent)' : '';
+    }
+
+    // ── Generic POST ───────────────────────────────────────────────────────
+    async function post(url, el, body) {
+      const isGesture = url.startsWith('/routine/') || url.startsWith('/movement/');
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const data = await res.json();
+        if (res.status === 409 || data.status === 'busy') {
+          // Servos are already running a routine — do not stack.
+          setBusy(true);
+          toast(data.message || 'Servos busy — try again shortly', true);
+        } else if (!res.ok || data.status === 'error') {
+          toast(data.message || 'Request failed', true);
+        } else {
+          // Optimistically lock the UI the moment a gesture is accepted; the
+          // status poll will keep it locked until the routine actually ends.
+          if (isGesture) setBusy(true);
+          toast(el ? `Sent: ${el.textContent}` : (data.action || 'OK'));
+        }
+        return data;
+      } catch (e) {
+        toast('Network error: ' + e.message, true);
+      }
+    }
+
+    // ── Force stop ───────────────────────────────────────────────────────────
+    // Kills any running gesture (releasing the servo lock) and turns automation
+    // off. Also flips any automation toggles in the UI back to off.
+    async function forceStop() {
+      const data = await post('/stop');
+      setBusy(false);
+      document.querySelectorAll('input[type=checkbox][data-auto]').forEach(cb => {
+        cb.checked = false;
+      });
+      if (data && data.message) toast(data.message);
+    }
+
+    // ── Mic ────────────────────────────────────────────────────────────────
+    function toggleMic(on) { post('/mic/' + (on ? 'start' : 'stop')); }
+
+    // ── Voice FX ─────────────────────────────────────────────────────────────
+    function setStyle(style) {
+      post('/effects', null, {style}).then(() => syncStyleToControls(style));
+      toast('Style: ' + style);
+    }
+    function toggleEffect(fx, enabled) { post('/effects', null, {effect: fx, enabled}); }
+    function setEffectAmount(fx, amount) { post('/effects', null, {effect: fx, amount}); }
+
+    // When a style preset loads, reflect its enabled/amount in the controls.
+    const PRESETS = {
+      natural:   {pitch:[false,1.0],distortion:[false,0],echo:[false,0],reverb:[false,0],tremolo:[false,0],bitcrush:[false,0],ring_mod:[false,0]},
+      demon:     {pitch:[true,0.70],distortion:[true,0.55],echo:[true,0.35],reverb:[true,0.25],tremolo:[false,0],bitcrush:[false,0],ring_mod:[false,0]},
+      ghost:     {pitch:[true,0.92],distortion:[false,0],echo:[true,0.65],reverb:[true,0.55],tremolo:[true,0.35],bitcrush:[false,0],ring_mod:[false,0]},
+      robot:     {pitch:[false,1.0],distortion:[true,0.30],echo:[false,0],reverb:[false,0],tremolo:[false,0],bitcrush:[true,0.50],ring_mod:[true,0.70]},
+      chipmunk:  {pitch:[true,1.45],distortion:[false,0],echo:[false,0],reverb:[false,0],tremolo:[false,0],bitcrush:[false,0],ring_mod:[false,0]},
+      possessed: {pitch:[true,0.60],distortion:[true,0.75],echo:[true,0.70],reverb:[true,0.50],tremolo:[true,0.45],bitcrush:[false,0],ring_mod:[false,0]},
+    };
+    function syncStyleToControls(style) {
+      const p = PRESETS[style];
+      if (!p) return;
+      for (const [fx, [enabled, amount]] of Object.entries(p)) {
+        const sw = document.querySelector(`[data-fx="${fx}"]`);
+        const amt = document.querySelector(`[data-fx-amt="${fx}"]`);
+        if (sw) sw.checked = enabled;
+        if (amt) { amt.value = amount; amt.nextElementSibling.textContent = (+amount).toFixed(2); }
+      }
+    }
+
+    // ── Jaw tuning ───────────────────────────────────────────────────────────
+    function jawVal(key, v) {
+      document.getElementById('v-' + key).textContent =
+        (key === 'drop_threshold') ? (+v).toFixed(2) : v;
+    }
+    function setJaw(key, value) { post('/jaw', null, {[key]: value}); }
+
+    // ── Automation ───────────────────────────────────────────────────────────
+    function setAuto(key, value) {
+      post('/automation', null, {[key]: value});
+      toast(key.replace('_', ' ') + ': ' + (value ? 'ON' : 'OFF'));
+    }
+
+    // ── Status poll ────────────────────────────────────────────────────────
+    async function pollStatus() {
+      try {
+        const res = await fetch('/status');
+        const data = await res.json();
+        document.getElementById('last-action').textContent = data.last_action || 'idle';
+        const streaming = data.mic && data.mic.is_streaming;
+        document.getElementById('mic-status').textContent = 'mic: ' + (streaming ? 'streaming' : 'idle');
+        // Authoritative busy state from the server drives the banner + buttons.
+        setBusy(!!data.servos_busy);
+        const micToggle = document.getElementById('mic-toggle');
+        if (micToggle && typeof streaming === 'boolean') micToggle.checked = streaming;
+        // Keep automation toggles in sync with server state.
+        if (data.automation) {
+          document.querySelectorAll('input[type=checkbox][data-auto]').forEach(cb => {
+            const key = cb.getAttribute('data-auto');
+            if (typeof data.automation[key] === 'boolean') cb.checked = data.automation[key];
+          });
+        }
+        // Poll faster while busy so buttons re-enable promptly when it ends.
+        schedulePoll(data.servos_busy ? 1200 : 3000);
+      } catch (e) {
+        /* mic controller may be down; ignore */
+        schedulePoll(3000);
+      }
+    }
+    let pollTimer;
+    function schedulePoll(ms) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(pollStatus, ms);
+    }
+    pollStatus();
+  </script>
+</body>
+</html>

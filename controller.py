@@ -22,8 +22,10 @@ COMPOSITE gestures (arm + head simultaneously):
 """
 
 from movements import Movements
+from servo_lock import servo_lock, ServoBusyError, BUSY_EXIT_CODE
 import asyncio
 import argparse
+import sys
 
 
 def main(args):
@@ -70,7 +72,24 @@ def main(args):
     print(args.action)
 
     if args.action in action_map:
-        asyncio.run(action_map[args.action]())
+        # SAFETY: acquire the system-wide servo lock so this gesture cannot run
+        # concurrently with another routine/movement. Concurrent servo commands
+        # can stall the arm against a block and overheat the motor. Fail fast.
+        try:
+            with servo_lock():
+                try:
+                    asyncio.run(action_map[args.action]())
+                except Exception as e:
+                    print(f"Error during gesture '{args.action}': {e}")
+                    # A stalled servo may be left energized against a jam —
+                    # drive everything back to safe rest before exiting.
+                    try:
+                        asyncio.run(mv.trunkController.return_to_rest())
+                    except Exception as rest_err:
+                        print(f"return_to_rest failed: {rest_err}")
+        except ServoBusyError:
+            print("Servos busy — another routine is already running. Aborting.")
+            sys.exit(BUSY_EXIT_CODE)
     elif args.action is not None:
         print(f"Unknown action: {args.action}")
         print(f"Available: {', '.join(sorted(action_map))}")
