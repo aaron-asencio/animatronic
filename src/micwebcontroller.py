@@ -9,7 +9,7 @@ from gpiozero import LED
 from gpiozero import DigitalOutputDevice
 from datetime import datetime
 from utils.audio_utils import AudioUtils
-from model.constants import MOUTH_MOTOR_PIN
+from model.constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
 from collections import deque
 from config_store import ConfigStore, ALLOWED_PROFILES, PROFILE_MIC
 
@@ -38,6 +38,7 @@ output_device_index = 2  # playback device index
 
 jaw_motor = None
 previous_jaw_value = None
+led_eye_light = None
 
 # Jaw tuning — two independent profiles (File_Profile and Mic_Profile) loaded
 # from the shared Config_Store and adjustable at runtime via POST /config.
@@ -178,10 +179,12 @@ def stream_mic():
 
 
 def talk(audio_data, start_time):
-    global previous_jaw_value, jaw_motor
+    global previous_jaw_value, jaw_motor, led_eye_light
     if jaw_motor is None:
         from model.constants import MOUTH_MOTOR_PIN
         jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
+        if led_eye_light is None:
+            led_eye_light = LED(EYE_LIGHT_PIN)
 
     peak = np.max(np.abs(audio_data))
 
@@ -190,6 +193,7 @@ def talk(audio_data, start_time):
     if peak < jaw_profiles[PROFILE_MIC]['noise_floor']:
         jaw_motor.value = 0.0
         previous_jaw_value = 0.0
+        led_eye_light.off()
         print(f"Peak: {peak:.0f}; GATED (below noise floor {jaw_profiles[PROFILE_MIC]['noise_floor']})")
         return
 
@@ -208,6 +212,7 @@ def talk(audio_data, start_time):
     motor_value = jaw_value / 100.0
     print(f"Peak: {peak:.0f}; Jaw: {jaw_value:.1f}%; Motor: {motor_value:.2f}; Prev: {previous_jaw_value}")
     jaw_motor.value = motor_value
+    led_eye_light.on() if jaw_value > 0 else led_eye_light.off()
     previous_jaw_value = jaw_value
         
 # ── Individual effect functions ──────────────────────────────────────────────

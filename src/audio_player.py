@@ -62,6 +62,7 @@ class AudioPlayer:
         if peak < self.noise_floor:
             self.jaw_motor.value = 0.0
             self.previous_jaw_value = 0.0
+            self.led_eye_light.off()
             return
 
         # Scale peak to 0–100 using sensitivity divisor.
@@ -77,6 +78,7 @@ class AudioPlayer:
         motor_value = jaw_value / 100.0
         print(f"Peak: {peak:.0f}; Jaw: {jaw_value:.1f}%; Motor: {motor_value:.2f}; Prev: {self.previous_jaw_value}")
         self.jaw_motor.value = motor_value
+        self.led_eye_light.on() if jaw_value > 0 else self.led_eye_light.off()
         self.previous_jaw_value = jaw_value
             
 
