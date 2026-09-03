@@ -97,8 +97,9 @@ class ConfigStore:
 
         Missing file, unparseable JSON, or content that cannot be decoded as
         UTF-8 all yield a full default pair; the method never raises for those
-        cases. Any profile or field absent from an otherwise-valid file is
-        filled from the defaults.
+        cases. An unreadable file (permission denied) is warned about clearly
+        and also falls back to defaults so operation continues. Any profile or
+        field absent from an otherwise-valid file is filled from the defaults.
 
         Returns:
             A dict {"file": <profile>, "mic": <profile>} of mutable copies.
@@ -109,6 +110,12 @@ class ConfigStore:
                 raw = json.load(f)
         except FileNotFoundError:
             print(f"Tuning config not found at {self._config_path}; using defaults")
+            return profiles
+        except PermissionError as e:
+            print(f"WARNING: Tuning config at {self._config_path} is not readable "
+                  f"by the current user ({e}). Tuning changes will NOT persist until "
+                  f"this is fixed. Check file ownership/permissions (it may be owned "
+                  f"by root from a sudo run); it should be mode 644.")
             return profiles
         except (json.JSONDecodeError, ValueError, OSError, UnicodeDecodeError) as e:
             print(f"Tuning config unreadable ({e}); using defaults")
@@ -179,6 +186,13 @@ class ConfigStore:
 
         with open(self._config_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
+        # Make the tuning file world-readable (0644). It holds no secrets, and this
+        # prevents a root-written (umask 077) file from being unreadable by a
+        # non-root reader, which would otherwise silently fall back to defaults.
+        try:
+            os.chmod(self._config_path, 0o644)
+        except OSError as e:
+            print(f"Could not chmod tuning config ({e}); leaving existing permissions")
         print(f"Tuning config written to {self._config_path}")
 
     def update_profile(self, name, updates):
