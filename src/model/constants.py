@@ -15,4 +15,4 @@ servos[BodyParts.RT_ELBOW_ROTATOR.value] = "RT_ELBOW_ROTATOR"
 NECK_CENTER = 90
 
 EYE_LIGHT_PIN = 6
-MOUTH_MOTOR_PIN = 18
+MOUTH_MOTOR_PIN = 15 # Pin 18 no longer working
