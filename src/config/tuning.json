@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profiles": {
+    "file": {
+      "sensitivity": 700.0,
+      "noise_floor": 550.0,
+      "drop_threshold": 0.3
+    },
+    "mic": {
+      "sensitivity": 600.0,
+      "noise_floor": 550.0,
+      "drop_threshold": 0.3
+    }
+  }
+}

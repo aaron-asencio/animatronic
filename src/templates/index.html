@@ -69,6 +69,8 @@
     .fx-row:last-child { border-bottom: none; }
     .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
                      color: var(--muted); margin: 4px 0 8px; }
+    .tune-group { background: var(--panel-2); border: 1px solid var(--border);
+                  border-radius: 10px; padding: 12px; margin-top: 12px; }
     #toast {
       position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
       background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
@@ -196,30 +198,72 @@
 
   <!-- JAW TUNING -->
   <div class="panel" id="jaw">
-    <div class="section-title">Jaw motor response</div>
-    <div class="row">
-      <label>Sensitivity<br><small style="color:var(--muted)">lower = more sensitive</small></label>
-      <input type="range" min="50" max="2000" step="50" value="500"
-             oninput="jawVal('sensitivity', this.value)"
-             onchange="setJaw('sensitivity', +this.value)">
-      <span class="val" id="v-sensitivity">500</span>
+    <div class="section-title">Jaw motor response — two independent profiles</div>
+    <p class="hint" style="margin-top:0;">The <strong>File playback</strong> profile tunes the jaw for
+       recorded audio files, while the <strong>Live mic</strong> profile tunes it for the live
+       microphone passthrough. They are stored and applied independently — adjust each for its source.</p>
+
+    <!-- File playback profile -->
+    <div class="tune-group">
+      <div class="section-title">File playback (recorded audio)</div>
+      <div class="row">
+        <label>Sensitivity<br><small style="color:var(--muted)">lower = more sensitive</small></label>
+        <input type="range" min="50" max="2000" step="50" value="500"
+               data-profile="file" data-key="sensitivity"
+               oninput="jawVal('file','sensitivity', this.value)"
+               onchange="setJaw('file','sensitivity', +this.value)">
+        <span class="val" id="v-file-sensitivity">500</span>
+      </div>
+      <div class="row">
+        <label>Noise Floor<br><small style="color:var(--muted)">close jaw below this peak</small></label>
+        <input type="range" min="0" max="2000" step="50" value="600"
+               data-profile="file" data-key="noise_floor"
+               oninput="jawVal('file','noise_floor', this.value)"
+               onchange="setJaw('file','noise_floor', +this.value)">
+        <span class="val" id="v-file-noise_floor">600</span>
+      </div>
+      <div class="row">
+        <label>Drop Threshold<br><small style="color:var(--muted)">lower = closes eagerly</small></label>
+        <input type="range" min="0" max="1" step="0.05" value="0.20"
+               data-profile="file" data-key="drop_threshold"
+               oninput="jawVal('file','drop_threshold', this.value)"
+               onchange="setJaw('file','drop_threshold', +this.value)">
+        <span class="val" id="v-file-drop_threshold">0.20</span>
+      </div>
     </div>
-    <div class="row">
-      <label>Noise Floor<br><small style="color:var(--muted)">close jaw below this peak</small></label>
-      <input type="range" min="0" max="2000" step="50" value="600"
-             oninput="jawVal('noise_floor', this.value)"
-             onchange="setJaw('noise_floor', +this.value)">
-      <span class="val" id="v-noise_floor">600</span>
+
+    <!-- Live mic profile -->
+    <div class="tune-group">
+      <div class="section-title">Live mic (passthrough)</div>
+      <div class="row">
+        <label>Sensitivity<br><small style="color:var(--muted)">lower = more sensitive</small></label>
+        <input type="range" min="50" max="2000" step="50" value="500"
+               data-profile="mic" data-key="sensitivity"
+               oninput="jawVal('mic','sensitivity', this.value)"
+               onchange="setJaw('mic','sensitivity', +this.value)">
+        <span class="val" id="v-mic-sensitivity">500</span>
+      </div>
+      <div class="row">
+        <label>Noise Floor<br><small style="color:var(--muted)">close jaw below this peak</small></label>
+        <input type="range" min="0" max="2000" step="50" value="600"
+               data-profile="mic" data-key="noise_floor"
+               oninput="jawVal('mic','noise_floor', this.value)"
+               onchange="setJaw('mic','noise_floor', +this.value)">
+        <span class="val" id="v-mic-noise_floor">600</span>
+      </div>
+      <div class="row">
+        <label>Drop Threshold<br><small style="color:var(--muted)">lower = closes eagerly</small></label>
+        <input type="range" min="0" max="1" step="0.05" value="0.20"
+               data-profile="mic" data-key="drop_threshold"
+               oninput="jawVal('mic','drop_threshold', this.value)"
+               onchange="setJaw('mic','drop_threshold', +this.value)">
+        <span class="val" id="v-mic-drop_threshold">0.20</span>
+      </div>
     </div>
-    <div class="row">
-      <label>Drop Threshold<br><small style="color:var(--muted)">lower = closes eagerly</small></label>
-      <input type="range" min="0" max="1" step="0.05" value="0.20"
-             oninput="jawVal('drop_threshold', this.value)"
-             onchange="setJaw('drop_threshold', +this.value)">
-      <span class="val" id="v-drop_threshold">0.20</span>
-    </div>
-    <p class="hint">Raise Noise Floor until the jaw stops twitching in silence (ambient noise
-       peaks ~150–400, so 600–850 works). Then lower Sensitivity until speech opens it fully.</p>
+
+    <p class="hint">For each profile, raise Noise Floor until the jaw stops twitching in silence
+       (ambient noise peaks ~150–400, so 600–850 works), then lower Sensitivity until speech opens
+       it fully. Tune each profile for its source — recorded files versus the live mic.</p>
   </div>
 
   <!-- AUTOMATION -->
@@ -347,12 +391,32 @@
       }
     }
 
-    // ── Jaw tuning ───────────────────────────────────────────────────────────
-    function jawVal(key, v) {
-      document.getElementById('v-' + key).textContent =
-        (key === 'drop_threshold') ? (+v).toFixed(2) : v;
+    // ── Jaw tuning (two independent profiles: file playback + live mic) ──────
+    function jawVal(profile, key, v) {
+      const span = document.getElementById('v-' + profile + '-' + key);
+      if (span) span.textContent = (key === 'drop_threshold') ? (+v).toFixed(2) : v;
     }
-    function setJaw(key, value) { post('/jaw', null, {profile: 'mic', [key]: value}); }
+    function setJaw(profile, key, value) {
+      post('/jaw', null, {profile: profile, [key]: value});
+    }
+    // Populate both slider groups from the persisted profiles returned by
+    // /status, so a page refresh reflects real values (not hardcoded defaults).
+    // Skip any slider the user is actively dragging (focused) so polling does
+    // not yank it out from under them.
+    function populateJaw(profiles) {
+      if (!profiles) return;
+      document.querySelectorAll('input[type=range][data-profile][data-key]').forEach(inp => {
+        if (inp === document.activeElement) return;   // don't fight active drag
+        const p = inp.getAttribute('data-profile');
+        const k = inp.getAttribute('data-key');
+        const prof = profiles[p];
+        if (!prof || typeof prof[k] === 'undefined' || prof[k] === null) return;
+        const val = prof[k];
+        inp.value = val;
+        const span = document.getElementById('v-' + p + '-' + k);
+        if (span) span.textContent = (k === 'drop_threshold') ? (+val).toFixed(2) : val;
+      });
+    }
 
     // ── Automation ───────────────────────────────────────────────────────────
     function setAuto(key, value) {
@@ -379,6 +443,8 @@
             if (typeof data.automation[key] === 'boolean') cb.checked = data.automation[key];
           });
         }
+        // Reflect persisted jaw tuning (both profiles) in the sliders.
+        if (data.mic && data.mic.profiles) populateJaw(data.mic.profiles);
         // Poll faster while busy so buttons re-enable promptly when it ends.
         schedulePoll(data.servos_busy ? 1200 : 3000);
       } catch (e) {
