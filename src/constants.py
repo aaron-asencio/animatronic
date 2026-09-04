@@ -38,6 +38,28 @@ NECK_CENTER = 90
 
 
 # --------------------------------------------------------------------------- #
+# AXIS DIRECTION REFERENCE — how commanded angle maps to physical motion       #
+# --------------------------------------------------------------------------- #
+# Use this when composing gestures so movement direction is unambiguous.
+# Angles are degrees; "increase"/"decrease" mean a larger/smaller commanded
+# angle. Directions are from the ANIMATRONIC's own point of view (its left/
+# right), consistent with the RT_ (right-side) channel naming.
+#
+# NECK_PAN  (channel 0) — left/right head rotation
+#     center  = 90  (head faces forward, neither left nor right)
+#     increase -> head turns to its LEFT
+#     decrease -> head turns to its RIGHT
+#
+# NECK_TILT (channel 1) — up/down head tilt
+#     center  = 90  (head level)
+#     increase -> head lowers (chin toward chest)
+#     decrease -> head raises (chin up)
+#
+# RT_SHOULDER_ROTATOR / RT_SHOULDER_TILT / RT_ELBOW_TILT / RT_ELBOW_ROTATOR:
+#     arm-axis directions NOT YET CALIBRATED — document here once verified.
+# --------------------------------------------------------------------------- #
+
+# --------------------------------------------------------------------------- #
 # SAFETY LIMITS  — hard per-channel angle bounds enforced on EVERY servo write #
 # --------------------------------------------------------------------------- #
 #
@@ -47,11 +69,11 @@ NECK_CENTER = 90
 # fire hazard. TrunkController.move() and friends clamp every commanded angle
 # to these bounds so a bad gesture value can never drive into a jam.
 #
-# !!! CALIBRATION REQUIRED !!!
-# The values below are CONSERVATIVE PLACEHOLDERS set to the angles the existing
-# gestures already use. They are NOT yet verified against the physical build.
-# We will tighten them per servo (neck first, then arm, then arm-with-neck).
-# Until calibrated, treat any stall as a sign these need narrowing.
+# CALIBRATION STATUS:
+# NECK_PAN and NECK_TILT are CALIBRATED to the physical build (verified by
+# nudging to the mechanical stops). The four RT_ arm channels are still
+# CONSERVATIVE PLACEHOLDERS set to the angles existing gestures use — NOT yet
+# verified against the build; treat any stall there as a sign to narrow them.
 #
 # Format: channel -> (min_deg, max_deg)
 SAFE_LIMITS = {
