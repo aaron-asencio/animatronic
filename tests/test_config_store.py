@@ -29,9 +29,11 @@ from config_store import (  # noqa: E402
     CONFIG_DIRNAME,
     CONFIG_PATH_OVERRIDE_ENV,
     CONFIG_PATH_OVERRIDE_ENV_PRIMARY,
-    DEFAULT_DROP_THRESHOLD,
-    DEFAULT_NOISE_FLOOR,
-    DEFAULT_SENSITIVITY,
+    DEFAULT_SILENCE_FLOOR,
+    DEFAULT_OPEN_RATIO,
+    DEFAULT_CLOSE_RATIO,
+    DEFAULT_EMA_ALPHA,
+    DEFAULT_CLOSE_HOLD_FRAMES,
     PROFILE_FILE,
     PROFILE_MIC,
 )
@@ -41,11 +43,13 @@ ENV_VARS = (CONFIG_PATH_OVERRIDE_ENV_PRIMARY, CONFIG_PATH_OVERRIDE_ENV, "SUDO_US
 
 
 def _expected_default_profile():
-    """Return the expected default profile dict (sensitivity/noise/drop)."""
+    """Return the expected default adaptive profile dict (five fields)."""
     return {
-        "sensitivity": DEFAULT_SENSITIVITY,
-        "noise_floor": DEFAULT_NOISE_FLOOR,
-        "drop_threshold": DEFAULT_DROP_THRESHOLD,
+        "silence_floor": DEFAULT_SILENCE_FLOOR,
+        "open_ratio": DEFAULT_OPEN_RATIO,
+        "close_ratio": DEFAULT_CLOSE_RATIO,
+        "ema_alpha": DEFAULT_EMA_ALPHA,
+        "close_hold_frames": DEFAULT_CLOSE_HOLD_FRAMES,
     }
 
 
@@ -231,23 +235,27 @@ def test_property6_missing_file_yields_defaults(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_loaded_config_exposes_both_profiles_with_three_fields(tmp_path):
+def test_loaded_config_exposes_both_profiles_with_five_fields(tmp_path):
     """Requirements 1.1, 1.2, 1.3: loaded config exposes file and mic profiles.
 
-    Each profile carries the three fields with the persisted values.
+    Each profile carries the five adaptive fields with the persisted values.
     """
     payload = {
-        "version": 1,
+        "version": 2,
         "profiles": {
             PROFILE_FILE: {
-                "sensitivity": 400,
-                "noise_floor": 300,
-                "drop_threshold": 0.10,
+                "silence_floor": 400,
+                "open_ratio": 1.20,
+                "close_ratio": 0.80,
+                "ema_alpha": 0.10,
+                "close_hold_frames": 3,
             },
             PROFILE_MIC: {
-                "sensitivity": 700,
-                "noise_floor": 800,
-                "drop_threshold": 0.30,
+                "silence_floor": 700,
+                "open_ratio": 1.30,
+                "close_ratio": 0.90,
+                "ema_alpha": 0.25,
+                "close_hold_frames": 4,
             },
         },
     }
@@ -259,7 +267,13 @@ def test_loaded_config_exposes_both_profiles_with_three_fields(tmp_path):
 
     assert set(profiles) == {PROFILE_FILE, PROFILE_MIC}
     for name in (PROFILE_FILE, PROFILE_MIC):
-        assert set(profiles[name]) == {"sensitivity", "noise_floor", "drop_threshold"}
+        assert set(profiles[name]) == {
+            "silence_floor",
+            "open_ratio",
+            "close_ratio",
+            "ema_alpha",
+            "close_hold_frames",
+        }
 
     assert profiles[PROFILE_FILE] == payload["profiles"][PROFILE_FILE]
     assert profiles[PROFILE_MIC] == payload["profiles"][PROFILE_MIC]
@@ -291,16 +305,7 @@ def test_load_profile_returns_single_profile_and_validates_name(tmp_path):
 # Finite numeric strategies matching the profile field bounds. NaN and inf are
 # excluded because JSON round-trips floats via repr and those values either
 # break equality (NaN != NaN) or are not standard JSON.
-_sensitivity_values = st.one_of(
-    st.integers(min_value=1, max_value=100_000),
-    st.floats(
-        min_value=1e-6,
-        max_value=1e6,
-        allow_nan=False,
-        allow_infinity=False,
-    ),
-)
-_noise_floor_values = st.one_of(
+_silence_floor_values = st.one_of(
     st.integers(min_value=0, max_value=100_000),
     st.floats(
         min_value=0.0,
@@ -309,26 +314,46 @@ _noise_floor_values = st.one_of(
         allow_infinity=False,
     ),
 )
-_drop_threshold_values = st.floats(
-    min_value=0.0,
+# open_ratio in a realistic 0.5..3.0 band; close_ratio derived as a fraction of
+# open_ratio so it is always strictly less than open_ratio (hysteresis).
+_open_ratio_values = st.floats(
+    min_value=0.5,
+    max_value=3.0,
+    allow_nan=False,
+    allow_infinity=False,
+)
+_close_fraction_values = st.floats(
+    min_value=0.05,
+    max_value=0.95,
+    allow_nan=False,
+    allow_infinity=False,
+)
+_ema_alpha_values = st.floats(
+    min_value=1e-6,
     max_value=1.0,
     allow_nan=False,
     allow_infinity=False,
 )
+_close_hold_frames_values = st.integers(min_value=1, max_value=100)
 
 
 @st.composite
 def _valid_profile(draw):
-    """Build a valid jaw-tuning profile dict via hypothesis.
+    """Build a valid adaptive jaw-tuning profile dict via hypothesis.
 
-    Fields respect the documented bounds: sensitivity > 0, noise_floor >= 0,
-    and drop_threshold in [0.0, 1.0]. Values are finite ints or floats so they
-    survive a JSON round-trip with exact equality.
+    Fields respect the documented bounds: silence_floor >= 0, open_ratio > 0,
+    close_ratio > 0 and strictly < open_ratio (derived as fraction * open_ratio),
+    ema_alpha in (0, 1], and close_hold_frames an int >= 1. Values are finite
+    ints or floats so they survive a JSON round-trip with exact equality.
     """
+    open_ratio = draw(_open_ratio_values)
+    close_ratio = open_ratio * draw(_close_fraction_values)
     return {
-        "sensitivity": draw(_sensitivity_values),
-        "noise_floor": draw(_noise_floor_values),
-        "drop_threshold": draw(_drop_threshold_values),
+        "silence_floor": draw(_silence_floor_values),
+        "open_ratio": open_ratio,
+        "close_ratio": close_ratio,
+        "ema_alpha": draw(_ema_alpha_values),
+        "close_hold_frames": draw(_close_hold_frames_values),
     }
 
 
@@ -345,23 +370,34 @@ def _profile_pair(draw):
 def _profile_update(draw):
     """Build a non-empty subset update of valid profile fields.
 
-    Each of the three fields is independently included or omitted, but at least
-    one field is always present so the update actually changes something.
+    open_ratio and close_ratio are updated together (close derived from open) so
+    the hysteresis invariant close_ratio < open_ratio always holds; the other
+    three fields are independently included or omitted. At least one field is
+    always present so the update actually changes something.
+
+    Note: config_store.update_profile does not itself enforce cross-field
+    bounds (that is the web layer's job); these updates simply stay valid so
+    the isolation property is exercised with realistic data.
     """
-    include_sensitivity = draw(st.booleans())
-    include_noise_floor = draw(st.booleans())
-    include_drop_threshold = draw(st.booleans())
+    include_silence = draw(st.booleans())
+    include_ratios = draw(st.booleans())
+    include_ema = draw(st.booleans())
+    include_hold = draw(st.booleans())
     # Guarantee a non-empty update.
-    if not (include_sensitivity or include_noise_floor or include_drop_threshold):
-        include_sensitivity = True
+    if not (include_silence or include_ratios or include_ema or include_hold):
+        include_silence = True
 
     updates = {}
-    if include_sensitivity:
-        updates["sensitivity"] = draw(_sensitivity_values)
-    if include_noise_floor:
-        updates["noise_floor"] = draw(_noise_floor_values)
-    if include_drop_threshold:
-        updates["drop_threshold"] = draw(_drop_threshold_values)
+    if include_silence:
+        updates["silence_floor"] = draw(_silence_floor_values)
+    if include_ratios:
+        open_ratio = draw(_open_ratio_values)
+        updates["open_ratio"] = open_ratio
+        updates["close_ratio"] = open_ratio * draw(_close_fraction_values)
+    if include_ema:
+        updates["ema_alpha"] = draw(_ema_alpha_values)
+    if include_hold:
+        updates["close_hold_frames"] = draw(_close_hold_frames_values)
     return updates
 
 
@@ -449,44 +485,52 @@ def test_single_file_contains_both_profiles_after_update(tmp_path):
 
     After a save followed by an update, the single Config_File contains the
     documented schema: a top-level "profiles" object with both "file" and
-    "mic" keys, each carrying the three tuning fields.
+    "mic" keys, each carrying the five adaptive tuning fields.
     """
     config_file = tmp_path / "jaw.json"
     store = ConfigStore(config_path=str(config_file))
 
     initial_pair = {
         PROFILE_FILE: {
-            "sensitivity": 400,
-            "noise_floor": 300,
-            "drop_threshold": 0.10,
+            "silence_floor": 400,
+            "open_ratio": 1.20,
+            "close_ratio": 0.80,
+            "ema_alpha": 0.10,
+            "close_hold_frames": 3,
         },
         PROFILE_MIC: {
-            "sensitivity": 700,
-            "noise_floor": 800,
-            "drop_threshold": 0.30,
+            "silence_floor": 700,
+            "open_ratio": 1.30,
+            "close_ratio": 0.90,
+            "ema_alpha": 0.25,
+            "close_hold_frames": 4,
         },
     }
     store.save_profiles(initial_pair)
-    store.update_profile(PROFILE_MIC, {"sensitivity": 750})
+    store.update_profile(PROFILE_MIC, {"silence_floor": 750})
 
     # Read the raw JSON straight off disk and assert the on-disk schema.
     with open(config_file, "r") as f:
         raw = json.load(f)
 
-    assert raw["version"] == 1
+    assert raw["version"] == 2
     assert "profiles" in raw
     assert set(raw["profiles"]) == {PROFILE_FILE, PROFILE_MIC}
     for name in (PROFILE_FILE, PROFILE_MIC):
         assert set(raw["profiles"][name]) == {
-            "sensitivity",
-            "noise_floor",
-            "drop_threshold",
+            "silence_floor",
+            "open_ratio",
+            "close_ratio",
+            "ema_alpha",
+            "close_hold_frames",
         }
 
     # File_Profile untouched by the mic update; Mic_Profile carries the merge.
     assert raw["profiles"][PROFILE_FILE] == initial_pair[PROFILE_FILE]
     assert raw["profiles"][PROFILE_MIC] == {
-        "sensitivity": 750,
-        "noise_floor": 800,
-        "drop_threshold": 0.30,
+        "silence_floor": 750,
+        "open_ratio": 1.30,
+        "close_ratio": 0.90,
+        "ema_alpha": 0.25,
+        "close_hold_frames": 4,
     }

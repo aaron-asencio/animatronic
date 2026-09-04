@@ -211,28 +211,44 @@
     <div class="tune-group">
       <div class="section-title">File playback (recorded audio)</div>
       <div class="row">
-        <label>Sensitivity<br><small style="color:var(--muted)">lower = more sensitive</small></label>
-        <input type="range" min="50" max="2000" step="50" value="500"
-               data-profile="file" data-key="sensitivity"
-               oninput="jawVal('file','sensitivity', this.value)"
-               onchange="setJaw('file','sensitivity', +this.value)">
-        <span class="val" id="v-file-sensitivity">500</span>
+        <label title="Absolute loudness (RMS) below which the jaw stays closed. Raise it if quiet room noise opens the jaw; lower it if soft speech doesn't.">Silence Floor<br><small style="color:var(--muted)">absolute quiet gate</small></label>
+        <input type="range" min="0" max="3000" step="50" value="600"
+               data-profile="file" data-key="silence_floor"
+               oninput="jawVal('file','silence_floor', this.value)"
+               onchange="setJaw('file','silence_floor', +this.value)">
+        <span class="val" id="v-file-silence_floor">600</span>
       </div>
       <div class="row">
-        <label>Noise Floor<br><small style="color:var(--muted)">close jaw below this peak</small></label>
-        <input type="range" min="0" max="2000" step="50" value="600"
-               data-profile="file" data-key="noise_floor"
-               oninput="jawVal('file','noise_floor', this.value)"
-               onchange="setJaw('file','noise_floor', +this.value)">
-        <span class="val" id="v-file-noise_floor">600</span>
+        <label title="The jaw opens when loudness rises this many times above its recent average. Higher = needs a bigger swell to open.">Open Ratio<br><small style="color:var(--muted)">swell needed to open</small></label>
+        <input type="range" min="1.0" max="2.0" step="0.05" value="1.10"
+               data-profile="file" data-key="open_ratio"
+               oninput="jawVal('file','open_ratio', this.value)"
+               onchange="setJaw('file','open_ratio', +this.value)">
+        <span class="val" id="v-file-open_ratio">1.10</span>
       </div>
       <div class="row">
-        <label>Drop Threshold<br><small style="color:var(--muted)">lower = closes eagerly</small></label>
-        <input type="range" min="0" max="1" step="0.05" value="0.20"
-               data-profile="file" data-key="drop_threshold"
-               oninput="jawVal('file','drop_threshold', this.value)"
-               onchange="setJaw('file','drop_threshold', +this.value)">
-        <span class="val" id="v-file-drop_threshold">0.20</span>
+        <label title="The jaw closes when loudness dips below this fraction of its recent average. Higher = closes more eagerly between syllables. Must be below Open Ratio.">Close Ratio<br><small style="color:var(--muted)">dip needed to close</small></label>
+        <input type="range" min="0.30" max="0.95" step="0.05" value="0.85"
+               data-profile="file" data-key="close_ratio"
+               oninput="jawVal('file','close_ratio', this.value)"
+               onchange="setJaw('file','close_ratio', +this.value)">
+        <span class="val" id="v-file-close_ratio">0.85</span>
+      </div>
+      <div class="row">
+        <label title="How fast the running-average loudness adapts. Higher reacts quicker to volume changes; lower is steadier and smoother.">Adapt Speed<br><small style="color:var(--muted)">envelope smoothing</small></label>
+        <input type="range" min="0.05" max="1.0" step="0.05" value="0.15"
+               data-profile="file" data-key="ema_alpha"
+               oninput="jawVal('file','ema_alpha', this.value)"
+               onchange="setJaw('file','ema_alpha', +this.value)">
+        <span class="val" id="v-file-ema_alpha">0.15</span>
+      </div>
+      <div class="row">
+        <label title="Consecutive quiet frames (~21 ms each) required before the jaw actually closes. Higher holds the jaw open through brief dips in fast speech.">Close Hold<br><small style="color:var(--muted)">frames before closing</small></label>
+        <input type="range" min="1" max="10" step="1" value="2"
+               data-profile="file" data-key="close_hold_frames"
+               oninput="jawVal('file','close_hold_frames', this.value)"
+               onchange="setJaw('file','close_hold_frames', +this.value)">
+        <span class="val" id="v-file-close_hold_frames">2</span>
       </div>
     </div>
 
@@ -240,34 +256,48 @@
     <div class="tune-group">
       <div class="section-title">Live mic (passthrough)</div>
       <div class="row">
-        <label>Sensitivity<br><small style="color:var(--muted)">lower = more sensitive</small></label>
-        <input type="range" min="50" max="2000" step="50" value="500"
-               data-profile="mic" data-key="sensitivity"
-               oninput="jawVal('mic','sensitivity', this.value)"
-               onchange="setJaw('mic','sensitivity', +this.value)">
-        <span class="val" id="v-mic-sensitivity">500</span>
+        <label title="Absolute loudness (RMS) below which the jaw stays closed. Raise it if quiet room noise opens the jaw; lower it if soft speech doesn't.">Silence Floor<br><small style="color:var(--muted)">absolute quiet gate</small></label>
+        <input type="range" min="0" max="3000" step="50" value="600"
+               data-profile="mic" data-key="silence_floor"
+               oninput="jawVal('mic','silence_floor', this.value)"
+               onchange="setJaw('mic','silence_floor', +this.value)">
+        <span class="val" id="v-mic-silence_floor">600</span>
       </div>
       <div class="row">
-        <label>Noise Floor<br><small style="color:var(--muted)">close jaw below this peak</small></label>
-        <input type="range" min="0" max="2000" step="50" value="600"
-               data-profile="mic" data-key="noise_floor"
-               oninput="jawVal('mic','noise_floor', this.value)"
-               onchange="setJaw('mic','noise_floor', +this.value)">
-        <span class="val" id="v-mic-noise_floor">600</span>
+        <label title="The jaw opens when loudness rises this many times above its recent average. Higher = needs a bigger swell to open.">Open Ratio<br><small style="color:var(--muted)">swell needed to open</small></label>
+        <input type="range" min="1.0" max="2.0" step="0.05" value="1.10"
+               data-profile="mic" data-key="open_ratio"
+               oninput="jawVal('mic','open_ratio', this.value)"
+               onchange="setJaw('mic','open_ratio', +this.value)">
+        <span class="val" id="v-mic-open_ratio">1.10</span>
       </div>
       <div class="row">
-        <label>Drop Threshold<br><small style="color:var(--muted)">lower = closes eagerly</small></label>
-        <input type="range" min="0" max="1" step="0.05" value="0.20"
-               data-profile="mic" data-key="drop_threshold"
-               oninput="jawVal('mic','drop_threshold', this.value)"
-               onchange="setJaw('mic','drop_threshold', +this.value)">
-        <span class="val" id="v-mic-drop_threshold">0.20</span>
+        <label title="The jaw closes when loudness dips below this fraction of its recent average. Higher = closes more eagerly between syllables. Must be below Open Ratio.">Close Ratio<br><small style="color:var(--muted)">dip needed to close</small></label>
+        <input type="range" min="0.30" max="0.95" step="0.05" value="0.85"
+               data-profile="mic" data-key="close_ratio"
+               oninput="jawVal('mic','close_ratio', this.value)"
+               onchange="setJaw('mic','close_ratio', +this.value)">
+        <span class="val" id="v-mic-close_ratio">0.85</span>
+      </div>
+      <div class="row">
+        <label title="How fast the running-average loudness adapts. Higher reacts quicker to volume changes; lower is steadier and smoother.">Adapt Speed<br><small style="color:var(--muted)">envelope smoothing</small></label>
+        <input type="range" min="0.05" max="1.0" step="0.05" value="0.15"
+               data-profile="mic" data-key="ema_alpha"
+               oninput="jawVal('mic','ema_alpha', this.value)"
+               onchange="setJaw('mic','ema_alpha', +this.value)">
+        <span class="val" id="v-mic-ema_alpha">0.15</span>
+      </div>
+      <div class="row">
+        <label title="Consecutive quiet frames (~21 ms each) required before the jaw actually closes. Higher holds the jaw open through brief dips in fast speech.">Close Hold<br><small style="color:var(--muted)">frames before closing</small></label>
+        <input type="range" min="1" max="10" step="1" value="2"
+               data-profile="mic" data-key="close_hold_frames"
+               oninput="jawVal('mic','close_hold_frames', this.value)"
+               onchange="setJaw('mic','close_hold_frames', +this.value)">
+        <span class="val" id="v-mic-close_hold_frames">2</span>
       </div>
     </div>
 
-    <p class="hint">For each profile, raise Noise Floor until the jaw stops twitching in silence
-       (ambient noise peaks ~150–400, so 600–850 works), then lower Sensitivity until speech opens
-       it fully. Tune each profile for its source — recorded files versus the live mic.</p>
+    <p class="hint">The jaw opens on loudness swells and closes on dips, relative to a rolling average — so it articulates within continuous speech. Raise <strong>Silence Floor</strong> if quiet noise opens it; raise <strong>Close Ratio</strong> (kept below Open Ratio) so it closes more between syllables; increase <strong>Close Hold</strong> to stop rapid flutter. Tune File and Live mic independently.</p>
   </div>
 
   <!-- AUTOMATION -->
@@ -396,9 +426,12 @@
     }
 
     // ── Jaw tuning (two independent profiles: file playback + live mic) ──────
+    // Float-valued keys show 2 decimals; the rest are integers.
+    const JAW_DECIMAL_KEYS = new Set(['open_ratio', 'close_ratio', 'ema_alpha']);
+    function jawFmt(key, v) { return JAW_DECIMAL_KEYS.has(key) ? (+v).toFixed(2) : v; }
     function jawVal(profile, key, v) {
       const span = document.getElementById('v-' + profile + '-' + key);
-      if (span) span.textContent = (key === 'drop_threshold') ? (+v).toFixed(2) : v;
+      if (span) span.textContent = jawFmt(key, v);
     }
     function setJaw(profile, key, value) {
       post('/jaw', null, {profile: profile, [key]: value});
@@ -418,7 +451,7 @@
         const val = prof[k];
         inp.value = val;
         const span = document.getElementById('v-' + p + '-' + k);
-        if (span) span.textContent = (k === 'drop_threshold') ? (+val).toFixed(2) : val;
+        if (span) span.textContent = jawFmt(k, val);
       });
     }
 

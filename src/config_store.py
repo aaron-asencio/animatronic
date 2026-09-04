@@ -15,9 +15,11 @@ the codebase.
 import os
 import json
 
-DEFAULT_SENSITIVITY = 500
-DEFAULT_NOISE_FLOOR = 600
-DEFAULT_DROP_THRESHOLD = 0.20
+DEFAULT_SILENCE_FLOOR = 600
+DEFAULT_OPEN_RATIO = 1.10
+DEFAULT_CLOSE_RATIO = 0.85
+DEFAULT_EMA_ALPHA = 0.15
+DEFAULT_CLOSE_HOLD_FRAMES = 2
 
 PROFILE_FILE = "file"
 PROFILE_MIC = "mic"
@@ -33,13 +35,16 @@ def _default_profile():
     """Return a fresh copy of the default jaw-tuning profile.
 
     Returns:
-        A new dict with the default sensitivity, noise_floor, and
-        drop_threshold values, safe to mutate without affecting other callers.
+        A new dict with the default adaptive jaw-tuning values (silence_floor,
+        open_ratio, close_ratio, ema_alpha, close_hold_frames), safe to mutate
+        without affecting other callers.
     """
     return {
-        "sensitivity": DEFAULT_SENSITIVITY,
-        "noise_floor": DEFAULT_NOISE_FLOOR,
-        "drop_threshold": DEFAULT_DROP_THRESHOLD,
+        "silence_floor": DEFAULT_SILENCE_FLOOR,
+        "open_ratio": DEFAULT_OPEN_RATIO,
+        "close_ratio": DEFAULT_CLOSE_RATIO,
+        "ema_alpha": DEFAULT_EMA_ALPHA,
+        "close_hold_frames": DEFAULT_CLOSE_HOLD_FRAMES,
     }
 
 
@@ -174,7 +179,7 @@ class ConfigStore:
                 existing = {}
 
         payload = dict(existing)
-        payload["version"] = 1
+        payload["version"] = 2
         payload["profiles"] = {
             PROFILE_FILE: dict(profiles[PROFILE_FILE]),
             PROFILE_MIC: dict(profiles[PROFILE_MIC]),
