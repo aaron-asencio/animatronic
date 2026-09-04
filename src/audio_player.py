@@ -13,27 +13,40 @@ import logging
 import sys
 
 class AudioPlayer:
-    def __init__(self, sensitivity=None, noise_floor=None, drop_threshold=None):
-        """Initialise the audio player and jaw motor.
+    def __init__(self, silence_floor=None, open_ratio=None, close_ratio=None,
+                 ema_alpha=None, close_hold_frames=None):
+        """Initialise the audio player, jaw motor, and eye LED.
 
-        Jaw-tuning parameters default to the persisted File_Profile loaded from
-        the Config_Store. Explicit arguments, when provided, override the
-        corresponding profile value.
+        The jaw is a binary (on/off) DC motor driven from the audio envelope.
+        Rather than fixed thresholds, it adapts to a running average of recent
+        loudness so it articulates on the syllable-level swells and dips of
+        continuous speech (which rarely falls to true silence):
+
+          - A per-window RMS ``level`` is measured, and an exponential moving
+            average ``self._avg`` tracks recent levels.
+          - While closed, the jaw OPENS when level rises above
+            ``open_ratio * avg`` (a swell) and is also above ``silence_floor``.
+          - While open, the jaw CLOSES once level falls below
+            ``close_ratio * avg`` (a dip) OR below ``silence_floor``, held for
+            ``close_hold_frames`` consecutive frames.
+          - ``silence_floor`` is an absolute RMS gate: below it the jaw is
+            always closed and the average is not pulled down by it, so genuine
+            pauses close the mouth and quiet noise never opens it.
+
+        All five tuning parameters default to the persisted File profile from
+        the shared config store; any argument passed explicitly (non-None)
+        overrides the corresponding stored value.
 
         Args:
-            sensitivity:     Optional override for the peak amplitude divisor.
-                             When None, the File_Profile value is used. Lower =
-                             more sensitive. Voice audio typically peaks
-                             1000–8000; the profile default is 500.
-            noise_floor:     Optional override for the noise-floor gate. When
-                             None, the File_Profile value is used. Absolute peak
-                             value below which the jaw stays closed, eliminating
-                             jitter from background noise between words.
-            drop_threshold:  Optional override for the snap-shut ratio. When
-                             None, the File_Profile value is used. Ratio below
-                             which a falling jaw value snaps closed: sharp drop
-                             (ratio < threshold) → close jaw; gradual drop
-                             (ratio >= threshold) → hold open.
+            silence_floor:     Absolute RMS below which the jaw is always closed.
+            open_ratio:        Open when level > open_ratio * running average.
+            close_ratio:       Close when level < close_ratio * running average
+                               (close_ratio should be < open_ratio for
+                               hysteresis).
+            ema_alpha:         Smoothing factor (0-1) for the running-average
+                               envelope; higher adapts faster.
+            close_hold_frames: Consecutive frames satisfying the close condition
+                               before the jaw actually closes (debounce).
         """
         logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.led_eye_light = LED(EYE_LIGHT_PIN)
@@ -45,41 +58,64 @@ class AudioPlayer:
         self.CHANNELS = 1       # Mono
         self.RATE = 48000       # Sample rate (Hz)
 
-        # Jaw tuning — sourced from the persisted File_Profile; explicit args
-        # override. Adjustable at runtime via /config on micwebcontroller.
+        # Adaptive jaw tuning for the binary DC motor. Load the persisted File
+        # profile and apply any explicit constructor overrides.
         profile = load_profile(PROFILE_FILE)
-        self.sensitivity = sensitivity if sensitivity is not None else profile["sensitivity"]
-        self.noise_floor = noise_floor if noise_floor is not None else profile["noise_floor"]
-        self.drop_threshold = drop_threshold if drop_threshold is not None else profile["drop_threshold"]
-        self.previous_jaw_value = None
+        self.silence_floor = silence_floor if silence_floor is not None else profile["silence_floor"]
+        self.open_ratio = open_ratio if open_ratio is not None else profile["open_ratio"]
+        self.close_ratio = close_ratio if close_ratio is not None else profile["close_ratio"]
+        self.ema_alpha = ema_alpha if ema_alpha is not None else profile["ema_alpha"]
+        self.close_hold_frames = close_hold_frames if close_hold_frames is not None else profile["close_hold_frames"]
+        self.jaw_open = False          # current jaw state
+        self._below_count = 0          # consecutive frames meeting close cond
+        self._avg = 0.0                # running-average RMS envelope
 
     def talk(self, audio_data, start_time):
-        # copy audio_data so the PyAudio buffer is not modified in place
         data = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
-        peak = np.max(np.abs(data))
+        # RMS (energy) of this window.
+        if data.size:
+            level = float(np.sqrt(np.mean(data * data)))
+        else:
+            level = 0.0
 
-        # Noise floor gate: close jaw and bail if this is just background noise.
-        if peak < self.noise_floor:
-            self.jaw_motor.value = 0.0
-            self.previous_jaw_value = 0.0
+        # Update the running-average envelope only when there is real signal,
+        # so silent gaps don't drag the average toward zero (which would make
+        # the next quiet sound look like a big relative swell).
+        if level >= self.silence_floor:
+            if self._avg <= 0.0:
+                self._avg = level          # seed on first real signal
+            else:
+                self._avg += self.ema_alpha * (level - self._avg)
+
+        open_thresh = self.open_ratio * self._avg
+        close_thresh = self.close_ratio * self._avg
+
+        if not self.jaw_open:
+            # Open on a swell above the adaptive threshold, but never on quiet
+            # below the absolute floor.
+            if level >= self.silence_floor and level >= open_thresh:
+                self.jaw_open = True
+                self._below_count = 0
+        else:
+            # Close on a dip below the adaptive threshold or below the floor,
+            # after close_hold_frames consecutive qualifying frames.
+            if level < self.silence_floor or level < close_thresh:
+                self._below_count += 1
+                if self._below_count >= self.close_hold_frames:
+                    self.jaw_open = False
+                    self._below_count = 0
+            else:
+                self._below_count = 0
+
+        if self.jaw_open:
+            self.jaw_motor.on()
+            self.led_eye_light.on()
+        else:
+            self.jaw_motor.off()
             self.led_eye_light.off()
-            return
 
-        # Scale peak to 0–100 using sensitivity divisor.
-        jaw_value = float(min(peak / self.sensitivity * 100, 100))
-
-        # Drop-threshold: sharp drop (ratio < threshold) → close jaw.
-        # Gradual drop (ratio >= threshold) → hold open (natural speech decay).
-        if self.previous_jaw_value is not None and self.previous_jaw_value > 0 and jaw_value < self.previous_jaw_value:
-            ratio = jaw_value / self.previous_jaw_value
-            if ratio < self.drop_threshold:
-                jaw_value = 0.0
-
-        motor_value = jaw_value / 100.0
-        print(f"Peak: {peak:.0f}; Jaw: {jaw_value:.1f}%; Motor: {motor_value:.2f}; Prev: {self.previous_jaw_value}")
-        self.jaw_motor.value = motor_value
-        self.led_eye_light.on() if jaw_value > 0 else self.led_eye_light.off()
-        self.previous_jaw_value = jaw_value
+        state = 'OPEN' if self.jaw_open else 'closed'
+        print(f"RMS: {level:.0f}; avg: {self._avg:.0f}; Jaw: {state}; below: {self._below_count}")
             
 
     def play_audio_file(self, audio_file, output_device_index=2):
@@ -105,6 +141,7 @@ class AudioPlayer:
                         rate=wf.getframerate(),
                         output=True,
                         output_device_index=output_device_index,
+                        frames_per_buffer=1024,
                         stream_callback=audio_callback)  # Set to True to play audio through speakers
         
         stream.start_stream()

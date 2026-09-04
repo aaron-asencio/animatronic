@@ -9,7 +9,7 @@ It provides the same controls the Node-RED flow did:
   - Movements  : gesture-only tests             (controller.py  --action=<name>)
   - Mic stream : start/stop live mic passthrough (proxied to micwebcontroller)
   - Voice FX   : style preset + per-effect toggles/sliders (proxied)
-  - Jaw Tuning : sensitivity / noise floor / drop threshold (proxied)
+  - Jaw Tuning : adaptive envelope (silence floor / open+close ratio / adapt speed / close hold), proxied
   - Automation : timed random routine + movement loops (background threads)
 
 Design notes:

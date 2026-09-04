@@ -37,20 +37,23 @@ input_device_index = 1   # capture device index
 output_device_index = 2  # playback device index
 
 jaw_motor = None
-previous_jaw_value = None
 led_eye_light = None
+
+# Adaptive jaw envelope state (mic passthrough).
+jaw_open = False
+below_count = 0
+avg_level = 0.0
 
 # Jaw tuning — two independent profiles (File_Profile and Mic_Profile) loaded
 # from the shared Config_Store and adjustable at runtime via POST /config.
-# This process drives the live mic, so talk() reads the mic profile.
-# sensitivity:   peak amplitude divisor; lower = more sensitive.
-#                Voice peaks ~1000–8000; default 500 is a good starting point.
-# noise_floor:   absolute peak value below which the jaw stays closed.
-#                Eliminates jitter from mic background noise.
-#                Set just above your ambient noise level (seen as ~150–400 in logs).
-# drop_threshold: ratio below which a falling jaw value snaps closed.
-#                Sharp drop (ratio < threshold) = silence between words → close jaw.
-#                Gradual drop (ratio >= threshold) = trailing off → hold open.
+# This process drives the live mic, so talk() reads the mic profile live from
+# jaw_profiles so runtime /config updates take effect immediately.
+# silence_floor:     absolute RMS below which the jaw is always closed.
+# open_ratio:        open when level > open_ratio * running average.
+# close_ratio:       close when level < close_ratio * running average
+#                    (must be < open_ratio for hysteresis).
+# ema_alpha:         smoothing factor (0, 1] for the running-average envelope.
+# close_hold_frames: consecutive close-condition frames before closing (debounce).
 config_store = ConfigStore()
 jaw_profiles = config_store.load_profiles()   # {"file": {...}, "mic": {...}}
 
@@ -179,41 +182,57 @@ def stream_mic():
 
 
 def talk(audio_data, start_time):
-    global previous_jaw_value, jaw_motor, led_eye_light
+    global jaw_motor, led_eye_light, jaw_open, below_count, avg_level
     if jaw_motor is None:
-        from model.constants import MOUTH_MOTOR_PIN
         jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
-        if led_eye_light is None:
-            led_eye_light = LED(EYE_LIGHT_PIN)
+    if led_eye_light is None:
+        led_eye_light = LED(EYE_LIGHT_PIN)
 
-    peak = np.max(np.abs(audio_data))
+    # Read the live mic profile so runtime POST /config updates take effect.
+    mic = jaw_profiles[PROFILE_MIC]
+    silence_floor = mic["silence_floor"]
+    open_ratio = mic["open_ratio"]
+    close_ratio = mic["close_ratio"]
+    ema_alpha = mic["ema_alpha"]
+    close_hold_frames = mic["close_hold_frames"]
 
-    # Noise floor gate: if the peak is just mic background noise, close the jaw
-    # and bail out. This prevents jitter when no one is speaking.
-    if peak < jaw_profiles[PROFILE_MIC]['noise_floor']:
-        jaw_motor.value = 0.0
-        previous_jaw_value = 0.0
+    data = np.asarray(audio_data, dtype=np.float32)
+    if data.size:
+        level = float(np.sqrt(np.mean(data * data)))
+    else:
+        level = 0.0
+
+    if level >= silence_floor:
+        if avg_level <= 0.0:
+            avg_level = level
+        else:
+            avg_level += ema_alpha * (level - avg_level)
+
+    open_thresh = open_ratio * avg_level
+    close_thresh = close_ratio * avg_level
+
+    if not jaw_open:
+        if level >= silence_floor and level >= open_thresh:
+            jaw_open = True
+            below_count = 0
+    else:
+        if level < silence_floor or level < close_thresh:
+            below_count += 1
+            if below_count >= close_hold_frames:
+                jaw_open = False
+                below_count = 0
+        else:
+            below_count = 0
+
+    if jaw_open:
+        jaw_motor.on()
+        led_eye_light.on()
+    else:
+        jaw_motor.off()
         led_eye_light.off()
-        print(f"Peak: {peak:.0f}; GATED (below noise floor {jaw_profiles[PROFILE_MIC]['noise_floor']})")
-        return
 
-    # Scale peak to 0–100 using tunable sensitivity divisor.
-    jaw_value = float(min(peak / jaw_profiles[PROFILE_MIC]['sensitivity'] * 100, 100))
-
-    # Drop-threshold: detect a sharp drop (silence between words) vs gradual
-    # decay (natural end of a word). Close the jaw on sharp drops only.
-    # ratio < drop_threshold  → sharp drop → close jaw
-    # ratio >= drop_threshold → gradual drop → hold open (natural decay)
-    if previous_jaw_value is not None and previous_jaw_value > 0 and jaw_value < previous_jaw_value:
-        ratio = jaw_value / previous_jaw_value
-        if ratio < jaw_profiles[PROFILE_MIC]['drop_threshold']:
-            jaw_value = 0.0
-
-    motor_value = jaw_value / 100.0
-    print(f"Peak: {peak:.0f}; Jaw: {jaw_value:.1f}%; Motor: {motor_value:.2f}; Prev: {previous_jaw_value}")
-    jaw_motor.value = motor_value
-    led_eye_light.on() if jaw_value > 0 else led_eye_light.off()
-    previous_jaw_value = jaw_value
+    state = 'OPEN' if jaw_open else 'closed'
+    print(f"RMS: {level:.0f}; avg: {avg_level:.0f}; Jaw: {state}; below: {below_count}")
         
 # ── Individual effect functions ──────────────────────────────────────────────
 # Each takes a float32 array (int16 range, ±32768) and returns float32.
@@ -385,24 +404,27 @@ def set_config():
     """Update jaw tuning for one profile at runtime and persist both.
 
     Accepts a JSON body with a "profile" selector plus any combination of the
-    three jaw-tuning fields. The selector is checked against an explicit
+    five adaptive jaw-tuning fields. The selector is checked against an explicit
     allowlist, and every supplied field is validated, before any profile is
     mutated. On any invalid input the handler returns early, so the stored
     profiles (in memory and on disk) are left unchanged.
 
     Args:
-        (request body) profile:        Profile to update, one of ALLOWED_PROFILES
-                                       ("file" or "mic").
-        (request body) sensitivity:    Optional peak divisor; must be > 0.
-                                       Lower values increase sensitivity.
-        (request body) noise_floor:    Optional gate threshold; must be >= 0.
-        (request body) drop_threshold: Optional snap-shut ratio; must be 0.0–1.0.
+        (request body) profile:           Profile to update, one of
+                                          ALLOWED_PROFILES ("file" or "mic").
+        (request body) silence_floor:     Optional absolute RMS gate; must be >= 0.
+        (request body) open_ratio:        Optional open multiplier; must be > 0.
+        (request body) close_ratio:       Optional close multiplier; must be > 0
+                                          and less than the effective open_ratio.
+        (request body) ema_alpha:         Optional smoothing factor; must be in (0, 1].
+        (request body) close_hold_frames: Optional debounce frame count; int >= 1.
 
     Example:
         curl -X POST http://localhost:5000/config \\
              -H 'Content-Type: application/json' \\
-             -d '{"profile": "mic", "sensitivity": 300, "drop_threshold": 0.15}'
+             -d '{"profile": "mic", "silence_floor": 700, "open_ratio": 1.2}'
     """
+    global jaw_profiles
     data = request.json or {}
 
     # Allowlist dispatch — never index jaw_profiles with unvalidated input.
@@ -413,27 +435,49 @@ def set_config():
 
     # Validate every supplied field before mutating anything.
     updates = {}
-    if 'sensitivity' in data:
-        value = float(data['sensitivity'])
-        if value <= 0:
-            return jsonify({'status': 'error', 'message': 'sensitivity must be > 0'}), 400
-        updates['sensitivity'] = value
-
-    if 'noise_floor' in data:
-        value = float(data['noise_floor'])
+    if 'silence_floor' in data:
+        value = float(data['silence_floor'])
         if value < 0:
-            return jsonify({'status': 'error', 'message': 'noise_floor must be >= 0'}), 400
-        updates['noise_floor'] = value
+            return jsonify({'status': 'error', 'message': 'silence_floor must be >= 0'}), 400
+        updates['silence_floor'] = value
 
-    if 'drop_threshold' in data:
-        value = float(data['drop_threshold'])
-        if not (0.0 <= value <= 1.0):
-            return jsonify({'status': 'error', 'message': 'drop_threshold must be 0.0–1.0'}), 400
-        updates['drop_threshold'] = value
+    if 'open_ratio' in data:
+        value = float(data['open_ratio'])
+        if value <= 0:
+            return jsonify({'status': 'error', 'message': 'open_ratio must be > 0'}), 400
+        updates['open_ratio'] = value
+
+    if 'close_ratio' in data:
+        value = float(data['close_ratio'])
+        if value <= 0:
+            return jsonify({'status': 'error', 'message': 'close_ratio must be > 0'}), 400
+        updates['close_ratio'] = value
+
+    if 'ema_alpha' in data:
+        value = float(data['ema_alpha'])
+        if not (0.0 < value <= 1.0):
+            return jsonify({'status': 'error', 'message': 'ema_alpha must be in (0, 1]'}), 400
+        updates['ema_alpha'] = value
+
+    if 'close_hold_frames' in data:
+        value = int(float(data['close_hold_frames']))
+        if value < 1:
+            return jsonify({'status': 'error', 'message': 'close_hold_frames must be >= 1'}), 400
+        updates['close_hold_frames'] = value
+
+    # Cross-field hysteresis check: the effective close_ratio (updated value if
+    # present, else the current stored value) must stay below the effective
+    # open_ratio. Enforced across partial updates so a single-field change can't
+    # invert the relationship. Checked before any mutation.
+    current = jaw_profiles[profile_name]
+    effective_open = updates.get('open_ratio', current['open_ratio'])
+    effective_close = updates.get('close_ratio', current['close_ratio'])
+    if effective_close >= effective_open:
+        return jsonify({'status': 'error',
+                        'message': 'close_ratio must be less than open_ratio'}), 400
 
     # Validation fully passed before any mutation → invalid requests leave the
     # stored profiles unchanged (the persisted file is only touched on success).
-    global jaw_profiles
     jaw_profiles = config_store.update_profile(profile_name, updates)
     print(f"Jaw profile '{profile_name}' updated: {jaw_profiles[profile_name]}")
     return jsonify({'status': 'success', 'profile': profile_name,

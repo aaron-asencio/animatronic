@@ -99,18 +99,22 @@ from config_store import (  # noqa: E402
     ALLOWED_PROFILES,
     PROFILE_FILE,
     PROFILE_MIC,
-    DEFAULT_SENSITIVITY,
-    DEFAULT_NOISE_FLOOR,
-    DEFAULT_DROP_THRESHOLD,
+    DEFAULT_SILENCE_FLOOR,
+    DEFAULT_OPEN_RATIO,
+    DEFAULT_CLOSE_RATIO,
+    DEFAULT_EMA_ALPHA,
+    DEFAULT_CLOSE_HOLD_FRAMES,
 )
 
 
 def _default_profile():
-    """Return the expected default profile dict (sensitivity/noise/drop)."""
+    """Return the expected default adaptive profile dict (five fields)."""
     return {
-        "sensitivity": DEFAULT_SENSITIVITY,
-        "noise_floor": DEFAULT_NOISE_FLOOR,
-        "drop_threshold": DEFAULT_DROP_THRESHOLD,
+        "silence_floor": DEFAULT_SILENCE_FLOOR,
+        "open_ratio": DEFAULT_OPEN_RATIO,
+        "close_ratio": DEFAULT_CLOSE_RATIO,
+        "ema_alpha": DEFAULT_EMA_ALPHA,
+        "close_hold_frames": DEFAULT_CLOSE_HOLD_FRAMES,
     }
 
 
@@ -156,45 +160,58 @@ def _reload_stored_pair(config_path):
 
 # One out-of-bounds value per field, plus optional in-bounds values so the
 # request is realistic (mixing valid and invalid fields).
-_oob_sensitivity = st.floats(min_value=-1000.0, max_value=0.0)  # <= 0 invalid
-_oob_noise_floor = st.floats(min_value=-1000.0, max_value=-0.0001)  # < 0 invalid
-_oob_drop_low = st.floats(min_value=-1000.0, max_value=-0.0001)  # < 0.0 invalid
-_oob_drop_high = st.floats(min_value=1.0001, max_value=1000.0)  # > 1.0 invalid
-_oob_drop = st.one_of(_oob_drop_low, _oob_drop_high)
+_oob_silence_floor = st.floats(min_value=-1000.0, max_value=-0.0001)  # < 0 invalid
+_oob_open_ratio = st.floats(min_value=-1000.0, max_value=0.0)  # <= 0 invalid
+_oob_close_ratio = st.floats(min_value=-1000.0, max_value=0.0)  # <= 0 invalid
+_oob_ema_low = st.floats(min_value=-1000.0, max_value=0.0)  # <= 0 invalid
+_oob_ema_high = st.floats(min_value=1.0001, max_value=1000.0)  # > 1.0 invalid
+_oob_ema = st.one_of(_oob_ema_low, _oob_ema_high)
+_oob_close_hold = st.integers(min_value=-1000, max_value=0)  # < 1 invalid
 
-_valid_sensitivity = st.floats(min_value=0.01, max_value=5000.0)
-_valid_noise_floor = st.floats(min_value=0.0, max_value=5000.0)
-_valid_drop = st.floats(min_value=0.0, max_value=1.0)
+_valid_silence_floor = st.floats(min_value=0.0, max_value=5000.0)
+_valid_ema = st.floats(min_value=0.01, max_value=1.0)
+_valid_close_hold = st.integers(min_value=1, max_value=50)
 
 
 @st.composite
 def _oob_update(draw):
     """Build an update dict containing AT LEAST ONE out-of-bounds field.
 
-    Each of the three fields may be present; when present it is either the
+    Each of the five fields may be present; when present it is either the
     out-of-bounds generator or an in-bounds one. We force at least one field
     to be present and out-of-bounds so the request must be rejected.
+
+    Note: open_ratio/close_ratio use out-of-bounds generators (<= 0) that the
+    single-field validators reject before the cross-field check runs, so this
+    strategy exercises the per-field bounds cleanly. The close_ratio >=
+    open_ratio cross-check is covered separately below.
     """
     # Decide which fields are out-of-bounds (at least one must be True).
     oob_flags = draw(
-        st.lists(st.booleans(), min_size=3, max_size=3).filter(lambda f: any(f))
+        st.lists(st.booleans(), min_size=5, max_size=5).filter(lambda f: any(f))
     )
     update = {}
-    # sensitivity
+    # silence_floor
     if oob_flags[0]:
-        update["sensitivity"] = draw(_oob_sensitivity)
+        update["silence_floor"] = draw(_oob_silence_floor)
     elif draw(st.booleans()):
-        update["sensitivity"] = draw(_valid_sensitivity)
-    # noise_floor
+        update["silence_floor"] = draw(_valid_silence_floor)
+    # open_ratio
     if oob_flags[1]:
-        update["noise_floor"] = draw(_oob_noise_floor)
-    elif draw(st.booleans()):
-        update["noise_floor"] = draw(_valid_noise_floor)
-    # drop_threshold
+        update["open_ratio"] = draw(_oob_open_ratio)
+    # close_ratio
     if oob_flags[2]:
-        update["drop_threshold"] = draw(_oob_drop)
+        update["close_ratio"] = draw(_oob_close_ratio)
+    # ema_alpha
+    if oob_flags[3]:
+        update["ema_alpha"] = draw(_oob_ema)
     elif draw(st.booleans()):
-        update["drop_threshold"] = draw(_valid_drop)
+        update["ema_alpha"] = draw(_valid_ema)
+    # close_hold_frames
+    if oob_flags[4]:
+        update["close_hold_frames"] = draw(_oob_close_hold)
+    elif draw(st.booleans()):
+        update["close_hold_frames"] = draw(_valid_close_hold)
     return update
 
 
@@ -203,9 +220,10 @@ def _oob_update(draw):
 def test_property4_out_of_bounds_rejected_without_mutation(profile, update):
     """Feature: separate-jaw-tuning-profiles, Property 4: Out-of-bounds values are rejected without mutation.
 
-    For any update request in which sensitivity <= 0, noise_floor < 0, or
-    drop_threshold falls outside [0.0, 1.0], the Web_Controller returns an
-    error response and leaves both stored profiles unchanged.
+    For any update request in which silence_floor < 0, open_ratio <= 0,
+    close_ratio <= 0, ema_alpha falls outside (0, 1], or close_hold_frames < 1,
+    the Web_Controller returns an error response and leaves both stored
+    profiles unchanged.
 
     Validates: Requirements 5.1, 5.2, 5.3, 8.1
     """
@@ -235,6 +253,44 @@ def test_property4_out_of_bounds_rejected_without_mutation(profile, update):
     assert _reload_stored_pair(config_path) == before_memory
 
 
+@settings(max_examples=100, deadline=None)
+@given(
+    profile=st.sampled_from(list(ALLOWED_PROFILES)),
+    open_ratio=st.floats(min_value=0.5, max_value=2.0),
+    # close is >= open, so the cross-field hysteresis check must reject it.
+    extra=st.floats(min_value=0.0, max_value=2.0),
+)
+def test_property4_close_ge_open_rejected_without_mutation(profile, open_ratio, extra):
+    """Property 4 (cross-field): close_ratio >= open_ratio is rejected.
+
+    Both ratios are individually in-bounds (> 0), but the hysteresis invariant
+    close_ratio < open_ratio is violated, so the Web_Controller must return an
+    error and leave both stored profiles unchanged.
+
+    Validates: Requirements 5.1, 5.2, 5.3, 8.1
+    """
+    close_ratio = open_ratio + extra  # guaranteed >= open_ratio
+
+    config_path = os.path.join(tempfile.mkdtemp(), "jaw_p4x.json")
+    store = ConfigStore(config_path=str(config_path))
+    micwebcontroller.config_store = store
+    micwebcontroller.jaw_profiles = store.load_profiles()
+
+    before_memory = _default_pair()
+    assert micwebcontroller.jaw_profiles == before_memory
+
+    body = {"profile": profile, "open_ratio": open_ratio, "close_ratio": close_ratio}
+    with micwebcontroller.app.test_client() as c:
+        resp = c.post("/config", json=body)
+
+    assert resp.status_code == 400
+    payload = resp.get_json()
+    assert payload["status"] == "error"
+
+    assert micwebcontroller.jaw_profiles == before_memory
+    assert _reload_stored_pair(config_path) == before_memory
+
+
 # ---------------------------------------------------------------------------
 # Task 7.5 — Property test: unknown-profile rejection without mutation
 # ---------------------------------------------------------------------------
@@ -243,11 +299,11 @@ def test_property4_out_of_bounds_rejected_without_mutation(profile, update):
 @settings(max_examples=150, deadline=None)
 @given(
     profile=st.text(max_size=30),
-    sensitivity=_valid_sensitivity,
-    drop_threshold=_valid_drop,
+    silence_floor=_valid_silence_floor,
+    ema_alpha=_valid_ema,
 )
 def test_property5_unknown_profile_rejected_without_mutation(
-    profile, sensitivity, drop_threshold
+    profile, silence_floor, ema_alpha
 ):
     """Feature: separate-jaw-tuning-profiles, Property 5: Unknown profile names are rejected without mutation.
 
@@ -271,8 +327,8 @@ def test_property5_unknown_profile_rejected_without_mutation(
     # Otherwise-valid fields — only the profile name is bad.
     body = {
         "profile": profile,
-        "sensitivity": sensitivity,
-        "drop_threshold": drop_threshold,
+        "silence_floor": silence_floor,
+        "ema_alpha": ema_alpha,
     }
     with micwebcontroller.app.test_client() as c:
         resp = c.post("/config", json=body)
@@ -297,7 +353,7 @@ def test_valid_file_profile_update_returns_200_and_echoes(client):
     The response echoes the profile name and the updated fields, and reports
     both profiles with the file profile carrying the new values.
     """
-    body = {"profile": PROFILE_FILE, "sensitivity": 350, "drop_threshold": 0.15}
+    body = {"profile": PROFILE_FILE, "silence_floor": 350, "open_ratio": 1.25}
     resp = client.post("/config", json=body)
 
     assert resp.status_code == 200
@@ -305,33 +361,33 @@ def test_valid_file_profile_update_returns_200_and_echoes(client):
     assert payload["status"] == "success"
     assert payload["profile"] == PROFILE_FILE
     # Updated fields echoed back (values coerced to float by the handler).
-    assert payload["updated"]["sensitivity"] == 350
-    assert payload["updated"]["drop_threshold"] == 0.15
+    assert payload["updated"]["silence_floor"] == 350
+    assert payload["updated"]["open_ratio"] == 1.25
     # Both profiles present; file profile reflects the update.
     assert set(payload["profiles"]) == {PROFILE_FILE, PROFILE_MIC}
-    assert payload["profiles"][PROFILE_FILE]["sensitivity"] == 350
-    assert payload["profiles"][PROFILE_FILE]["drop_threshold"] == 0.15
-    # noise_floor was not supplied, so it stays at the default.
-    assert payload["profiles"][PROFILE_FILE]["noise_floor"] == DEFAULT_NOISE_FLOOR
+    assert payload["profiles"][PROFILE_FILE]["silence_floor"] == 350
+    assert payload["profiles"][PROFILE_FILE]["open_ratio"] == 1.25
+    # close_ratio was not supplied, so it stays at the default.
+    assert payload["profiles"][PROFILE_FILE]["close_ratio"] == DEFAULT_CLOSE_RATIO
     # Mic profile left at defaults (isolation).
     assert payload["profiles"][PROFILE_MIC] == _default_profile()
 
 
 def test_valid_mic_profile_update_returns_200_and_echoes(client):
     """Requirement 4.2: valid Mic_Profile update -> 200 with echoed fields."""
-    body = {"profile": PROFILE_MIC, "sensitivity": 800, "noise_floor": 250}
+    body = {"profile": PROFILE_MIC, "silence_floor": 800, "close_hold_frames": 4}
     resp = client.post("/config", json=body)
 
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["status"] == "success"
     assert payload["profile"] == PROFILE_MIC
-    assert payload["updated"]["sensitivity"] == 800
-    assert payload["updated"]["noise_floor"] == 250
-    assert payload["profiles"][PROFILE_MIC]["sensitivity"] == 800
-    assert payload["profiles"][PROFILE_MIC]["noise_floor"] == 250
-    # drop_threshold not supplied -> default retained.
-    assert payload["profiles"][PROFILE_MIC]["drop_threshold"] == DEFAULT_DROP_THRESHOLD
+    assert payload["updated"]["silence_floor"] == 800
+    assert payload["updated"]["close_hold_frames"] == 4
+    assert payload["profiles"][PROFILE_MIC]["silence_floor"] == 800
+    assert payload["profiles"][PROFILE_MIC]["close_hold_frames"] == 4
+    # ema_alpha not supplied -> default retained.
+    assert payload["profiles"][PROFILE_MIC]["ema_alpha"] == DEFAULT_EMA_ALPHA
     # File profile left at defaults (isolation).
     assert payload["profiles"][PROFILE_FILE] == _default_profile()
 
@@ -352,15 +408,15 @@ def test_status_returns_both_profiles_reflecting_stored_values(client):
     assert payload["profiles"][PROFILE_MIC] == _default_profile()
 
     # Apply one update per profile.
-    client.post("/config", json={"profile": PROFILE_FILE, "sensitivity": 420})
-    client.post("/config", json={"profile": PROFILE_MIC, "drop_threshold": 0.05})
+    client.post("/config", json={"profile": PROFILE_FILE, "silence_floor": 420})
+    client.post("/config", json={"profile": PROFILE_MIC, "ema_alpha": 0.05})
 
     # /status now reflects the stored values.
     resp = client.get("/status")
     assert resp.status_code == 200
     payload = resp.get_json()
-    assert payload["profiles"][PROFILE_FILE]["sensitivity"] == 420
-    assert payload["profiles"][PROFILE_MIC]["drop_threshold"] == 0.05
+    assert payload["profiles"][PROFILE_FILE]["silence_floor"] == 420
+    assert payload["profiles"][PROFILE_MIC]["ema_alpha"] == 0.05
     # Untouched fields remain at defaults.
-    assert payload["profiles"][PROFILE_FILE]["noise_floor"] == DEFAULT_NOISE_FLOOR
-    assert payload["profiles"][PROFILE_MIC]["sensitivity"] == DEFAULT_SENSITIVITY
+    assert payload["profiles"][PROFILE_FILE]["open_ratio"] == DEFAULT_OPEN_RATIO
+    assert payload["profiles"][PROFILE_MIC]["silence_floor"] == DEFAULT_SILENCE_FLOOR
