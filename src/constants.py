@@ -56,7 +56,7 @@ NECK_CENTER = 90
 # Format: channel -> (min_deg, max_deg)
 SAFE_LIMITS = {
     NECK_PAN:            (30, 150),   # left-right head rotation
-    NECK_TILT:           (15, 90),    # up-down; JAMMED at low angles — calibrate!
+    NECK_TILT:           (30, 160),   # up-down: 90=level, higher=chin down (160=chin-to-chest stop), lower=head up
     RT_SHOULDER_ROTATOR: (60, 270),   # raise/lower whole arm
     RT_SHOULDER_TILT:    (0, 230),    # shoulder forward/back
     RT_ELBOW_TILT:       (0, 120),    # elbow bend
@@ -68,7 +68,7 @@ SAFE_LIMITS = {
 # left energized against a jam. Each rest angle MUST lie within SAFE_LIMITS.
 REST_POSITIONS = {
     NECK_PAN:            90,   # centered
-    NECK_TILT:           45,   # level-ish head; mid of safe range, away from jam
+    NECK_TILT:           90,   # head level (new neutral after reseat)
     RT_SHOULDER_ROTATOR: 60,   # arm lowered
     RT_SHOULDER_TILT:    0,    # shoulder back/neutral
     RT_ELBOW_TILT:       0,    # elbow straight
