@@ -55,7 +55,7 @@ NECK_CENTER = 90
 #
 # Format: channel -> (min_deg, max_deg)
 SAFE_LIMITS = {
-    NECK_PAN:            (30, 150),   # left-right head rotation
+    NECK_PAN:            (5, 175),    # left-right head rotation: 90=center, ~85 deg each way (natural neck range)
     NECK_TILT:           (30, 160),   # up-down: 90=level, higher=chin down (160=chin-to-chest stop), lower=head up
     RT_SHOULDER_ROTATOR: (60, 270),   # raise/lower whole arm
     RT_SHOULDER_TILT:    (0, 230),    # shoulder forward/back
