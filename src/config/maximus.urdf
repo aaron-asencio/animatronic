@@ -10,7 +10,7 @@
     tilt/rotator servo naming — watch this when building the 3D model.
 
       URDF joint            Servo constant          Channel
-      ------------------    --------------------    -------
+      ==================    ====================    =======
       yawl_neck_joint       NECK_PAN                0
       pitch_neck_joint      NECK_TILT               1
       shoulder_yaw_joint    RT_SHOULDER_TILT        6
@@ -299,6 +299,4 @@
     </joint>
     <!-- Add more <joint> tags for each servo -->
   </ros2_control>
-</robot>
-
 </robot>
