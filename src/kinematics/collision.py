@@ -19,9 +19,11 @@ This module imports only ``numpy`` and the ``Capsule`` / ``Sphere`` proxy
 dataclasses -- no hardware libraries (Requirement 11.3).
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 
-from kinematics.proxies import Capsule, Sphere
+from kinematics.proxies import Capsule, Sphere, apply_transform
 
 
 def segment_segment_distance(p0, p1, q0, q1):
@@ -202,3 +204,171 @@ def _clamp(value, low, high):
     if value > high:
         return high
     return value
+
+
+@dataclass(frozen=True)
+class DetectedPair:
+    """A detected self-collision between two non-adjacent links.
+
+    Attributes:
+        link_a: First link name. ``link_a`` and ``link_b`` are ordered
+            deterministically (sorted) so results are stable and symmetric.
+        link_b: Second link name (sorts after ``link_a``).
+        gap: The surface gap between the two link proxies, in meters. ``<= 0``
+            means the proxies intersect; a negative magnitude is the penetration
+            depth.
+        joints: Tuple of URDF revolute joint names on the tree path between the
+            two links (the offending joints). Servo-channel resolution is done
+            later at the ``model.py`` facade layer, so only URDF joint names are
+            reported here.
+    """
+
+    link_a: str
+    link_b: str
+    gap: float
+    joints: tuple
+
+
+def _proxy_to_world(proxy, transform):
+    """Places a link-local proxy into world coordinates.
+
+    Transforms a :class:`Capsule` (both endpoints) or :class:`Sphere` (center)
+    through the link's world transform. The radius is a scalar extent and is left
+    unchanged (the transforms are rigid).
+
+    Args:
+        proxy: A ``Capsule`` or ``Sphere`` expressed in its link's local frame.
+        transform: The link's 4x4 world transform.
+
+    Returns:
+        A new ``Capsule`` or ``Sphere`` expressed in world coordinates.
+
+    Raises:
+        TypeError: If ``proxy`` is neither a ``Capsule`` nor a ``Sphere``.
+    """
+    if isinstance(proxy, Capsule):
+        return Capsule(
+            p0=apply_transform(transform, proxy.p0),
+            p1=apply_transform(transform, proxy.p1),
+            radius=proxy.radius,
+        )
+    if isinstance(proxy, Sphere):
+        return Sphere(
+            center=apply_transform(transform, proxy.center),
+            radius=proxy.radius,
+        )
+    raise TypeError(f"unsupported proxy type: {type(proxy).__name__}")
+
+
+def _pair_gap(proxy_a, proxy_b):
+    """Computes the surface gap between two world-space proxies.
+
+    Dispatches to the correct analytic distance function based on the proxy
+    types, handling the mixed capsule/sphere ordering (``capsule_sphere_distance``
+    expects ``(capsule, sphere)``).
+
+    Args:
+        proxy_a: The first world-space ``Capsule`` or ``Sphere``.
+        proxy_b: The second world-space ``Capsule`` or ``Sphere``.
+
+    Returns:
+        The surface gap (float). ``<= 0`` means the proxies intersect.
+    """
+    a_is_capsule = isinstance(proxy_a, Capsule)
+    b_is_capsule = isinstance(proxy_b, Capsule)
+
+    if a_is_capsule and b_is_capsule:
+        return capsule_capsule_distance(proxy_a, proxy_b)
+    if not a_is_capsule and not b_is_capsule:
+        return sphere_sphere_distance(proxy_a, proxy_b)
+    # Mixed: capsule_sphere_distance takes (capsule, sphere).
+    if a_is_capsule:
+        return capsule_sphere_distance(proxy_a, proxy_b)
+    return capsule_sphere_distance(proxy_b, proxy_a)
+
+
+class Collision_Detector:
+    """Detects self-collisions between placed link proxies for a pose.
+
+    Places every link proxy in world coordinates using the engine's link
+    transforms, tests every unordered pair of proxied links (skipping directly
+    adjacent link pairs), and maps each colliding pair to the offending revolute
+    URDF joints on the tree path between the links.
+
+    The detector reports only URDF joint names; the servo-channel mapping is done
+    later at the ``model.py`` facade layer, so this class deliberately does not
+    import ``Calibration_Store`` (no hard dependency).
+    """
+
+    def __init__(self, engine, proxies):
+        """Precomputes the adjacency exclusion set from the joint graph.
+
+        Args:
+            engine: A ``kinematics.kinematics.Kinematics_Engine`` instance, used
+                for its ``adjacency()`` and ``joints_between(...)`` graph queries.
+            proxies: Dict mapping ``link_name`` to a proxy object (``Capsule`` or
+                ``Sphere`` from ``kinematics.proxies``), each expressed in that
+                link's LOCAL frame.
+        """
+        self._engine = engine
+        self._proxies = dict(proxies)
+        # Adjacency exclusion set: frozenset({link_a, link_b}) pairs that are
+        # directly connected by a single joint and must never be reported.
+        self._adjacent = engine.adjacency()
+        print(
+            f"[collision] Collision_Detector ready: {len(self._proxies)} proxied "
+            f"links, {len(self._adjacent)} adjacent pairs excluded"
+        )
+
+    def check(self, link_transforms):
+        """Detects colliding link pairs for a single pose.
+
+        Places each proxied link into world coordinates, tests every unordered
+        pair of proxied links (skipping adjacent pairs), and returns a
+        :class:`DetectedPair` for each pair whose surface gap is ``<= 0``.
+
+        Args:
+            link_transforms: Dict mapping ``link_name`` to a 4x4 numpy world
+                transform (from ``engine.link_transforms(...)``, with
+                ``base_link`` = identity).
+
+        Returns:
+            A list of :class:`DetectedPair` results, one per colliding pair.
+        """
+        # Place every proxied link in world coordinates once.
+        world_proxies = {}
+        for link, proxy in self._proxies.items():
+            transform = link_transforms.get(link)
+            if transform is None:
+                print(f"[collision] no transform for proxied link {link!r}; skipping")
+                continue
+            world_proxies[link] = _proxy_to_world(proxy, transform)
+
+        links = sorted(world_proxies.keys())
+        results = []
+        for i in range(len(links)):
+            for j in range(i + 1, len(links)):
+                link_a = links[i]
+                link_b = links[j]
+
+                if frozenset({link_a, link_b}) in self._adjacent:
+                    continue
+
+                gap = _pair_gap(world_proxies[link_a], world_proxies[link_b])
+                if gap <= 0:
+                    joints = tuple(self._engine.joints_between(link_a, link_b))
+                    print(
+                        f"[collision] COLLISION {link_a!r} <-> {link_b!r} "
+                        f"gap={gap:.4f} joints={joints}"
+                    )
+                    results.append(
+                        DetectedPair(
+                            link_a=link_a,
+                            link_b=link_b,
+                            gap=gap,
+                            joints=joints,
+                        )
+                    )
+
+        print(f"[collision] check complete: {len(results)} colliding pair(s)")
+        return results
