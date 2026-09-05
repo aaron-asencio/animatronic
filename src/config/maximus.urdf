@@ -1,0 +1,304 @@
+<?xml version="1.0"?>
+<robot name="maximus">
+
+  <!--
+    ============================================================
+    URDF JOINT  <->  SERVO CHANNEL MAPPING  (confirmed 2026)
+    ============================================================
+    Maps each revolute joint to the servo channel in src/constants.py.
+    NOTE the shoulder yaw/pitch names are SWAPPED relative to the
+    tilt/rotator servo naming — watch this when building the 3D model.
+
+      URDF joint            Servo constant          Channel
+      ------------------    --------------------    -------
+      yawl_neck_joint       NECK_PAN                0
+      pitch_neck_joint      NECK_TILT               1
+      shoulder_yaw_joint    RT_SHOULDER_TILT        6
+      shoulder_pitch_joint  RT_SHOULDER_ROTATOR     7
+      elbow_yaw_joint       RT_ELBOW_ROTATOR        4
+      elbow_pitch_joint     RT_ELBOW_TILT           5
+
+    Conventions differ between URDF and servos and must be reconciled
+    before this URDF drives any collision model:
+      - URDF joints are radians, zero-centered, with axis-sign per <axis>.
+      - Servos are degrees (0-270) with empirically reseated centers
+        (see src/constants.py SAFE_LIMITS / REST_POSITIONS / the AXIS
+        DIRECTION REFERENCE).
+      - The URDF <limit> values are NOT credible (servos were reseated);
+        src/constants.py SAFE_LIMITS is the source of truth for ranges.
+    ============================================================
+  -->
+
+<!-- https://gist.github.com/naoki-mizuno/5e63a13597d5c5fe817c1600b829595e -->
+  <material name="gray">
+    <color rgba="0.5 0.5 0.5 1.0"/>
+  </material>
+  <material name="silver">
+    <color rgba="0.7 0.7 0.7 1.0"/>
+  </material>
+  <material name="white">
+    <color rgba="1 1 1 1"/>
+  </material>
+  <material name="red">
+    <color rgba=".8 0 0 1"/>
+  </material>
+  <material name="blue">
+    <color rgba="0 0 .8 1"/>
+  </material>
+  <material name="green">
+    <color rgba="0 .8 0 1"/>
+  </material>
+  <material name="yellow">
+    <color rgba=".8 .8 0 1"/>
+  </material>
+
+  <material name="cobaltblue">
+    <color rgba="0.011764705882352941 0.0392156862745098 0.6549019607843137 1.0" />
+  </material>
+
+  <material name="cocoa">
+    <color rgba="0.5294117647058824 0.37254901960784315 0.25882352941176473 1.0" />
+  </material>
+
+  <material name="coffee">
+    <color rgba="0.6509803921568628 0.5058823529411764 0.2980392156862745 1.0" />
+  </material>
+
+  <material name="coolblue">
+    <color rgba="0.28627450980392155 0.5176470588235295 0.7215686274509804 1.0" />
+  </material>
+
+  <material name="coolgreen">
+    <color rgba="0.2 0.7215686274509804 0.39215686274509803 1.0" />
+  </material>
+
+  <material name="coolgray">
+    <color rgba="0.5843137254901961 0.6392156862745098 0.6509803921568628 1.0" />
+  </material>
+
+  <material name="copper">
+    <color rgba="0.7137254901960784 0.38823529411764707 0.1450980392156863 1.0" />
+  </material>
+
+  <material name="coral">
+    <color rgba="0.9882352941176471 0.35294117647058826 0.3137254901960784 1.0" />
+  </material>
+
+  <material name="bananayellow">
+    <color rgba="0.9803921568627451 0.996078431372549 0.29411764705882354 1.0" />
+  </material>
+
+  <material name="pink">
+    <color rgba="0.996078431372549 0.27450980392156865 0.6470588235294118 1.0" />
+  </material>
+  <material name="berry">
+    <color rgba="0.6 0.058823529411764705 0.29411764705882354 1.0" />
+  </material>
+
+  <material name="bluegray">
+    <color rgba="0.5215686274509804 0.6392156862745098 0.6980392156862745 1.0" />
+  </material>
+  <!-- Base -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.265 0.038 0.55"/>
+      </geometry>
+      <material name="silver"/>
+
+    </visual>
+  </link>
+<!-- head -->
+
+  <link name="head_link">
+    <visual>
+      <geometry>
+        <sphere radius="0.105"/>
+      </geometry>
+      <!-- Need package to use mesh -->
+      <!-- <geometry>
+      <mesh filename="/mnt/c/users/aaro2215/workspace/ros2/meshes/skull.stl" scale="1 1 1"/>
+    </geometry> -->
+      <material name="white"/>
+   </visual>
+  </link>
+
+
+  <!-- upper neck joint - attachement of upper neck to head -->
+  <joint name="upper_neck_joint" type="fixed">
+    <parent link="upper_neck_link"/>
+    <child link="head_link"/>
+    <origin xyz="0 0 0.17" rpy="0 0 0"/>
+
+<!-- This is the servo linkage to jaw line of skull -->
+  </joint>
+  <link name="upper_neck_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.03" radius="0.056"/>
+      </geometry>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <material name="bananayellow"/>
+    </visual>
+  </link>
+
+
+  <joint name="pitch_neck_joint" type="revolute">
+    <parent link="middle_neck_link"/>
+    <child link="upper_neck_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="2" velocity="1.0" lower="-0.5" upper="0.5"/>
+  </joint>
+
+   <!-- need another middle neck link with 0.014 m height. This is the bottom of servo to neck link -->
+   
+
+  <link name="middle_neck_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.014" radius="0.056"/>
+      </geometry>
+       <origin xyz="0 0 0" rpy="0 0 0"/>
+      <material name="pink"/>
+    </visual>
+  </link>
+  
+  <joint name="lower_neck_joint" type="fixed">
+    <parent link="lower_neck_link"/>
+    <child link="middle_neck_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="3" velocity="1.0" lower="-1.0" upper="1.0"/>
+  </joint>
+  
+  <link name="lower_neck_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.046" radius="0.056"/>
+      </geometry>
+       <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <material name="coral"/>
+    </visual>
+  </link>
+  
+
+ <!-- Lower yawl neck joint -->
+  <joint name="yawl_neck_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="lower_neck_link"/>
+    <origin xyz="0 0 0.275" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="2" velocity="1.0" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <!-- Shoulder joint -->
+  <joint name="shoulder_yaw_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="shoulder_link"/>
+    <origin xyz="0.1325 0 0.250" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="5" velocity="1.0" lower="-.5" upper="3.93"/>
+  </joint>
+
+  <!-- short shoulder link to the shoulder pitch joint-->
+  <link name="shoulder_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.065" radius="0.056"/>
+      </geometry>
+      <origin xyz="0.03 0 0" rpy="0 1.5708 0"/>
+      <material name="bluegray"/>
+    </visual>
+  </link>
+  <!-- shoulder pitch joint-->
+  <!-- center at 1.033-->
+  <joint name="shoulder_pitch_joint" type="revolute">
+    <parent link="shoulder_link"/>
+    <child link="upper_arm_link"/>
+    <origin xyz="0.03 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="5" velocity="1.0" lower="0.52" upper="3.56"/>
+  </joint>
+  <!-- Upper Arm -->
+  <link name="upper_arm_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.19" radius="0.015"/>
+      </geometry>
+      <origin xyz="0 0 0.130" rpy="0 0 0"/>
+      <material name="copper"/>
+
+    </visual>
+  </link>
+
+  <!-- Elbow -->
+   <joint name="elbow_yaw_joint" type="revolute">
+    <parent link="upper_arm_link"/>
+    <child link="elbow_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="5" velocity="1.0" lower="0" upper="2.0"/>
+  </joint> 
+  <!-- bracket to the elbow pitch joint-->
+  <link name="elbow_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.055" radius="0.056"/>
+      </geometry>
+      <origin xyz="0 0 .25" rpy="0 0 0"/>
+      <material name="white"/>
+    </visual>
+  </link>
+  
+  <joint name="elbow_pitch_joint" type="revolute">
+    <parent link="elbow_link"/>
+    <child link="lower_arm_link"/>
+    <origin xyz="0 0 0.285" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="5" velocity="0" lower="0" upper="-2.4"/>
+  </joint>
+
+
+  <link name="lower_arm_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.17" radius="0.015"/>
+      </geometry>
+      <origin xyz="0 0 0.085" rpy="0 0 0"/>
+      <material name="coolgray"/>
+
+    </visual>
+  </link> 
+
+   <joint name="wrist_joint" type="fixed">
+    <parent link="lower_arm_link"/>
+    <child link="hand_link"/>
+    <origin xyz="0 0 0.17" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="3" velocity="1.0" lower="-1.0" upper="1.0"/>
+  </joint>
+  <link name="hand_link">
+    <visual>
+       <geometry>
+        <box size="0.12 0.10 0.02"/>
+      </geometry>
+      <origin xyz="0 0 0.06" rpy="0 1.57 0"/>
+      <material name="bluegray"/>
+    </visual>
+  </link> 
+
+<ros2_control name="MaximusHardware" type="system">
+    <hardware>
+      <!-- Defines the ROS 2 Control hardware interface for your servos -->
+      <plugin>maximus_hardware/MaximusHardware</plugin>
+    </hardware>
+    <joint name="servo1_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+    </joint>
+    <!-- Add more <joint> tags for each servo -->
+  </ros2_control>
+</robot>
+
+</robot>

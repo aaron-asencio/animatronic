@@ -55,8 +55,32 @@ NECK_CENTER = 90
 #     increase -> head lowers (chin toward chest)
 #     decrease -> head raises (chin up)
 #
-# RT_SHOULDER_ROTATOR / RT_SHOULDER_TILT / RT_ELBOW_TILT / RT_ELBOW_ROTATOR:
-#     arm-axis directions NOT YET CALIBRATED — document here once verified.
+# RT_ELBOW_TILT (channel 5) — elbow bend
+#     5 = straight (arm extended). LOCKED at 5 for now (see SAFE_LIMITS).
+#     increase -> flexion (elbow bends; 145=right angle, 210=full flexion)
+#     decrease -> extension (elbow straightens toward 5)
+#
+# RT_ELBOW_ROTATOR (channel 4) — forearm twist (wrist/palm orientation)
+#     center = 150 (hand parallel to the side)
+#     increase -> rotates toward palm UP (270 = palm up)
+#     decrease -> rotates toward palm DOWN (0 = palm down)
+#
+# RT_SHOULDER_TILT (channel 6) — raise/lower the whole arm at the shoulder
+#     rest = 55 (arm down toward side)
+#     increase -> raises the arm up/away from the side (abduction; 135=arm straight out horizontally)
+#     decrease -> lowers the arm toward the body (adduction)
+#     COLLISION: below ~45 the arm can hit the body depending on
+#     RT_SHOULDER_ROTATOR; the (55,245) min stays clear, but the 3D model
+#     must enforce this combination.
+#
+# RT_SHOULDER_ROTATOR (channel 7) — raise/lower the whole arm
+#     rest = 0 (arm at the side of the body)
+#     increase -> moves the arm UP (0=at side, 270=~170deg up/nearly straight up)
+#     decrease -> moves the arm DOWN toward the side
+#     NOTE: electrical range 0-270 maps to a ~170deg physical arc (gearing).
+#     COLLISION: interacts with RT_SHOULDER_TILT — the tilt+rotator
+#     combination is the primary body-collision pair for the 3D model, though
+#     the limited physical arc mitigates most of the risk.
 # --------------------------------------------------------------------------- #
 
 # --------------------------------------------------------------------------- #
@@ -70,19 +94,22 @@ NECK_CENTER = 90
 # to these bounds so a bad gesture value can never drive into a jam.
 #
 # CALIBRATION STATUS:
-# NECK_PAN and NECK_TILT are CALIBRATED to the physical build (verified by
-# nudging to the mechanical stops). The four RT_ arm channels are still
-# CONSERVATIVE PLACEHOLDERS set to the angles existing gestures use — NOT yet
-# verified against the build; treat any stall there as a sign to narrow them.
+# All six channels are CALIBRATED to the physical build (nudged to
+# mechanical stops): NECK_PAN, NECK_TILT, RT_SHOULDER_TILT,
+# RT_SHOULDER_ROTATOR, RT_ELBOW_ROTATOR, and RT_ELBOW_TILT (locked straight
+# pending the 3D collision model). NOTE: per-axis limits do NOT prevent
+# multi-axis collisions (e.g. shoulder tilt+rotator, or elbow flexion with
+# shoulder position); those combinatorial constraints are deferred to the
+# planned 3D collision model.
 #
 # Format: channel -> (min_deg, max_deg)
 SAFE_LIMITS = {
     NECK_PAN:            (5, 175),    # left-right head rotation: 90=center, ~85 deg each way (natural neck range)
     NECK_TILT:           (30, 160),   # up-down: 90=level, higher=chin down (160=chin-to-chest stop), lower=head up
-    RT_SHOULDER_ROTATOR: (60, 270),   # raise/lower whole arm
-    RT_SHOULDER_TILT:    (0, 230),    # shoulder forward/back
-    RT_ELBOW_TILT:       (0, 120),    # elbow bend
-    RT_ELBOW_ROTATOR:    (30, 150),   # forearm rotate
+    RT_SHOULDER_ROTATOR: (0, 270),    # raise/lower whole arm: 0=arm at side, 270=arm ~170deg up (nearly straight up); increase=arm up. Electrical 0-270 maps to a ~170deg physical arc (gearing), which limits over-rotation and mitigates most shoulder tilt+rotator collision risk.
+    RT_SHOULDER_TILT:    (55, 245),   # shoulder raise/lower: increase=raise arm from side (abduction), decrease=toward body (adduction); 135=arm straight out. Below ~45 risks body collision (depends on RT_SHOULDER_ROTATOR) — min 55 stays clear.
+    RT_ELBOW_TILT:       (5, 5),      # elbow bend — LOCKED at 5 (straight). Landmarks: 5=straight, 145=right angle, 210=full flexion. Range clamped to straight until the 3D collision model exists (flexion is only collision-safe near straight, given shoulder positions).
+    RT_ELBOW_ROTATOR:    (0, 270),    # forearm rotate (twist): 150=hand parallel to side, 270=palm up, 0=palm down. Full range — low collision risk.
 }
 
 # Resting/neutral angle per channel. return_to_rest() drives every servo here
@@ -91,8 +118,8 @@ SAFE_LIMITS = {
 REST_POSITIONS = {
     NECK_PAN:            90,   # centered
     NECK_TILT:           90,   # head level (new neutral after reseat)
-    RT_SHOULDER_ROTATOR: 60,   # arm lowered
-    RT_SHOULDER_TILT:    0,    # shoulder back/neutral
-    RT_ELBOW_TILT:       0,    # elbow straight
-    RT_ELBOW_ROTATOR:    90,   # forearm neutral
+    RT_SHOULDER_ROTATOR: 0,    # arm at side (within (0,270))
+    RT_SHOULDER_TILT:    55,   # arm lowered toward side (within (55,245))
+    RT_ELBOW_TILT:       5,    # elbow straight (within locked (5,5) range)
+    RT_ELBOW_ROTATOR:    150,  # forearm neutral — hand parallel to side
 }
