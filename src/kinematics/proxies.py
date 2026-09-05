@@ -1,8 +1,9 @@
 """Collision-proxy generation for the Maximus kinematic collision model.
 
 Converts each link's URDF ``<visual>`` primitive (box / cylinder / sphere) into a
-conservative bounding volume -- a capsule (segment + radius) or a sphere -- that
-fully encloses the raw geometry expanded by a non-negative inflation margin.
+conservative bounding volume -- a capsule (segment + radius), a sphere, or an
+oriented bounding box (OBB) -- that fully encloses the raw geometry expanded by a
+non-negative inflation margin.
 
 Design intent (see design.md, Requirement 4):
     - Every proxy fully encloses the raw geometry expanded by the margin.
@@ -21,16 +22,9 @@ This module imports only ``numpy``, ``math``, and ``dataclasses`` -- no hardware
 libraries and no other kinematics submodules (Requirement 11.3).
 """
 
-import math
 from dataclasses import dataclass
 
 import numpy as np
-
-
-# Near-cubic threshold: when a box's largest dimension is within this factor of
-# its smallest dimension, a sphere encloses it more tightly than a long capsule,
-# so the box rule falls back to a Sphere. See make_proxy() box handling below.
-_NEAR_CUBIC_RATIO = 1.3
 
 
 @dataclass(frozen=True)
@@ -68,6 +62,34 @@ class Sphere:
     radius: float
 
 
+@dataclass(frozen=True)
+class Box:
+    """An oriented bounding box (OBB) proxy expressed in a link's frame.
+
+    The box is defined by a ``center``, three orthonormal local axes (the
+    columns of ``axes``), and the ``half_extents`` along each of those local
+    axes. The inflation margin is already BAKED INTO ``half_extents`` at
+    construction time (each raw half-size has the margin added to it), so the
+    proxy fully encloses the raw slab plus the margin without any further
+    inflation.
+
+    A point ``p`` (in the same frame the box is expressed in) is inside the box
+    iff, for each local axis ``i``,
+    ``abs(dot(p - center, axes[:, i])) <= half_extents[i]``.
+
+    Attributes:
+        center: Box center, numpy array of shape (3,), in the box's frame.
+        axes: The three orthonormal column vectors (local X/Y/Z of the box)
+            expressed in that frame, numpy array of shape (3, 3).
+        half_extents: Half-sizes along each local axis, numpy array of shape
+            (3,). These ALREADY INCLUDE the inflation margin.
+    """
+
+    center: np.ndarray
+    axes: np.ndarray
+    half_extents: np.ndarray
+
+
 def apply_transform(transform, point):
     """Applies a 4x4 homogeneous transform to a 3D point.
 
@@ -99,13 +121,12 @@ def make_proxy(primitive, margin):
           (the URDF cylinder convention). Endpoints at the origin-transformed
           local points (0, 0, -L/2) and (0, 0, +L/2); radius = r + margin. The
           spherical end caps conservatively enclose the flat cylinder ends.
-        - box(x, y, z): Capsule along the box's longest axis. Endpoints at
-          +-(longest / 2) from the box center along that axis (origin-transformed);
-          radius = margin + half-diagonal of the OTHER two dimensions
-          (sqrt((a/2)^2 + (b/2)^2)), so the capsule fully contains every box
-          corner. When the box is near-cubic (longest <= 1.3 x shortest), a
-          Capsule is a poor fit, so instead return a Sphere at the box center
-          with radius = margin + half the space-diagonal.
+        - box(x, y, z): an oriented bounding Box (OBB) that faithfully encloses
+          the slab. center = origin translation; axes = the box's local axes
+          (the rotation block of ``origin``); half_extents = (x/2 + margin,
+          y/2 + margin, z/2 + margin). This avoids over-enclosing flat slabs
+          (e.g. the torso/hand boxes) the way a longest-axis capsule or
+          near-cubic sphere would.
 
     Because the margin is applied additively to a radius that already fully
     encloses the raw geometry, the proxy is never smaller than the raw geometry
@@ -119,7 +140,8 @@ def make_proxy(primitive, margin):
         margin: Non-negative inflation distance in meters.
 
     Returns:
-        A Capsule or Sphere expressed in the primitive's parent / link frame.
+        A Capsule, Sphere, or Box expressed in the primitive's parent / link
+        frame.
 
     Raises:
         ValueError: If ``margin`` is negative, or if ``primitive.kind`` is not a
@@ -153,51 +175,14 @@ def make_proxy(primitive, margin):
     if kind == "box":
         if len(dims) != 3:
             raise ValueError(f"box dims must be (x, y, z), got {dims}")
-        return _box_proxy(dims, origin, margin)
+        x, y, z = dims
+        center = apply_transform(origin, (0.0, 0.0, 0.0))
+        # The rotation block of the visual origin gives the box's local axes as
+        # orthonormal column vectors (URDF origins are rigid transforms).
+        axes = origin[:3, :3].copy()
+        half_extents = np.array(
+            [x / 2.0 + margin, y / 2.0 + margin, z / 2.0 + margin], dtype=float
+        )
+        return Box(center=center, axes=axes, half_extents=half_extents)
 
     raise ValueError(f"unknown primitive kind: {kind!r}")
-
-
-def _box_proxy(dims, origin, margin):
-    """Builds a conservative proxy for a box primitive.
-
-    Chooses a sphere when the box is near-cubic, otherwise a capsule along the
-    box's longest axis whose radius covers the corner diagonal of the other two
-    dimensions. See ``make_proxy`` for the full rule description.
-
-    Args:
-        dims: Box dimensions (x, y, z) in meters.
-        origin: The 4x4 homogeneous transform of the box's visual origin.
-        margin: Non-negative inflation distance in meters.
-
-    Returns:
-        A Capsule or Sphere expressed in the box's parent / link frame.
-    """
-    half = [d / 2.0 for d in dims]
-    longest_axis = int(np.argmax(dims))
-    max_dim = max(dims)
-    min_dim = min(dims)
-
-    # Half the space-diagonal: the distance from the box center to any corner.
-    space_half_diag = math.sqrt(sum(h * h for h in half))
-
-    if max_dim <= _NEAR_CUBIC_RATIO * min_dim:
-        # Near-cubic: a sphere at the center covering every corner is the
-        # tightest conservative fit.
-        center = apply_transform(origin, (0.0, 0.0, 0.0))
-        return Sphere(center=center, radius=space_half_diag + margin)
-
-    # Elongated box: capsule along the longest axis. The two "other" half-extents
-    # form a rectangle whose half-diagonal is the radius needed to reach every
-    # corner off the axis.
-    other_half = [half[i] for i in range(3) if i != longest_axis]
-    cross_half_diag = math.sqrt(other_half[0] ** 2 + other_half[1] ** 2)
-
-    end_local_neg = [0.0, 0.0, 0.0]
-    end_local_pos = [0.0, 0.0, 0.0]
-    end_local_neg[longest_axis] = -half[longest_axis]
-    end_local_pos[longest_axis] = +half[longest_axis]
-
-    p0 = apply_transform(origin, end_local_neg)
-    p1 = apply_transform(origin, end_local_pos)
-    return Capsule(p0=p0, p1=p1, radius=cross_half_diag + margin)

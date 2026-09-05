@@ -30,7 +30,7 @@ from hypothesis import given, settings, strategies as st
 # (mirrors the convention in the other tests/ modules).
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from kinematics.proxies import make_proxy, Capsule, Sphere  # noqa: E402
+from kinematics.proxies import make_proxy, Box, Capsule, Sphere  # noqa: E402
 
 # Absolute floating-point tolerance for "inside the proxy" / "radius grew"
 # comparisons. The proxy math is all sums of squares and matrix products, so a
@@ -101,6 +101,15 @@ def _point_inside(point, proxy):
         )
     if isinstance(proxy, Capsule):
         return _point_segment_distance(point, proxy.p0, proxy.p1) <= (proxy.radius + _TOL)
+    if isinstance(proxy, Box):
+        # Inside iff, per local axis, the projected offset is within the
+        # half-extent (which already includes the margin).
+        offset = np.asarray(point, dtype=float) - np.asarray(proxy.center, dtype=float)
+        for i in range(3):
+            coord = abs(float(offset @ proxy.axes[:, i]))
+            if coord > proxy.half_extents[i] + _TOL:
+                return False
+        return True
     raise AssertionError(f"unexpected proxy type: {type(proxy)!r}")
 
 
@@ -319,14 +328,20 @@ def test_property6_proxy_inflation_is_monotonic_in_margin(primitive, margin_a, m
     # Same margin-independent geometry -> identical proxy type for both margins.
     assert type(proxy_small) is type(proxy_large)
 
-    assert _proxy_radius(proxy_large) >= _proxy_radius(proxy_small) - _TOL
-
     # For capsules, the segment endpoints depend only on the geometry, not the
     # margin, so they must coincide across the two margins.
     if isinstance(proxy_small, Capsule):
+        assert _proxy_radius(proxy_large) >= _proxy_radius(proxy_small) - _TOL
         assert np.allclose(proxy_small.p0, proxy_large.p0, atol=_TOL)
         assert np.allclose(proxy_small.p1, proxy_large.p1, atol=_TOL)
+    elif isinstance(proxy_small, Box):
+        # A box's center and axes are margin-independent; each half-extent grows
+        # by exactly the margin, so the larger margin's half-extents are >=.
+        assert np.allclose(proxy_small.center, proxy_large.center, atol=_TOL)
+        assert np.allclose(proxy_small.axes, proxy_large.axes, atol=_TOL)
+        assert np.all(proxy_large.half_extents >= proxy_small.half_extents - _TOL)
     else:
+        assert _proxy_radius(proxy_large) >= _proxy_radius(proxy_small) - _TOL
         assert np.allclose(proxy_small.center, proxy_large.center, atol=_TOL)
 
 
@@ -371,32 +386,40 @@ def test_head_sphere_maps_to_sphere():
     assert np.allclose(proxy.center, np.array([0.1, 0.2, 0.3]), atol=_TOL)
 
 
-def test_near_cubic_box_maps_to_sphere():
-    """Requirement 4.1: a near-cubic box maps to a Sphere.
+def test_near_cubic_box_maps_to_oriented_box():
+    """Requirement 4.1: a box maps to an oriented bounding Box (OBB).
 
-    Dims (0.1, 0.1, 0.11) have longest <= 1.3 * shortest, so the box rule falls
-    back to a Sphere at the box center.
+    Dims (0.1, 0.1, 0.11) at the identity origin become a Box centered at the
+    origin with half_extents = dims/2 + margin and identity (axis-aligned) axes.
     """
+    margin = 0.01
     primitive = _FakePrimitive(kind="box", dims=(0.1, 0.1, 0.11), origin=np.eye(4))
 
-    proxy = make_proxy(primitive, 0.0)
+    proxy = make_proxy(primitive, margin)
 
-    assert isinstance(proxy, Sphere)
+    assert isinstance(proxy, Box)
+    assert np.allclose(proxy.center, np.zeros(3), atol=_TOL)
+    assert np.allclose(proxy.axes, np.eye(3), atol=_TOL)
+    assert np.allclose(
+        proxy.half_extents, np.array([0.05, 0.05, 0.055]) + margin, atol=_TOL
+    )
 
 
-def test_elongated_box_maps_to_capsule_along_long_axis():
-    """Requirement 4.1: an elongated box maps to a Capsule along the long axis.
+def test_elongated_box_maps_to_oriented_box_with_faithful_half_extents():
+    """Requirement 4.1: an elongated box maps to an OBB matching the slab.
 
-    Dims (0.4, 0.05, 0.05): the X axis is much longer than the others, so the
-    proxy is a Capsule whose segment runs along local X with length 0.4.
+    Dims (0.4, 0.05, 0.05): the proxy is a Box whose half_extents faithfully
+    match each axis (dims/2 + margin) rather than a fat capsule/sphere. With a
+    translated + rotated origin the center follows the origin translation and the
+    axes follow the origin's rotation block.
     """
-    primitive = _FakePrimitive(kind="box", dims=(0.4, 0.05, 0.05), origin=np.eye(4))
+    margin = 0.0
+    origin = _translation(0.1, 0.2, 0.3) @ _rotation_z(math.pi / 4.0)
+    primitive = _FakePrimitive(kind="box", dims=(0.4, 0.05, 0.05), origin=origin)
 
-    proxy = make_proxy(primitive, 0.0)
+    proxy = make_proxy(primitive, margin)
 
-    assert isinstance(proxy, Capsule)
-    # Segment runs along the long (X) axis, spanning the full 0.4 length.
-    separation = float(np.linalg.norm(proxy.p1 - proxy.p0))
-    assert math.isclose(separation, 0.4, abs_tol=_TOL)
-    delta = np.abs(proxy.p1 - proxy.p0)
-    assert delta[0] > delta[1] and delta[0] > delta[2]
+    assert isinstance(proxy, Box)
+    assert np.allclose(proxy.center, np.array([0.1, 0.2, 0.3]), atol=_TOL)
+    assert np.allclose(proxy.axes, origin[:3, :3], atol=_TOL)
+    assert np.allclose(proxy.half_extents, np.array([0.2, 0.025, 0.025]), atol=_TOL)

@@ -295,7 +295,22 @@ class Sphere:
     radius: float
 
 
-def make_proxy(primitive: "VisualPrimitive", margin: float) -> Capsule | Sphere:
+@dataclass(frozen=True)
+class Box:
+    """An oriented bounding box (OBB) proxy in a link's local frame.
+
+    Attributes:
+        center: Box center, shape (3,).
+        axes: Orthonormal local axes as column vectors, shape (3, 3).
+        half_extents: Half-sizes along each local axis, shape (3,) (already
+            include the inflation margin).
+    """
+    center: np.ndarray
+    axes: np.ndarray
+    half_extents: np.ndarray
+
+
+def make_proxy(primitive: "VisualPrimitive", margin: float) -> Capsule | Sphere | Box:
     """Builds a conservative proxy fully enclosing ``primitive`` plus ``margin``.
 
     Mapping rules:
@@ -303,17 +318,20 @@ def make_proxy(primitive: "VisualPrimitive", margin: float) -> Capsule | Sphere:
         - cylinder(l, r)     → Capsule along the cylinder axis, endpoints at
                                ±l/2, radius = r + margin. The spherical caps
                                guarantee the flat cylinder ends are enclosed.
-        - box(x, y, z)       → Capsule along the longest axis with radius =
-                               (half-diagonal of the other two axes) + margin,
-                               OR a Sphere(radius = half space-diagonal + margin)
-                               when the box is near-cubic.
+        - box(x, y, z)       → an oriented bounding Box (OBB) that faithfully
+                               encloses the slab: center = origin translation,
+                               axes = the box's local axes (the rotation block of
+                               the visual origin), half_extents = (x/2, y/2,
+                               z/2) + margin. This replaces the old
+                               longest-axis-capsule / near-cubic-sphere box rule,
+                               which over-enclosed flat torso/hand slabs.
 
     Args:
         primitive: The link's visual primitive with its local origin.
         margin: Non-negative inflation distance (raises ValueError if < 0).
 
     Returns:
-        A Capsule or Sphere expressed in the link's local frame.
+        A Capsule, Sphere, or Box expressed in the link's local frame.
     """
 ```
 
@@ -321,7 +339,7 @@ Notes:
 - Every proxy fully encloses the raw geometry expanded by the margin (Requirement 4.2), and is never smaller than the raw geometry (conservative).
 - Increasing the margin never shrinks the enclosed volume (Requirement 4.4).
 - Negative margin is rejected; margin ≥ 0 is applied to every proxy (Requirement 4.3).
-- Thin arm cylinders (`upper_arm_link`, `lower_arm_link`, r=0.015) become thin capsules; `head_link` becomes a sphere; the base and hand boxes become the box-rule proxy above.
+- Thin arm cylinders (`upper_arm_link`, `lower_arm_link`, r=0.015) become thin capsules; `head_link` becomes a sphere; the base and hand boxes become oriented bounding **Box** (OBB) proxies oriented by the visual origin, so flat slabs are enclosed faithfully rather than swollen into a fat capsule/sphere.
 
 ### `collision.py` — Collision_Detector
 
@@ -352,6 +370,24 @@ def sphere_sphere_distance(a: "Sphere", b: "Sphere") -> float:
     """Center distance minus the two radii. <= 0 means intersection."""
 
 
+def sphere_box_distance(s: "Sphere", b: "Box") -> float:
+    """Closest point on the OBB to the sphere center (via clamping) minus the
+    sphere radius. Exact. <= 0 means intersection."""
+
+
+def capsule_box_distance(c: "Capsule", b: "Box") -> float:
+    """Conservative closest-feature approximation of the segment-OBB distance
+    (min of each endpoint-to-box distance and the box-center-to-segment
+    distance) minus the capsule radius. <= 0 means intersection."""
+
+
+def box_box_distance(a: "Box", b: "Box") -> float:
+    """OBB-OBB overlap via the Separating Axis Theorem (SAT): tests the 15
+    candidate axes (3+3 face normals + 9 edge cross products). Exact overlap
+    test; <= 0 means intersection, and a positive return is a conservative
+    lower bound on the true gap."""
+
+
 class Collision_Detector:
     """Detects intersecting non-adjacent proxy pairs and maps them to joints."""
 
@@ -371,7 +407,8 @@ class Collision_Detector:
 ```
 
 Notes:
-- Proxies are transformed into world coordinates using the FK link transforms (Requirement 5.1). A capsule transforms by moving its two endpoints; a sphere by moving its center.
+- Proxies are transformed into world coordinates using the FK link transforms (Requirement 5.1). A capsule transforms by moving its two endpoints; a sphere by moving its center; a box by moving its center and rotating its axes (half-extents unchanged, transforms being rigid).
+- Box pairs use the Separating Axis Theorem for an exact overlap test; sphere-box is exact and capsule-box is a conservative closest-feature approximation.
 - Only **non-adjacent** pairs are tested; directly-connected pairs are excluded (Requirement 5.4).
 - Analytic capsule/sphere distance tests use `numpy` (cheap, no meshing). `trimesh` is available if a mesh-level test is ever needed but is not used on the verdict path.
 - `offending_joints` are computed by walking the kinematic tree path between the two links and collecting the revolute joints on that path, each carrying its servo channel + URDF joint name (Requirements 5.3, 5.5).

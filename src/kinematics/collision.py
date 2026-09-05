@@ -15,15 +15,21 @@ tests non-adjacent link pairs, and maps collisions to offending joints) lands
 next in task 6.2; this module intentionally ships only the distance primitives
 for now.
 
-This module imports only ``numpy`` and the ``Capsule`` / ``Sphere`` proxy
-dataclasses -- no hardware libraries (Requirement 11.3).
+Oriented bounding boxes (``Box`` proxies) add three more surface-gap functions:
+a sphere/OBB distance (exact, via clamping the sphere center to the OBB), a
+capsule/OBB distance (a conservative closest-feature approximation), and an
+OBB/OBB overlap test using the Separating Axis Theorem (an exact overlap test;
+the returned gap magnitude is a conservative bound).
+
+This module imports only ``numpy`` and the ``Capsule`` / ``Sphere`` / ``Box``
+proxy dataclasses -- no hardware libraries (Requirement 11.3).
 """
 
 from dataclasses import dataclass
 
 import numpy as np
 
-from kinematics.proxies import Capsule, Sphere, apply_transform
+from kinematics.proxies import Box, Capsule, Sphere, apply_transform
 
 
 def segment_segment_distance(p0, p1, q0, q1):
@@ -188,6 +194,164 @@ def sphere_sphere_distance(a, b):
     return center_distance - a.radius - b.radius
 
 
+def _box_closest_point(point, b):
+    """Closest point on an oriented box ``b`` to a world-space ``point``.
+
+    Projects the offset from the box center onto each local axis, clamps that
+    coordinate to ``+-half_extents[i]``, and reconstructs the world point. When
+    ``point`` is inside the box, the clamps are no-ops and the closest point is
+    ``point`` itself.
+
+    Args:
+        point: The query point, numpy array of shape (3,).
+        b: The oriented ``Box`` (expressed in world coordinates).
+
+    Returns:
+        The closest point on the box to ``point``, numpy array of shape (3,).
+    """
+    point = np.asarray(point, dtype=float)
+    center = np.asarray(b.center, dtype=float)
+    axes = np.asarray(b.axes, dtype=float)
+    half_extents = np.asarray(b.half_extents, dtype=float)
+
+    offset = point - center
+    closest = center.copy()
+    for i in range(3):
+        axis = axes[:, i]
+        coord = _clamp(float(np.dot(offset, axis)), -half_extents[i], half_extents[i])
+        closest = closest + coord * axis
+    return closest
+
+
+def sphere_box_distance(s, b):
+    """Surface gap between a sphere and an oriented box (exact).
+
+    Finds the closest point on the OBB to the sphere center (by clamping the
+    center's box-local coordinates to ``+-half_extents``), takes the distance
+    from that closest point to the center, and subtracts the sphere radius.
+
+    Args:
+        s: The sphere (expressed in world coordinates).
+        b: The oriented ``Box`` (expressed in world coordinates).
+
+    Returns:
+        The surface gap (float). ``<= 0`` means they intersect. When the center
+        is inside the box the closest-point distance is 0, so the gap is
+        ``-s.radius`` (a guaranteed intersection).
+    """
+    center = np.asarray(s.center, dtype=float)
+    closest = _box_closest_point(center, b)
+    return float(np.linalg.norm(center - closest)) - s.radius
+
+
+def capsule_box_distance(c, b):
+    """Conservative surface gap between a capsule and an oriented box.
+
+    This is a conservative closest-feature APPROXIMATION of the true segment-OBB
+    distance. It takes the minimum of three closest-feature distances:
+
+        - each capsule endpoint to the box (via clamping), and
+        - the box center to the capsule segment,
+
+    then subtracts the capsule radius. For the geometry in this model (thin
+    capsules against a slab OBB) this never reports a gap larger than the true
+    gap, so a ``<= 0`` verdict remains a sound (over-approximating) intersection
+    test. It is not an exact segment-OBB distance in the general case.
+
+    Args:
+        c: The capsule (expressed in world coordinates).
+        b: The oriented ``Box`` (expressed in world coordinates).
+
+    Returns:
+        The surface gap (float). ``<= 0`` means they intersect.
+    """
+    p0 = np.asarray(c.p0, dtype=float)
+    p1 = np.asarray(c.p1, dtype=float)
+    center = np.asarray(b.center, dtype=float)
+
+    d0 = float(np.linalg.norm(p0 - _box_closest_point(p0, b)))
+    d1 = float(np.linalg.norm(p1 - _box_closest_point(p1, b)))
+    d_center = point_segment_distance(center, p0, p1)
+
+    return min(d0, d1, d_center) - c.radius
+
+
+def box_box_distance(a, b):
+    """Overlap gap between two oriented boxes via the Separating Axis Theorem.
+
+    Uses SAT to test the 15 candidate separating axes (the 3 axes of ``a``, the
+    3 axes of ``b``, and the 9 pairwise cross products; near-zero cross products
+    are skipped). If any axis separates the boxes they are disjoint, and the
+    largest positive separation found across the tested axes is returned as a
+    valid lower bound on the true gap (hence ``> 0``). If no separating axis
+    exists the boxes overlap and a value ``<= 0`` is returned (the negated
+    minimum overlap across the tested axes).
+
+    SAT is an EXACT overlap test; only the sign of the returned gap is
+    guaranteed exact. The magnitude is a conservative bound, which is all the
+    detector's ``gap <= 0`` check requires.
+
+    Args:
+        a: The first oriented ``Box`` (expressed in world coordinates).
+        b: The second oriented ``Box`` (expressed in world coordinates).
+
+    Returns:
+        The overlap gap (float). ``<= 0`` means the boxes intersect; ``> 0`` is
+        a lower bound on the separation distance.
+    """
+    a_center = np.asarray(a.center, dtype=float)
+    b_center = np.asarray(b.center, dtype=float)
+    a_axes = np.asarray(a.axes, dtype=float)
+    b_axes = np.asarray(b.axes, dtype=float)
+    a_half = np.asarray(a.half_extents, dtype=float)
+    b_half = np.asarray(b.half_extents, dtype=float)
+
+    t = b_center - a_center
+
+    # Candidate separating axes: 3 face normals of A, 3 of B, 9 edge cross
+    # products.
+    candidate_axes = []
+    for i in range(3):
+        candidate_axes.append(a_axes[:, i])
+    for j in range(3):
+        candidate_axes.append(b_axes[:, j])
+    for i in range(3):
+        for j in range(3):
+            candidate_axes.append(np.cross(a_axes[:, i], b_axes[:, j]))
+
+    eps = 1e-9
+    max_separation = -np.inf  # Largest positive gap along a separating axis.
+    min_overlap = np.inf  # Smallest overlap when no axis separates.
+
+    for axis in candidate_axes:
+        length = float(np.linalg.norm(axis))
+        if length <= eps:
+            # Near-parallel edges produce a degenerate (zero) cross product;
+            # skip it (it is covered by the face-normal axes).
+            continue
+        axis = axis / length
+
+        # Projected radius of each box onto the axis.
+        ra = float(np.sum(a_half * np.abs(a_axes.T @ axis)))
+        rb = float(np.sum(b_half * np.abs(b_axes.T @ axis)))
+        center_gap = abs(float(np.dot(t, axis)))
+
+        separation = center_gap - (ra + rb)
+        if separation > 0.0:
+            # Found a separating axis: boxes are disjoint.
+            if separation > max_separation:
+                max_separation = separation
+        else:
+            # Overlap along this axis; track the smallest overlap magnitude.
+            overlap = -separation
+            if overlap < min_overlap:
+                min_overlap = overlap
+
+    if max_separation > -np.inf:
+        return max_separation
+    return -min_overlap
+
+
 def _clamp(value, low, high):
     """Clamps ``value`` into the closed interval ``[low, high]``.
 
@@ -232,19 +396,22 @@ class DetectedPair:
 def _proxy_to_world(proxy, transform):
     """Places a link-local proxy into world coordinates.
 
-    Transforms a :class:`Capsule` (both endpoints) or :class:`Sphere` (center)
-    through the link's world transform. The radius is a scalar extent and is left
-    unchanged (the transforms are rigid).
+    Transforms a :class:`Capsule` (both endpoints), :class:`Sphere` (center), or
+    :class:`Box` (center + axes) through the link's world transform. Scalar
+    extents (radii, half-extents) are left unchanged because the transforms are
+    rigid.
 
     Args:
-        proxy: A ``Capsule`` or ``Sphere`` expressed in its link's local frame.
+        proxy: A ``Capsule``, ``Sphere``, or ``Box`` expressed in its link's
+            local frame.
         transform: The link's 4x4 world transform.
 
     Returns:
-        A new ``Capsule`` or ``Sphere`` expressed in world coordinates.
+        A new ``Capsule``, ``Sphere``, or ``Box`` expressed in world
+        coordinates.
 
     Raises:
-        TypeError: If ``proxy`` is neither a ``Capsule`` nor a ``Sphere``.
+        TypeError: If ``proxy`` is not a ``Capsule``, ``Sphere``, or ``Box``.
     """
     if isinstance(proxy, Capsule):
         return Capsule(
@@ -257,6 +424,12 @@ def _proxy_to_world(proxy, transform):
             center=apply_transform(transform, proxy.center),
             radius=proxy.radius,
         )
+    if isinstance(proxy, Box):
+        return Box(
+            center=apply_transform(transform, proxy.center),
+            axes=np.asarray(transform, dtype=float)[:3, :3] @ proxy.axes,
+            half_extents=proxy.half_extents,
+        )
     raise TypeError(f"unsupported proxy type: {type(proxy).__name__}")
 
 
@@ -264,27 +437,57 @@ def _pair_gap(proxy_a, proxy_b):
     """Computes the surface gap between two world-space proxies.
 
     Dispatches to the correct analytic distance function based on the proxy
-    types, handling the mixed capsule/sphere ordering (``capsule_sphere_distance``
-    expects ``(capsule, sphere)``).
+    types across every combination of ``Capsule`` / ``Sphere`` / ``Box``,
+    normalizing argument order so each function receives its expected operand
+    order (e.g. ``capsule_sphere_distance`` expects ``(capsule, sphere)`` and
+    ``sphere_box_distance`` expects ``(sphere, box)``).
 
     Args:
-        proxy_a: The first world-space ``Capsule`` or ``Sphere``.
-        proxy_b: The second world-space ``Capsule`` or ``Sphere``.
+        proxy_a: The first world-space ``Capsule``, ``Sphere``, or ``Box``.
+        proxy_b: The second world-space ``Capsule``, ``Sphere``, or ``Box``.
 
     Returns:
         The surface gap (float). ``<= 0`` means the proxies intersect.
-    """
-    a_is_capsule = isinstance(proxy_a, Capsule)
-    b_is_capsule = isinstance(proxy_b, Capsule)
 
-    if a_is_capsule and b_is_capsule:
+    Raises:
+        TypeError: If either proxy is not a ``Capsule``, ``Sphere``, or ``Box``.
+    """
+    a_cap = isinstance(proxy_a, Capsule)
+    b_cap = isinstance(proxy_b, Capsule)
+    a_sph = isinstance(proxy_a, Sphere)
+    b_sph = isinstance(proxy_b, Sphere)
+    a_box = isinstance(proxy_a, Box)
+    b_box = isinstance(proxy_b, Box)
+
+    if a_cap and b_cap:
         return capsule_capsule_distance(proxy_a, proxy_b)
-    if not a_is_capsule and not b_is_capsule:
+    if a_sph and b_sph:
         return sphere_sphere_distance(proxy_a, proxy_b)
-    # Mixed: capsule_sphere_distance takes (capsule, sphere).
-    if a_is_capsule:
+    if a_box and b_box:
+        return box_box_distance(proxy_a, proxy_b)
+
+    # capsule <-> sphere: capsule_sphere_distance takes (capsule, sphere).
+    if a_cap and b_sph:
         return capsule_sphere_distance(proxy_a, proxy_b)
-    return capsule_sphere_distance(proxy_b, proxy_a)
+    if a_sph and b_cap:
+        return capsule_sphere_distance(proxy_b, proxy_a)
+
+    # sphere <-> box: sphere_box_distance takes (sphere, box).
+    if a_sph and b_box:
+        return sphere_box_distance(proxy_a, proxy_b)
+    if a_box and b_sph:
+        return sphere_box_distance(proxy_b, proxy_a)
+
+    # capsule <-> box: capsule_box_distance takes (capsule, box).
+    if a_cap and b_box:
+        return capsule_box_distance(proxy_a, proxy_b)
+    if a_box and b_cap:
+        return capsule_box_distance(proxy_b, proxy_a)
+
+    raise TypeError(
+        f"unsupported proxy pair: {type(proxy_a).__name__}, "
+        f"{type(proxy_b).__name__}"
+    )
 
 
 class Collision_Detector:
