@@ -13,7 +13,7 @@ unit tests use pytest and the Flask test client. Run with:
 HARDWARE / IMPORT STUBBING
 --------------------------
 micwebcontroller.py imports `pyaudio` and `gpiozero` at module top and pulls in
-`utils.audio_utils` and `model.constants`. It also constructs a module-level
+`utils.audio_utils` and `constants`. It also constructs a module-level
 `config_store = ConfigStore()` and `jaw_profiles = config_store.load_profiles()`
 at import time. On a dev/CI box with no sound card or GPIO these imports would
 fail, so BEFORE importing micwebcontroller we install lightweight stub modules

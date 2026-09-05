@@ -9,7 +9,7 @@ from gpiozero import LED
 from gpiozero import DigitalOutputDevice
 from datetime import datetime
 from utils.audio_utils import AudioUtils
-from model.constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
+from constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
 from collections import deque
 from config_store import ConfigStore, ALLOWED_PROFILES, PROFILE_MIC
 
