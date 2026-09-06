@@ -208,8 +208,16 @@ PYTHONPATH=src .venv/bin/python -m kinematics.cli \
   --preview-out preview.png
 ```
 
-Then open `preview.png`. Colliding links are drawn red, everything else gray.
-For a sequence, `preview.png` becomes `preview_1.png`, `preview_2.png`, etc.
+Then open `preview.png`. Colliding links are drawn red, the rest of the robot
+gray. By default the image is a 4-view panel (front, side, top, and a 3/4
+perspective) with the verdict and offending joints in the title, so a collision
+reads clearly without an interactive window. Add `--single-view` for one 3/4
+view. For a sequence, `preview.png` becomes `preview_1.png`, `preview_2.png`,
+etc.
+
+The interactive `--preview` window uses trimesh's viewer when `pyglet` is
+installed, otherwise a matplotlib 3D window; both draw the full gray body plus
+red collision highlights.
 
 > Note: all per-joint calibration values in `src/config/calibration.json` are
 > provisional seeds pending hardware validation (see `src/validate_hardware.py`).
