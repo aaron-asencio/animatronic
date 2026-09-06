@@ -220,7 +220,38 @@ installed, otherwise a matplotlib 3D window; both draw the full gray body plus
 red collision highlights.
 
 > Note: all per-joint calibration values in `src/config/calibration.json` are
-> provisional seeds pending hardware validation (see `src/validate_hardware.py`).
+> provisional seeds pending hardware validation (see below).
+
+### Calibrating the model against the robot
+
+The model's predictions are only as good as `src/config/calibration.json`,
+whose `sign` / `offset_deg` / `scale` per joint start as **unverified seeds**.
+`calibrate_joints.py` is an interactive harness that confirms and corrects them
+by driving one joint at a time and asking what you observed, then writing the
+results back into the JSON (with a timestamped backup).
+
+Always dry-run first (logs every angle, moves nothing):
+
+```bash
+SERVO_SIM=1 PYTHONPATH=src .venv/bin/python -m calibrate_joints --dry-run
+```
+
+Then calibrate on hardware (root for GPIO/I2C). It moves one joint at a time,
+clamped to `SAFE_LIMITS`, and parks servos on exit:
+
+```bash
+sudo PYTHONPATH=src .venv/bin/python -m calibrate_joints
+# or a subset, by servo channel:
+sudo PYTHONPATH=src .venv/bin/python -m calibrate_joints --channels 6 4
+# sign + offset only (skip the arc-measurement step):
+sudo PYTHONPATH=src .venv/bin/python -m calibrate_joints --no-scale
+```
+
+For each joint it checks **direction** (does it move the way the model expects?
+flips `sign` if reversed), **offset** (which servo angle is the zero-landmark),
+and **scale** (measured physical arc ÷ commanded degrees). After writing, re-run
+a known SAFE pose through the CLI to sanity-check. `RT_ELBOW_TILT` is locked at
+5° in `SAFE_LIMITS`, so its arc can't be measured until that lock is widened.
 
 ---
 
