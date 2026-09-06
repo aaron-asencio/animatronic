@@ -170,6 +170,52 @@ sudo .venv/bin/python3 src/concurrentMovements.py
 
 ---
 
+## Kinematic collision model (offline authoring aid)
+
+`src/kinematics/` is a hardware-free 3D model that predicts self-collisions for
+a pose *before* you drive it to the servos. It runs anywhere (no Pi, no
+hardware libraries) and is meant for authoring gestures safely.
+
+A pose is a JSON object mapping servo channel to degrees, e.g. the rest pose
+`{"0":90,"1":90,"4":150,"5":5,"6":55,"7":0}`.
+
+### Check a pose (text verdict)
+
+```bash
+PYTHONPATH=src .venv/bin/python -m kinematics.cli \
+  --pose '{"0":90,"1":90,"4":150,"5":145,"6":55,"7":0}'
+```
+
+Prints `SAFE`, or `COLLISION: <link_a> <-> <link_b> (joints: ...)` per pose.
+Exit code is non-zero if any pose collides. Use `--sequence poses.json` for a
+list of poses, and `--margin 0.005` to override the safety inflation (meters).
+
+### View the 3D model
+
+Interactive window (needs a display + a viewer backend such as `pyglet`):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m kinematics.cli --pose '{...}' --preview
+```
+
+Headless (Raspberry Pi over SSH): there is no display, so render to an image
+file instead. This uses matplotlib's offscreen `Agg` backend and needs no
+display, X-forwarding, or `pyglet`:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m kinematics.cli \
+  --pose '{"0":90,"1":90,"4":150,"5":145,"6":55,"7":0}' \
+  --preview-out preview.png
+```
+
+Then open `preview.png`. Colliding links are drawn red, everything else gray.
+For a sequence, `preview.png` becomes `preview_1.png`, `preview_2.png`, etc.
+
+> Note: all per-joint calibration values in `src/config/calibration.json` are
+> provisional seeds pending hardware validation (see `src/validate_hardware.py`).
+
+---
+
 ## Hardware troubleshooting
 
 Quick standalone scripts to verify each piece of hardware in isolation. All

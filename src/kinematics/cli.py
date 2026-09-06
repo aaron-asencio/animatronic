@@ -20,6 +20,7 @@ only when ``--preview`` is passed, so verdicts still work headless (Requirement
 
 import argparse
 import json
+import os
 import sys
 
 from kinematics.model import CollisionModel, PoseInputError
@@ -157,6 +158,39 @@ def _run_preview(model, poses):
     preview.show(model, poses)
 
 
+def _save_preview(model, poses, out_path):
+    """Renders the first pose to an image file offscreen (headless-safe).
+
+    Lazily imports ``preview`` and calls its ``save_png`` (matplotlib ``Agg``
+    backend), so no display, X-forwarding, or pyglet is required. Only the first
+    pose is rendered; for multiple poses an index suffix is added per pose.
+
+    Args:
+        model: The initialized ``CollisionModel``.
+        poses: The collected list of poses.
+        out_path: Output image path (e.g. ``preview.png``). For more than one
+            pose, ``preview.png`` becomes ``preview_1.png``, ``preview_2.png``,
+            etc.
+    """
+    try:
+        from kinematics import preview
+    except ImportError as error:
+        print(
+            f"[cli] --preview-out unavailable: {error}. Verdicts above are unaffected.",
+            file=sys.stderr,
+        )
+        return
+
+    if len(poses) == 1:
+        preview.save_png(model, poses[0], out_path)
+        return
+
+    root, ext = os.path.splitext(out_path)
+    ext = ext or ".png"
+    for index, pose in enumerate(poses, start=1):
+        preview.save_png(model, pose, f"{root}_{index}{ext}")
+
+
 def main(argv=None):
     """CLI entry point: classify poses and print SAFE/COLLISION verdicts.
 
@@ -187,7 +221,15 @@ def main(argv=None):
     parser.add_argument(
         "--preview",
         action="store_true",
-        help="Render an optional 3D preview (lazily imported; headless-safe).",
+        help="Open an interactive 3D preview window (needs a display/viewer).",
+    )
+    parser.add_argument(
+        "--preview-out",
+        metavar="PATH",
+        help=(
+            "Render the (first) pose to an image file offscreen instead of "
+            "opening a window. Works headless (no display/X/pyglet needed)."
+        ),
     )
     parser.add_argument(
         "--urdf",
@@ -243,6 +285,9 @@ def main(argv=None):
         return 1
 
     _print_verdicts(result.per_pose)
+
+    if args.preview_out:
+        _save_preview(model, poses, args.preview_out)
 
     if args.preview:
         _run_preview(model, poses)

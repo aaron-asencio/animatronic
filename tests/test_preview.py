@@ -144,3 +144,31 @@ def test_build_scene_is_display_free(tmp_path):
     scene = preview.build_scene(model, _COLLIDING_POSE)
 
     assert len(scene.geometry) >= 1
+
+
+def test_save_png_renders_offscreen(tmp_path):
+    """``save_png`` writes an image file headless (no display, no pyglet).
+
+    Uses matplotlib's Agg backend, so it must succeed with ``DISPLAY`` unset.
+    Confirms a non-empty PNG is produced for a colliding pose. Skips cleanly if
+    ``matplotlib`` is genuinely unavailable.
+
+    Args:
+        tmp_path: Pytest temp directory for the calibration JSON and output PNG.
+    """
+    pytest.importorskip("matplotlib")
+
+    from kinematics import preview
+    from kinematics.model import CollisionModel
+
+    model = CollisionModel(
+        urdf_path=ABS_URDF,
+        calibration_path=str(tmp_path / "c.json"),
+    )
+
+    out_path = tmp_path / "preview.png"
+    returned = preview.save_png(model, _COLLIDING_POSE, str(out_path))
+
+    assert returned == str(out_path)
+    assert out_path.exists()
+    assert out_path.stat().st_size > 0

@@ -15,7 +15,11 @@ itself does not require a rendering backend.
 The public surface is:
     - ``build_scene(model, pose)`` -> a ``trimesh.Scene`` of the pose's proxies,
       colliding links colored red. Display-free, so it can be exercised headless.
-    - ``show(model, poses, block=True)`` -> builds and displays a scene per pose.
+    - ``show(model, poses, block=True)`` -> builds and displays a scene per pose
+      in an interactive window (needs a display / viewer backend).
+    - ``save_png(model, pose, out_path, ...)`` -> renders the pose to an image
+      file OFFSCREEN via matplotlib's non-interactive ``Agg`` backend, so it
+      works on a headless Pi with no display, no X-forwarding, and no pyglet.
 
 This module imports no hardware libraries (Requirement 11.3).
 """
@@ -335,3 +339,196 @@ def show(model, poses, block=True):
                 "trying matplotlib fallback"
             )
             _show_matplotlib(model, pose, block)
+
+
+def _sphere_surface(center, radius, resolution=12):
+    """Returns meshgrid X/Y/Z arrays for a sphere surface (for plot_surface).
+
+    Args:
+        center: Sphere center, array-like of length 3.
+        radius: Sphere radius in meters.
+        resolution: Number of samples along each spherical angle.
+
+    Returns:
+        A tuple ``(x, y, z)`` of 2D numpy arrays describing the sphere surface.
+    """
+    center = np.asarray(center, dtype=float)
+    u = np.linspace(0.0, 2.0 * np.pi, resolution)
+    v = np.linspace(0.0, np.pi, resolution)
+    x = center[0] + radius * np.outer(np.cos(u), np.sin(v))
+    y = center[1] + radius * np.outer(np.sin(u), np.sin(v))
+    z = center[2] + radius * np.outer(np.ones_like(u), np.cos(v))
+    return x, y, z
+
+
+def _capsule_surface(p0, p1, radius, resolution=12):
+    """Returns meshgrid X/Y/Z arrays approximating a capsule's cylindrical body.
+
+    Draws just the cylindrical side wall spanning ``p0 -> p1`` (the hemispherical
+    end caps are omitted for a lightweight sketch). An orthonormal frame is built
+    around the segment axis so the tube follows any orientation.
+
+    Args:
+        p0: Segment start point, array-like of length 3.
+        p1: Segment end point, array-like of length 3.
+        radius: Capsule radius in meters.
+        resolution: Number of samples around the circumference / along the axis.
+
+    Returns:
+        A tuple ``(x, y, z)`` of 2D numpy arrays describing the tube surface.
+    """
+    p0 = np.asarray(p0, dtype=float)
+    p1 = np.asarray(p1, dtype=float)
+    axis = p1 - p0
+    length = float(np.linalg.norm(axis))
+    if length <= 1e-12:
+        return _sphere_surface(p0, radius, resolution)
+
+    direction = axis / length
+    # Pick a reference not parallel to the axis, then build an orthonormal frame.
+    reference = np.array([1.0, 0.0, 0.0]) if abs(direction[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    u_axis = np.cross(direction, reference)
+    u_axis /= np.linalg.norm(u_axis)
+    v_axis = np.cross(direction, u_axis)
+
+    theta = np.linspace(0.0, 2.0 * np.pi, resolution)
+    t = np.linspace(0.0, length, 2)
+    theta_grid, t_grid = np.meshgrid(theta, t)
+
+    ring = (
+        radius * np.cos(theta_grid)[..., None] * u_axis
+        + radius * np.sin(theta_grid)[..., None] * v_axis
+    )
+    centers = p0[None, None, :] + t_grid[..., None] * direction
+    surface = centers + ring
+    return surface[..., 0], surface[..., 1], surface[..., 2]
+
+
+def _box_faces(center, axes, half_extents):
+    """Returns the 6 quad faces (each a list of 4 corner points) of an OBB.
+
+    Args:
+        center: Box center, array-like of length 3.
+        axes: 3x3 orthonormal column axes of the box.
+        half_extents: Half-sizes along each local axis, array-like of length 3.
+
+    Returns:
+        A list of 6 faces, each a list of four length-3 numpy corner points.
+    """
+    center = np.asarray(center, dtype=float)
+    axes = np.asarray(axes, dtype=float)
+    half = np.asarray(half_extents, dtype=float)
+
+    # 8 corners via all +-half combinations along the local axes.
+    corners = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                offset = (
+                    sx * half[0] * axes[:, 0]
+                    + sy * half[1] * axes[:, 1]
+                    + sz * half[2] * axes[:, 2]
+                )
+                corners.append(center + offset)
+    # Corner index order matches (sx,sy,sz) bits: 000,001,010,011,100,101,110,111.
+    c = corners
+    faces = [
+        [c[0], c[1], c[3], c[2]],  # -x
+        [c[4], c[5], c[7], c[6]],  # +x
+        [c[0], c[1], c[5], c[4]],  # -y
+        [c[2], c[3], c[7], c[6]],  # +y
+        [c[0], c[2], c[6], c[4]],  # -z
+        [c[1], c[3], c[7], c[5]],  # +z
+    ]
+    return faces
+
+
+def save_png(model, pose, out_path, elev=20.0, azim=-60.0, dpi=140):
+    """Renders a pose's proxies to an image file OFFSCREEN (headless-safe).
+
+    Uses matplotlib's non-interactive ``Agg`` backend so it needs no display,
+    no X-forwarding, and no ``pyglet`` -- ideal for a headless Raspberry Pi.
+    Proxies are drawn as translucent 3D solids (spheres, capsule tubes, and OBB
+    faces); links in any colliding pair are colored red, the rest neutral gray
+    (Requirements 8.1, 8.2).
+
+    Args:
+        model: An initialized ``CollisionModel``.
+        pose: A servo pose (channel -> degrees dict) to render.
+        out_path: Filesystem path for the output image (e.g. ``preview.png``).
+        elev: Camera elevation angle in degrees.
+        azim: Camera azimuth angle in degrees.
+        dpi: Output image resolution.
+
+    Returns:
+        The ``out_path`` written.
+
+    Raises:
+        RuntimeError: If ``matplotlib`` cannot be imported; the message is
+            actionable.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # Non-interactive backend: no display required.
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3d projection)
+    except ImportError as error:
+        raise RuntimeError(
+            "Saving a preview image requires 'matplotlib'; install it to use "
+            f"--preview-out. Original import error: {error}"
+        ) from error
+
+    world_proxies = _link_world_proxies(model, pose)
+    highlighted = _colliding_links(model, pose)
+    print(
+        f"[preview] rendering PNG: {len(world_proxies)} proxied links, "
+        f"{len(highlighted)} highlighted (colliding) -> {out_path}"
+    )
+
+    figure = plt.figure(figsize=(8, 8))
+    axes = figure.add_subplot(111, projection="3d")
+
+    all_points = []
+    for link, proxy in world_proxies.items():
+        color = "red" if link in highlighted else "gray"
+        alpha = 0.5 if link in highlighted else 0.25
+        if isinstance(proxy, Sphere):
+            x, y, z = _sphere_surface(proxy.center, proxy.radius)
+            axes.plot_surface(x, y, z, color=color, alpha=alpha, linewidth=0)
+            all_points.append(np.asarray(proxy.center, dtype=float))
+        elif isinstance(proxy, Capsule):
+            x, y, z = _capsule_surface(proxy.p0, proxy.p1, proxy.radius)
+            axes.plot_surface(x, y, z, color=color, alpha=alpha, linewidth=0)
+            all_points.append(np.asarray(proxy.p0, dtype=float))
+            all_points.append(np.asarray(proxy.p1, dtype=float))
+        elif isinstance(proxy, Box):
+            faces = _box_faces(proxy.center, proxy.axes, proxy.half_extents)
+            collection = Poly3DCollection(
+                faces, facecolor=color, alpha=alpha, edgecolor="k", linewidths=0.3
+            )
+            axes.add_collection3d(collection)
+            all_points.extend(faces[0] + faces[1])
+
+    # Equal aspect: expand to a cubic bounding box around all drawn points.
+    if all_points:
+        pts = np.asarray(all_points, dtype=float)
+        mins = pts.min(axis=0)
+        maxs = pts.max(axis=0)
+        center = (mins + maxs) / 2.0
+        span = float((maxs - mins).max()) / 2.0 + 0.05
+        axes.set_xlim(center[0] - span, center[0] + span)
+        axes.set_ylim(center[1] - span, center[1] + span)
+        axes.set_zlim(center[2] - span, center[2] + span)
+
+    axes.set_xlabel("x")
+    axes.set_ylabel("y")
+    axes.set_zlabel("z")
+    verdict = "COLLISION" if highlighted else "SAFE"
+    axes.set_title(f"Maximus pose preview - {verdict}")
+    axes.view_init(elev=elev, azim=azim)
+
+    figure.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(figure)
+    print(f"[preview] wrote {out_path}")
+    return out_path
