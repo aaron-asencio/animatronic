@@ -689,19 +689,25 @@ gap = ||center_a - center_b|| - radius_a - radius_b
 
 Because proxies are conservative (never smaller than the raw geometry plus a non-negative margin), `gap <= 0` for the proxies is a sufficient (over-approximating) condition for a real collision — the model prefers false positives over misses (Requirement 4's intent).
 
-## Adjacency exclusion
+## Collision exclusion
 
-The adjacency set is the set of link pairs joined by a **single** joint (revolute or fixed) in the URDF graph. Directly-connected pairs are never tested (Requirement 5.4). From the actual tree, excluded pairs include:
+The detector excludes a pair from testing when it appears in `engine.excluded_pairs()`, the superset of three sources (mirroring a MoveIt SRDF `disable_collisions` list):
 
-```
-base_link–lower_neck_link, lower_neck_link–middle_neck_link,
-middle_neck_link–upper_neck_link, upper_neck_link–head_link,
-base_link–shoulder_link, shoulder_link–upper_arm_link,
-upper_arm_link–elbow_link, elbow_link–lower_arm_link,
-lower_arm_link–hand_link
-```
+1. **Adjacent pairs** — link pairs joined by a **single** joint (revolute or fixed) in the URDF graph, i.e. `engine.adjacency()` (Requirement 5.4). From the actual tree these include:
 
-All other pairs (e.g. `upper_arm_link`–`base_link`, `lower_arm_link`–`head_link`, `hand_link`–`base_link`) are candidates for collision testing. The arm-vs-body collision that per-axis `SAFE_LIMITS` cannot catch — shoulder tilt + rotator driving the upper/lower arm into `base_link` — falls squarely in the tested set.
+   ```
+   base_link–lower_neck_link, lower_neck_link–middle_neck_link,
+   middle_neck_link–upper_neck_link, upper_neck_link–head_link,
+   base_link–shoulder_link, shoulder_link–upper_arm_link,
+   upper_arm_link–elbow_link, elbow_link–lower_arm_link,
+   lower_arm_link–hand_link
+   ```
+
+2. **Rigidly-attached pairs** — any pair with **no revolute joint** on the tree path between them (`len(joints_between(a, b)) == 0`). Connected only through fixed joints, they cannot move relative to each other and so can never newly collide. This captures the non-adjacent coaxial neck pairs (e.g. `lower_neck_link`–`upper_neck_link`, `lower_neck_link`–`head_link`).
+
+3. **Self-collision-exempt groups** — named rigid/quasi-rigid groups whose internal pairs are all excluded. Currently the **neck column** (`base_link` + `lower_neck_link` + `middle_neck_link` + `upper_neck_link` + `head_link`), a coaxial stack of cylinders driven only by the neck-tilt joint (`pitch_neck_joint`). In the capsule model any two coaxial cylinders overlap by construction (segment–segment distance ≈ 0), producing structural false positives; the column cannot self-collide in a damaging way, so all its internal pairs are exempt.
+
+All other pairs (e.g. `upper_arm_link`–`base_link`, `lower_arm_link`–`head_link`, `hand_link`–`base_link`) remain candidates for collision testing. The arm-vs-body collision that per-axis `SAFE_LIMITS` cannot catch — shoulder tilt + rotator driving the upper/lower arm into `base_link` — falls squarely in the tested set.
 
 ## Offending-joint mapping
 
@@ -768,9 +774,9 @@ For any pair of proxies (capsule or sphere), the detector reports an intersectio
 
 **Validates: Requirements 5.2**
 
-### Property 8: Adjacent link pairs are never reported
+### Property 8: Excluded link pairs are never reported
 
-For any pose, no directly-connected (single-joint) link pair from the URDF graph appears in the reported colliding pairs.
+For any pose, no excluded (adjacent, rigid, or self-exempt) link pair from `engine.excluded_pairs()` appears in the reported colliding pairs.
 
 **Validates: Requirements 5.4**
 

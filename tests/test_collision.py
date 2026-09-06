@@ -256,7 +256,7 @@ def test_property7_intersection_detection_correct_and_symmetric(a, b):
 
 
 # ---------------------------------------------------------------------------
-# Task 6.4 — Property 8: Adjacent link pairs are never reported
+# Task 6.4 — Property 8: Excluded link pairs are never reported
 # ---------------------------------------------------------------------------
 
 
@@ -274,12 +274,13 @@ def test_property7_intersection_detection_correct_and_symmetric(a, b):
     )
 )
 def test_property8_adjacent_link_pairs_never_reported(angles):
-    """Feature: kinematic-collision-model, Property 8: Adjacent link pairs are never reported.
+    """Feature: kinematic-collision-model, Property 8: Excluded (adjacent, rigid, or self-exempt) link pairs are never reported.
 
     For any pose (a dict of joint radians over the engine's actuated joints, each
-    angle in [-pi, pi]), running the shared detector never returns a
-    directly-adjacent link pair: for every reported pair,
-    ``frozenset({link_a, link_b})`` is not in ``engine.adjacency()``.
+    angle in [-pi, pi]), running the shared detector never returns an excluded
+    link pair: for every reported pair, ``frozenset({link_a, link_b})`` is not in
+    ``engine.excluded_pairs()`` (the superset of adjacent, rigidly-attached, and
+    self-collision-exempt-group pairs).
 
     Validates: Requirements 5.4
     """
@@ -287,10 +288,10 @@ def test_property8_adjacent_link_pairs_never_reported(angles):
     transforms = _ENGINE.link_transforms(pose)
 
     detected = _DETECTOR.check(transforms)
-    adjacency = _ENGINE.adjacency()
+    excluded = _ENGINE.excluded_pairs()
 
     for pair in detected:
-        assert frozenset({pair.link_a, pair.link_b}) not in adjacency
+        assert frozenset({pair.link_a, pair.link_b}) not in excluded
 
 
 # ---------------------------------------------------------------------------

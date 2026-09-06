@@ -140,6 +140,24 @@ class Kinematics_Engine:
     children-of-link maps used for path finding and adjacency.
     """
 
+    # Named self-collision-exempt groups (MoveIt SRDF disable_collisions style).
+    # Every unordered pair of members within a group is excluded from collision
+    # testing. The neck column (base + the three neck links + head) is a coaxial
+    # stack of cylinders whose only internal revolute joint is the neck-tilt
+    # (pitch_neck_joint); it cannot self-collide in a damaging way, so all of its
+    # internal pairs are exempt regardless of vertical spacing.
+    SELF_COLLISION_EXEMPT_GROUPS = [
+        frozenset(
+            {
+                "base_link",
+                "lower_neck_link",
+                "middle_neck_link",
+                "upper_neck_link",
+                "head_link",
+            }
+        )
+    ]
+
     def __init__(self, urdf_path):
         """Loads the URDF via ``yourdfpy`` and precomputes the joint graph.
 
@@ -240,6 +258,56 @@ class Kinematics_Engine:
         for meta in self._joints.values():
             pairs.add(frozenset({meta["parent_link"], meta["child_link"]}))
         return pairs
+
+    def excluded_pairs(self):
+        """Returns every link pair that must NEVER be collision-tested.
+
+        This is the superset the collision detector uses in place of raw
+        ``adjacency()``. It mirrors a MoveIt SRDF ``disable_collisions`` list and
+        is the union of three sources:
+
+            1. Adjacency: every single-joint neighbor from :meth:`adjacency`
+               (revolute AND fixed).
+            2. Rigid pairs: every unordered pair of links with no revolute joint
+               on the tree path between them (``len(joints_between(a, b)) == 0``).
+               Such links are connected only through fixed joints, cannot move
+               relative to one another, and so can never newly collide. This
+               naturally captures coaxial neck pairs like
+               ``lower_neck_link``/``middle_neck_link`` and
+               ``upper_neck_link``/``head_link``.
+            3. Self-exempt groups: every unordered pair of members within each
+               group in :data:`SELF_COLLISION_EXEMPT_GROUPS`. Currently only the
+               neck column, which is a coaxial stacked assembly driven solely by
+               the neck-tilt joint (``pitch_neck_joint``) and cannot self-collide
+               in a damaging way -- exactly the situation a MoveIt SRDF
+               ``disable_collisions`` entry describes. Only links that exist in
+               :attr:`link_names` are added, guarding against typos.
+
+        Returns:
+            A set of ``frozenset({link_a, link_b})`` pairs to exclude.
+        """
+        excluded = set(self.adjacency())
+
+        # 2. Rigidly-attached pairs: no revolute joint between them.
+        links = self.link_names
+        for i in range(len(links)):
+            for j in range(i + 1, len(links)):
+                if len(self.joints_between(links[i], links[j])) == 0:
+                    excluded.add(frozenset({links[i], links[j]}))
+
+        # 3. Named self-collision-exempt groups (MoveIt SRDF disable_collisions).
+        known = set(self.link_names)
+        for group in self.SELF_COLLISION_EXEMPT_GROUPS:
+            members = [link for link in group if link in known]
+            for i in range(len(members)):
+                for j in range(i + 1, len(members)):
+                    excluded.add(frozenset({members[i], members[j]}))
+
+        print(
+            f"[kinematics] excluded_pairs: {len(excluded)} pairs "
+            f"(adjacent + rigid + self-exempt groups)"
+        )
+        return excluded
 
     def _path_to_root(self, link):
         """Returns the list of links from ``link`` up to the root, inclusive.

@@ -494,9 +494,10 @@ class Collision_Detector:
     """Detects self-collisions between placed link proxies for a pose.
 
     Places every link proxy in world coordinates using the engine's link
-    transforms, tests every unordered pair of proxied links (skipping directly
-    adjacent link pairs), and maps each colliding pair to the offending revolute
-    URDF joints on the tree path between the links.
+    transforms, tests every unordered pair of proxied links (skipping excluded
+    pairs -- adjacent, rigid, and self-exempt groups), and maps each colliding
+    pair to the offending revolute URDF joints on the tree path between the
+    links.
 
     The detector reports only URDF joint names; the servo-channel mapping is done
     later at the ``model.py`` facade layer, so this class deliberately does not
@@ -504,31 +505,36 @@ class Collision_Detector:
     """
 
     def __init__(self, engine, proxies):
-        """Precomputes the adjacency exclusion set from the joint graph.
+        """Precomputes the collision-exclusion set from the joint graph.
 
         Args:
             engine: A ``kinematics.kinematics.Kinematics_Engine`` instance, used
-                for its ``adjacency()`` and ``joints_between(...)`` graph queries.
+                for its ``excluded_pairs()`` and ``joints_between(...)`` graph
+                queries.
             proxies: Dict mapping ``link_name`` to a proxy object (``Capsule`` or
                 ``Sphere`` from ``kinematics.proxies``), each expressed in that
                 link's LOCAL frame.
         """
         self._engine = engine
         self._proxies = dict(proxies)
-        # Adjacency exclusion set: frozenset({link_a, link_b}) pairs that are
-        # directly connected by a single joint and must never be reported.
-        self._adjacent = engine.adjacency()
+        # Exclusion set: frozenset({link_a, link_b}) pairs that must never be
+        # reported -- the superset of adjacent (single-joint) pairs, rigidly
+        # attached pairs (no revolute joint between them), and named self-exempt
+        # groups (e.g. the coaxial neck column). See engine.excluded_pairs().
+        self._excluded = engine.excluded_pairs()
         print(
             f"[collision] Collision_Detector ready: {len(self._proxies)} proxied "
-            f"links, {len(self._adjacent)} adjacent pairs excluded"
+            f"links, {len(self._excluded)} excluded pairs "
+            f"(adjacent + rigid + self-exempt groups)"
         )
 
     def check(self, link_transforms):
         """Detects colliding link pairs for a single pose.
 
         Places each proxied link into world coordinates, tests every unordered
-        pair of proxied links (skipping adjacent pairs), and returns a
-        :class:`DetectedPair` for each pair whose surface gap is ``<= 0``.
+        pair of proxied links (skipping excluded pairs -- adjacent, rigid, and
+        self-exempt groups), and returns a :class:`DetectedPair` for each pair
+        whose surface gap is ``<= 0``.
 
         Args:
             link_transforms: Dict mapping ``link_name`` to a 4x4 numpy world
@@ -554,7 +560,7 @@ class Collision_Detector:
                 link_a = links[i]
                 link_b = links[j]
 
-                if frozenset({link_a, link_b}) in self._adjacent:
+                if frozenset({link_a, link_b}) in self._excluded:
                     continue
 
                 gap = _pair_gap(world_proxies[link_a], world_proxies[link_b])
