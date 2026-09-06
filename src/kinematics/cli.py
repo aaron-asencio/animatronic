@@ -158,12 +158,12 @@ def _run_preview(model, poses):
     preview.show(model, poses)
 
 
-def _save_preview(model, poses, out_path):
-    """Renders the first pose to an image file offscreen (headless-safe).
+def _save_preview(model, poses, out_path, multiview=True):
+    """Renders each pose to an image file offscreen (headless-safe).
 
     Lazily imports ``preview`` and calls its ``save_png`` (matplotlib ``Agg``
-    backend), so no display, X-forwarding, or pyglet is required. Only the first
-    pose is rendered; for multiple poses an index suffix is added per pose.
+    backend), so no display, X-forwarding, or pyglet is required. A single pose
+    writes ``out_path``; multiple poses get an index suffix per pose.
 
     Args:
         model: The initialized ``CollisionModel``.
@@ -171,6 +171,8 @@ def _save_preview(model, poses, out_path):
         out_path: Output image path (e.g. ``preview.png``). For more than one
             pose, ``preview.png`` becomes ``preview_1.png``, ``preview_2.png``,
             etc.
+        multiview: When True (default), each image is a 4-view panel; when
+            False, a single 3/4 view.
     """
     try:
         from kinematics import preview
@@ -182,13 +184,13 @@ def _save_preview(model, poses, out_path):
         return
 
     if len(poses) == 1:
-        preview.save_png(model, poses[0], out_path)
+        preview.save_png(model, poses[0], out_path, multiview=multiview)
         return
 
     root, ext = os.path.splitext(out_path)
     ext = ext or ".png"
     for index, pose in enumerate(poses, start=1):
-        preview.save_png(model, pose, f"{root}_{index}{ext}")
+        preview.save_png(model, pose, f"{root}_{index}{ext}", multiview=multiview)
 
 
 def main(argv=None):
@@ -227,9 +229,15 @@ def main(argv=None):
         "--preview-out",
         metavar="PATH",
         help=(
-            "Render the (first) pose to an image file offscreen instead of "
-            "opening a window. Works headless (no display/X/pyglet needed)."
+            "Render the pose(s) to an image file offscreen instead of opening "
+            "a window. Works headless (no display/X/pyglet needed). By default "
+            "each image is a 4-view panel (front/side/top/3-4)."
         ),
+    )
+    parser.add_argument(
+        "--single-view",
+        action="store_true",
+        help="With --preview-out, render one 3/4 view instead of the 4-view panel.",
     )
     parser.add_argument(
         "--urdf",
@@ -287,7 +295,7 @@ def main(argv=None):
     _print_verdicts(result.per_pose)
 
     if args.preview_out:
-        _save_preview(model, poses, args.preview_out)
+        _save_preview(model, poses, args.preview_out, multiview=not args.single_view)
 
     if args.preview:
         _run_preview(model, poses)

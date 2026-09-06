@@ -265,26 +265,20 @@ def _show_matplotlib(model, pose, block):
     highlighted = _colliding_links(model, pose)
 
     try:
-        figure = plt.figure()
+        figure = plt.figure(figsize=(9, 9))
         axes = figure.add_subplot(111, projection="3d")
-        for link, proxy in world_proxies.items():
-            color = "red" if link in highlighted else "gray"
-            if isinstance(proxy, Capsule):
-                p0 = np.asarray(proxy.p0, dtype=float)
-                p1 = np.asarray(proxy.p1, dtype=float)
-                axes.plot(
-                    [p0[0], p1[0]], [p0[1], p1[1]], [p0[2], p1[2]],
-                    color=color, linewidth=2,
-                )
-            elif isinstance(proxy, Sphere):
-                center = np.asarray(proxy.center, dtype=float)
-                axes.scatter(center[0], center[1], center[2], color=color, s=40)
-            elif isinstance(proxy, Box):
-                center = np.asarray(proxy.center, dtype=float)
-                axes.scatter(center[0], center[1], center[2], color=color, s=60, marker="s")
+        # Draw the full robot as solid proxy surfaces (spheres, capsule tubes,
+        # OBB faces) -- the same drawing used by the saved PNG -- so the gray
+        # body is visible, not just the colliding lines. Then frame it with an
+        # equal-aspect cubic view box.
+        points = _draw_proxies(axes, world_proxies, highlighted)
+        _set_equal_aspect(axes, points)
         axes.set_xlabel("x")
         axes.set_ylabel("y")
         axes.set_zlabel("z")
+        verdict = "COLLISION" if highlighted else "SAFE"
+        axes.set_title(f"Maximus pose preview - {verdict}")
+        axes.view_init(elev=22.0, azim=-60.0)
         plt.show(block=block)
     except Exception as error:  # noqa: BLE001 - surface any display/backend failure clearly
         raise RuntimeError(
@@ -443,56 +437,28 @@ def _box_faces(center, axes, half_extents):
     return faces
 
 
-def save_png(model, pose, out_path, elev=20.0, azim=-60.0, dpi=140):
-    """Renders a pose's proxies to an image file OFFSCREEN (headless-safe).
+def _draw_proxies(axes, world_proxies, highlighted):
+    """Draws every world-space proxy onto a matplotlib 3D axes.
 
-    Uses matplotlib's non-interactive ``Agg`` backend so it needs no display,
-    no X-forwarding, and no ``pyglet`` -- ideal for a headless Raspberry Pi.
-    Proxies are drawn as translucent 3D solids (spheres, capsule tubes, and OBB
-    faces); links in any colliding pair are colored red, the rest neutral gray
-    (Requirements 8.1, 8.2).
+    Colliding-link proxies are drawn red and more opaque; all others are a
+    translucent neutral gray. Spheres and capsules are surfaces; boxes are OBB
+    faces. Returns the collected corner/anchor points so the caller can set an
+    equal-aspect cubic bounding box.
 
     Args:
-        model: An initialized ``CollisionModel``.
-        pose: A servo pose (channel -> degrees dict) to render.
-        out_path: Filesystem path for the output image (e.g. ``preview.png``).
-        elev: Camera elevation angle in degrees.
-        azim: Camera azimuth angle in degrees.
-        dpi: Output image resolution.
+        axes: A matplotlib 3D axes (``projection="3d"``).
+        world_proxies: Mapping of link name to its world-space proxy.
+        highlighted: Set of link names to draw as colliding (red).
 
     Returns:
-        The ``out_path`` written.
-
-    Raises:
-        RuntimeError: If ``matplotlib`` cannot be imported; the message is
-            actionable.
+        A list of length-3 numpy points spanning the drawn geometry.
     """
-    try:
-        import matplotlib
-        matplotlib.use("Agg")  # Non-interactive backend: no display required.
-        import matplotlib.pyplot as plt
-        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3d projection)
-    except ImportError as error:
-        raise RuntimeError(
-            "Saving a preview image requires 'matplotlib'; install it to use "
-            f"--preview-out. Original import error: {error}"
-        ) from error
-
-    world_proxies = _link_world_proxies(model, pose)
-    highlighted = _colliding_links(model, pose)
-    print(
-        f"[preview] rendering PNG: {len(world_proxies)} proxied links, "
-        f"{len(highlighted)} highlighted (colliding) -> {out_path}"
-    )
-
-    figure = plt.figure(figsize=(8, 8))
-    axes = figure.add_subplot(111, projection="3d")
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     all_points = []
     for link, proxy in world_proxies.items():
         color = "red" if link in highlighted else "gray"
-        alpha = 0.5 if link in highlighted else 0.25
+        alpha = 0.55 if link in highlighted else 0.22
         if isinstance(proxy, Sphere):
             x, y, z = _sphere_surface(proxy.center, proxy.radius)
             axes.plot_surface(x, y, z, color=color, alpha=alpha, linewidth=0)
@@ -509,24 +475,122 @@ def save_png(model, pose, out_path, elev=20.0, azim=-60.0, dpi=140):
             )
             axes.add_collection3d(collection)
             all_points.extend(faces[0] + faces[1])
+    return all_points
 
-    # Equal aspect: expand to a cubic bounding box around all drawn points.
-    if all_points:
-        pts = np.asarray(all_points, dtype=float)
-        mins = pts.min(axis=0)
-        maxs = pts.max(axis=0)
-        center = (mins + maxs) / 2.0
-        span = float((maxs - mins).max()) / 2.0 + 0.05
-        axes.set_xlim(center[0] - span, center[0] + span)
-        axes.set_ylim(center[1] - span, center[1] + span)
-        axes.set_zlim(center[2] - span, center[2] + span)
 
-    axes.set_xlabel("x")
-    axes.set_ylabel("y")
-    axes.set_zlabel("z")
-    verdict = "COLLISION" if highlighted else "SAFE"
-    axes.set_title(f"Maximus pose preview - {verdict}")
-    axes.view_init(elev=elev, azim=azim)
+def _set_equal_aspect(axes, points):
+    """Sets a cubic (equal-aspect) view box around the given points.
+
+    Args:
+        axes: A matplotlib 3D axes.
+        points: A list of length-3 numpy points to bound.
+    """
+    if not points:
+        return
+    pts = np.asarray(points, dtype=float)
+    mins = pts.min(axis=0)
+    maxs = pts.max(axis=0)
+    center = (mins + maxs) / 2.0
+    span = float((maxs - mins).max()) / 2.0 + 0.05
+    axes.set_xlim(center[0] - span, center[0] + span)
+    axes.set_ylim(center[1] - span, center[1] + span)
+    axes.set_zlim(center[2] - span, center[2] + span)
+
+
+# Named camera angles (elev, azim) for the multi-view panel. These read as
+# front (looking down -Y), right side (looking down -X), top-down, and a 3/4
+# perspective, which together disambiguate a collision without an interactive
+# viewer.
+_VIEWS = (
+    ("front", 12.0, -90.0),
+    ("side", 12.0, 0.0),
+    ("top", 89.0, -90.0),
+    ("3/4 view", 22.0, -60.0),
+)
+
+
+def save_png(model, pose, out_path, dpi=140, multiview=True):
+    """Renders a pose's proxies to an image file OFFSCREEN (headless-safe).
+
+    Uses matplotlib's non-interactive ``Agg`` backend so it needs no display,
+    X-forwarding, or ``pyglet`` -- ideal for a headless Raspberry Pi. Proxies
+    are drawn as translucent 3D solids (spheres, capsule tubes, OBB faces);
+    links in any colliding pair are red, the rest neutral gray (Requirements
+    8.1, 8.2).
+
+    By default the image is a 2x2 panel of named camera angles (front, side,
+    top, and a 3/4 perspective) so a collision can be read from every side
+    without an interactive window. Set ``multiview=False`` for a single 3/4
+    view. The figure title reports the SAFE/COLLISION verdict and, when
+    colliding, the offending link pairs and servo joints.
+
+    Args:
+        model: An initialized ``CollisionModel``.
+        pose: A servo pose (channel -> degrees dict) to render.
+        out_path: Filesystem path for the output image (e.g. ``preview.png``).
+        dpi: Output image resolution.
+        multiview: When True, render the four-view panel; otherwise a single
+            3/4 view.
+
+    Returns:
+        The ``out_path`` written.
+
+    Raises:
+        RuntimeError: If ``matplotlib`` cannot be imported; the message is
+            actionable.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")  # Non-interactive backend: no display required.
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (registers 3d projection)
+    except ImportError as error:
+        raise RuntimeError(
+            "Saving a preview image requires 'matplotlib'; install it to use "
+            f"--preview-out. Original import error: {error}"
+        ) from error
+
+    world_proxies = _link_world_proxies(model, pose)
+    result = model.is_pose_safe(pose)
+    highlighted = set()
+    for pair in result.colliding_pairs:
+        highlighted.add(pair.link_a)
+        highlighted.add(pair.link_b)
+
+    print(
+        f"[preview] rendering PNG: {len(world_proxies)} proxied links, "
+        f"{len(highlighted)} highlighted (colliding) -> {out_path}"
+    )
+
+    views = _VIEWS if multiview else (_VIEWS[3],)
+    if multiview:
+        figure = plt.figure(figsize=(12, 12))
+        rows = cols = 2
+    else:
+        figure = plt.figure(figsize=(8, 8))
+        rows = cols = 1
+
+    for position, (name, elev, azim) in enumerate(views, start=1):
+        axes = figure.add_subplot(rows, cols, position, projection="3d")
+        points = _draw_proxies(axes, world_proxies, highlighted)
+        _set_equal_aspect(axes, points)
+        axes.set_xlabel("x")
+        axes.set_ylabel("y")
+        axes.set_zlabel("z")
+        axes.set_title(name)
+        axes.view_init(elev=elev, azim=azim)
+
+    verdict = "COLLISION" if result.colliding_pairs else "SAFE"
+    if result.colliding_pairs:
+        detail = "; ".join(
+            f"{pair.link_a} <-> {pair.link_b} "
+            f"({', '.join(j.servo_name for j in pair.offending_joints)})"
+            for pair in result.colliding_pairs
+        )
+        suptitle = f"Maximus pose - {verdict}: {detail}"
+    else:
+        suptitle = f"Maximus pose - {verdict}"
+    figure.suptitle(suptitle, fontsize=12, color="red" if highlighted else "black")
 
     figure.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(figure)
