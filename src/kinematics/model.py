@@ -113,7 +113,7 @@ class CollisionModel:
         self,
         urdf_path="src/config/maximus.urdf",
         calibration_path="src/config/calibration.json",
-        inflation_margin=0.01,
+        inflation_margin=0.005,
     ):
         """Initializes the model, loading the URDF, calibration, and proxies.
 
@@ -125,7 +125,10 @@ class CollisionModel:
             urdf_path: Path to the Maximus URDF.
             calibration_path: Path to the editable calibration JSON (auto-seeded
                 if missing).
-            inflation_margin: Non-negative proxy inflation distance in meters.
+            inflation_margin: Non-negative proxy inflation (safety) distance in
+                meters. Defaults to 0.005 (5 mm): the raw Maximus geometry is
+                collision-free at the rest pose, and 5 mm keeps that pose clear
+                while still providing a conservative safety buffer.
         """
         self._calibration = Calibration_Store(calibration_path)
         self._engine = Kinematics_Engine(urdf_path)

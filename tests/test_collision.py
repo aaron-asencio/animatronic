@@ -182,7 +182,12 @@ def _segment_segment(p0, p1, q0, q1):
     Returns:
         The minimum distance (float).
     """
-    ts = np.linspace(0.0, 1.0, 120)
+    # Dense sampling of both segments. 600 samples keeps the brute-force
+    # reference within a few tenths of a millimeter of the analytic distance
+    # even for full-length (|segment| ~ 2 m) inputs, so it stays inside the
+    # 5e-3 comparison slack (a coarser grid under-resolves degenerate cases,
+    # e.g. a point vs. a long segment).
+    ts = np.linspace(0.0, 1.0, 600)
     p_pts = p0[None, :] + ts[:, None] * (p1 - p0)[None, :]
     q_pts = q0[None, :] + ts[:, None] * (q1 - q0)[None, :]
     diffs = p_pts[:, None, :] - q_pts[None, :, :]

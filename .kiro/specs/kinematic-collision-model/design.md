@@ -479,14 +479,16 @@ class CollisionModel:
         self,
         urdf_path: str = "src/config/maximus.urdf",
         calibration_path: str = "src/config/calibration.json",
-        inflation_margin: float = 0.01,
+        inflation_margin: float = 0.005,
     ):
         """Initializes the model, loading the URDF, calibration, and proxies.
 
         Args:
             urdf_path: Path to the Maximus URDF.
             calibration_path: Path to the editable calibration JSON.
-            inflation_margin: Non-negative proxy inflation distance (meters).
+            inflation_margin: Non-negative proxy inflation (safety) distance
+                in meters. Default 0.005 (5 mm) keeps the collision-free rest
+                pose clear while providing a conservative buffer.
         """
 
     def is_pose_safe(self, servo_angles: dict[int, float]) -> PoseResult:
