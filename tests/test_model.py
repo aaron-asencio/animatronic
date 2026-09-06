@@ -282,20 +282,45 @@ def test_bool_angle_rejected_as_non_numeric():
 def test_kinematics_package_imports_no_hardware_libraries():
     """Requirement 11.3: the kinematics package imports no hardware libraries.
 
-    Importing ``kinematics.model`` must not pull in ``adafruit_servokit``,
-    ``gpiozero``, or ``pyaudio`` (checked via ``sys.modules``), and no source
-    file in the package may contain an import of those libraries.
+    Importing ``kinematics.model`` in a CLEAN interpreter must not pull in
+    ``adafruit_servokit``, ``gpiozero``, or ``pyaudio``, and no source file in
+    the package may contain an import of those libraries.
+
+    The runtime check runs in a fresh subprocess rather than inspecting this
+    session's ``sys.modules``: other test modules import hardware-touching
+    project modules (e.g. ``audio_player``, ``eyetest``) that legitimately load
+    ``gpiozero`` into the shared interpreter, so a same-process ``sys.modules``
+    scan would be order-dependent and spuriously fail. A clean subprocess
+    isolates what ``kinematics.model`` alone imports.
     """
-    import importlib
     import glob
     import re
+    import subprocess
 
     forbidden = ("adafruit_servokit", "gpiozero", "pyaudio")
 
-    # (1) Importing the package/module must not load any forbidden module.
-    importlib.import_module("kinematics.model")
-    for name in forbidden:
-        assert name not in sys.modules, f"{name} was imported by kinematics"
+    # (1) Importing kinematics.model in a fresh interpreter must not load any
+    # forbidden module. Run in a subprocess so this session's pollution (from
+    # other tests importing hardware modules) cannot affect the result.
+    src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+    probe = (
+        "import sys, importlib; importlib.import_module('kinematics.model'); "
+        "bad=[n for n in ('adafruit_servokit','gpiozero','pyaudio') "
+        "if n in sys.modules]; "
+        "print(','.join(bad)); sys.exit(1 if bad else 0)"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"kinematics.model imported forbidden hardware module(s): "
+        f"{result.stdout.strip()!r} (stderr: {result.stderr.strip()!r})"
+    )
 
     # (2) Static scan: no source file imports a forbidden library.
     package_dir = os.path.abspath(
