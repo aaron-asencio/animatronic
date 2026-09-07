@@ -357,13 +357,22 @@ async def _calibrate_scale(controller, channel, plan, delay):
     return scale
 
 
-def _calibrate_offset(channel, plan, current_offset):
+async def _calibrate_offset(controller, channel, plan, current_offset, delay):
     """Confirms or updates the joint's ``offset_deg`` (zero-landmark).
 
+    Drives the servo to the currently-stored ``offset_deg`` so you can SEE
+    whether that commanded angle actually places the joint at its zero-landmark
+    (e.g. head straight forward). You can then accept it, jog the joint live in
+    small steps until it looks right and capture that angle, or type an exact
+    angle. This avoids confusing the stored calibration value with the servo's
+    live commanded angle -- they are different things.
+
     Args:
+        controller: The ``TrunkController`` (drives the joint to each candidate).
         channel: PCA9685 channel number.
         plan: The probe plan entry for this channel.
         current_offset: The offset currently stored for this joint.
+        delay: Seconds between one-degree steps when driving.
 
     Returns:
         The confirmed/updated offset in degrees.
@@ -371,10 +380,40 @@ def _calibrate_offset(channel, plan, current_offset):
     name = _channel_name(channel)
     print(f"\n[{name}] OFFSET (zero-landmark) check")
     print(f"  The zero-landmark is the servo angle where: {plan['zero_landmark_desc']}.")
-    print(f"  Current offset_deg = {current_offset} (seed suggests {plan['zero_landmark_deg']}).")
-    if _prompt_yes_no("  Keep the current offset?", default=True):
+    print(f"  Stored offset_deg = {current_offset} (this is the CONFIG value, not a")
+    print("  live servo reading). I'll drive the joint to that angle so you can see")
+    print("  whether it actually lands on the zero-landmark.")
+
+    candidate = int(round(controller.clamp_angle(channel, current_offset)))
+    await _sweep(controller, channel, candidate, candidate, delay)
+    live = controller.kit.servo[channel].angle
+    print(f"  Joint is now commanded to {candidate} deg (servo reads {live}).")
+
+    if _prompt_yes_no(f"  Does the joint sit at its zero-landmark ({plan['zero_landmark_desc']})?",
+                      default=True):
+        print(f"  -> keeping offset_deg = {current_offset}.")
         return current_offset
-    return _prompt_float("  New offset_deg (servo angle at the zero-landmark)", current_offset)
+
+    # Live jog loop: nudge until it looks right, then capture the angle.
+    print("  Jog the joint to the zero-landmark. Enter a step in degrees (e.g. 5")
+    print("  or -5) to nudge, a bare number prefixed with '=' to jump to an exact")
+    print("  angle (e.g. =92), or press Enter when it looks right to capture it.")
+    position = candidate
+    while True:
+        reply = input(f"    [{name}] at {position} deg -> step / =angle / Enter to accept: ").strip()
+        if not reply:
+            print(f"  -> captured offset_deg = {position}.")
+            return float(position)
+        try:
+            if reply.startswith("="):
+                target = int(round(controller.clamp_angle(channel, float(reply[1:]))))
+            else:
+                target = int(round(controller.clamp_angle(channel, position + float(reply))))
+        except ValueError:
+            print("    enter a number like 5, -5, or =92 (or Enter to accept)")
+            continue
+        await _sweep(controller, channel, position, target, delay)
+        position = target
 
 
 async def calibrate_joint(controller, store, raw, channel, plan, delay, do_scale):
@@ -414,8 +453,11 @@ async def calibrate_joint(controller, store, raw, channel, plan, delay, do_scale
     observed_sign = await _calibrate_direction(controller, channel, plan, delay)
     new_sign = current_sign if observed_sign > 0 else -current_sign
 
-    # 2) Offset (zero-landmark). No motion required.
-    new_offset = _calibrate_offset(channel, plan, float(current.get("offset_deg", 0.0)))
+    # 2) Offset (zero-landmark). Drives the joint to the candidate so you can see
+    # it and jog to the true landmark if needed.
+    new_offset = await _calibrate_offset(
+        controller, channel, plan, float(current.get("offset_deg", 0.0)), delay
+    )
 
     # 3) Scale (optional; motion-heavy).
     new_scale = float(current.get("scale", 1.0))
