@@ -250,8 +250,38 @@ sudo PYTHONPATH=src .venv/bin/python -m calibrate_joints --no-scale
 For each joint it checks **direction** (does it move the way the model expects?
 flips `sign` if reversed), **offset** (which servo angle is the zero-landmark),
 and **scale** (measured physical arc ÷ commanded degrees). After writing, re-run
-a known SAFE pose through the CLI to sanity-check. `RT_ELBOW_TILT` is locked at
-5° in `SAFE_LIMITS`, so its arc can't be measured until that lock is widened.
+a known SAFE pose through the CLI to sanity-check. A joint locked to a single
+angle in `SAFE_LIMITS` (e.g. `RT_ELBOW_TILT` when locked straight) can't have
+its arc measured until that range is temporarily widened.
+
+### Validating collision predictions (boundary probe)
+
+Once calibrated, `probe_collision.py` confirms the model flags a collision **at
+or before** parts physically touch. You give it a base pose and one joint to
+step toward a suspected collision; at each step it shows the model verdict
+*before* moving, then you press `c` the instant parts touch (or `q` to abort).
+It reports whether the model flagged before contact and logs any disagreement.
+
+Dry-run to rehearse (no motion):
+
+```bash
+SERVO_SIM=1 PYTHONPATH=src .venv/bin/python -m probe_collision \
+  --base '{"0":90,"1":90,"4":150,"5":5,"6":170,"7":0}' \
+  --probe-channel 7 --toward 270 --dry-run
+```
+
+Then on hardware (root; keep a hand on the power):
+
+```bash
+sudo PYTHONPATH=src .venv/bin/python -m probe_collision \
+  --base '{"0":90,"1":90,"4":150,"5":5,"6":170,"7":0}' \
+  --probe-channel 7 --toward 270 --step 2
+```
+
+Only the probe joint moves (clamped to `SAFE_LIMITS`); it parks on exit. A
+`PASS` means the model predicted the collision early (conservative = good); a
+`FAIL` means it flagged late or missed it — increase `--margin` or re-check the
+involved joint's calibration.
 
 ---
 

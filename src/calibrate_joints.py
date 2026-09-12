@@ -100,7 +100,7 @@ _PROBE_PLAN = {
     constants.RT_ELBOW_TILT: {
         "low": 5, "high": 90,
         "expect_increase": "elbow FLEXES (bends, forearm toward upper arm)",
-        "zero_landmark_deg": 5,
+        "zero_landmark_deg": 2,
         "zero_landmark_desc": "elbow straight (arm fully extended)",
     },
 }

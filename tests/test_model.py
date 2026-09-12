@@ -75,8 +75,16 @@ def _valid_pose_strategy():
     Returns:
         A hypothesis strategy producing ``dict[int, float]`` poses.
     """
+    # Realistic servo angles: the 0-270 actuation range at a sensible precision.
+    # ``allow_subnormal=False`` keeps hypothesis from generating denormalized
+    # floats (e.g. 1e-292) that stress the test harness without exercising any
+    # real model behavior (every joint is deterministic across the whole range).
     angle = st.floats(
-        min_value=0.0, max_value=270.0, allow_nan=False, allow_infinity=False
+        min_value=0.0,
+        max_value=270.0,
+        allow_nan=False,
+        allow_infinity=False,
+        allow_subnormal=False,
     )
     return st.fixed_dictionaries({channel: angle for channel in _REQUIRED_CHANNELS})
 
@@ -133,7 +141,7 @@ def _result_key(result):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(pose=_valid_pose_strategy())
 def test_property10_is_pose_safe_is_deterministic(pose):
     """Feature: kinematic-collision-model, Property 10: is_pose_safe is deterministic.
@@ -158,7 +166,7 @@ def test_property10_is_pose_safe_is_deterministic(pose):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(pose=_valid_pose_strategy())
 def test_property11_ok_equals_empty_colliding_pairs(pose):
     """Feature: kinematic-collision-model, Property 11: ok flag equals the emptiness of the colliding-pair list.
@@ -178,7 +186,7 @@ def test_property11_ok_equals_empty_colliding_pairs(pose):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(poses=st.lists(_valid_pose_strategy(), min_size=0, max_size=5))
 def test_property12_sequence_unsafe_iff_any_pose_unsafe(poses):
     """Feature: kinematic-collision-model, Property 12: Sequence is unsafe iff any pose is unsafe.

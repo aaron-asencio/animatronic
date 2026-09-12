@@ -111,8 +111,8 @@ SAFE_LIMITS = {
     NECK_PAN:            (5, 175),    # left-right head rotation: 90=center, ~85 deg each way (natural neck range)
     NECK_TILT:           (30, 160),   # up-down: 90=level, higher=chin down (160=chin-to-chest stop), lower=head up
     RT_SHOULDER_ROTATOR: (0, 270),    # raise/lower whole arm: 0=arm at side, 270=arm ~170deg up (nearly straight up); increase=arm up. Electrical 0-270 maps to a ~170deg physical arc (gearing), which limits over-rotation and mitigates most shoulder tilt+rotator collision risk.
-    RT_SHOULDER_TILT:    (55, 245),   # shoulder raise/lower: increase=raise arm from side (abduction), decrease=toward body (adduction); 135=arm straight out. Below ~45 risks body collision (depends on RT_SHOULDER_ROTATOR) — min 55 stays clear.
-    RT_ELBOW_TILT:       (5, 5),      # elbow bend — LOCKED at 5 (straight). Landmarks: 5=straight, 145=right angle, 210=full flexion. Range clamped to straight until the 3D collision model exists (flexion is only collision-safe near straight, given shoulder positions).
+    RT_SHOULDER_TILT:    (45, 270),   # shoulder raise/lower: increase=raise arm from side (abduction), decrease=toward body (adduction); 135=arm straight out. Below ~45 risks body collision (depends on RT_SHOULDER_ROTATOR) — min 55 stays clear.
+    RT_ELBOW_TILT:       (0, 90),     # elbow bend — TEMPORARILY widened to 0-90 for calibration/collision testing (was locked at 5=straight). Landmarks: 5=straight, 145=right angle, 210=full flexion. NOTE: elbow flexion is only collision-safe in certain shoulder positions — keep the arm clear of the body while testing this range.
     RT_ELBOW_ROTATOR:    (0, 270),    # forearm rotate (twist): 150=hand parallel to side, 270=palm up, 0=palm down. Full range — low collision risk.
 }
 

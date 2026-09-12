@@ -3,36 +3,36 @@
     "servo_channel": 0,
     "sign": 1.0,
     "offset_deg": 90.0,
-    "scale": 1.0
+    "scale": 0.6176
   },
   "pitch_neck_joint": {
     "servo_channel": 1,
     "sign": 1.0,
-    "offset_deg": 90.0,
-    "scale": 1.0
+    "offset_deg": 100.0,
+    "scale": 0.25
   },
   "shoulder_yaw_joint": {
     "servo_channel": 6,
-    "sign": 1.0,
-    "offset_deg": 135.0,
-    "scale": 1.0
+    "sign": -1.0,
+    "offset_deg": 297.65,
+    "scale": 0.7305
   },
   "shoulder_pitch_joint": {
     "servo_channel": 7,
     "sign": 1.0,
     "offset_deg": 0.0,
-    "scale": 0.6296
+    "scale": 0.5
   },
   "elbow_yaw_joint": {
     "servo_channel": 4,
     "sign": 1.0,
     "offset_deg": 150.0,
-    "scale": 1.0
+    "scale": 0.5
   },
   "elbow_pitch_joint": {
     "servo_channel": 5,
     "sign": 1.0,
-    "offset_deg": 5.0,
-    "scale": 1.0
+    "offset_deg": 0.0,
+    "scale": 0.5294
   }
 }
