@@ -86,7 +86,9 @@ _PROBE_PLAN = {
         "zero_landmark_desc": "arm straight out horizontally from the side",
     },
     constants.RT_SHOULDER_ROTATOR: {
-        "low": 20, "high": 120,
+        # Full 0->270 sweep so the geared physical arc (~170 deg) is measured in
+        # one pass for an accurate scale, rather than a partial 100 deg sweep.
+        "low": 0, "high": 270,
         "expect_increase": "arm moves UP (away from the side)",
         "zero_landmark_deg": 0,
         "zero_landmark_desc": "arm resting at the side of the body",
