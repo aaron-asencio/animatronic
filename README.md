@@ -281,7 +281,28 @@ sudo PYTHONPATH=src .venv/bin/python -m probe_collision \
 Only the probe joint moves (clamped to `SAFE_LIMITS`); it parks on exit. A
 `PASS` means the model predicted the collision early (conservative = good); a
 `FAIL` means it flagged late or missed it — increase `--margin` or re-check the
-involved joint's calibration.
+involved joint's calibration. If `--toward` is beyond the joint's `SAFE_LIMITS`,
+the sweep stops at the limit and prints a one-line NOTE (no clamp spam).
+
+#### Discovering real limits (supervised, drives past SAFE_LIMITS)
+
+Per-axis `SAFE_LIMITS` were set conservatively before the model existed, so they
+may cost range of motion. To find where a joint *actually* collides, `--allow-
+beyond-safe MIN MAX` lets the probe drive past `SAFE_LIMITS` within MIN..MAX
+(still clamped to the 0–270 electrical range). **This can drive a joint into the
+body on purpose** — it requires typing `YES` to arm, tags every step that is
+`[BEYOND SAFE_LIMITS]`, and you remain the safety stop (`c` = contact, `q` =
+abort, hand on the power).
+
+```bash
+# find where shoulder tilt actually contacts the body below the current floor:
+sudo PYTHONPATH=src .venv/bin/python -m probe_collision \
+  --base '{"0":90,"1":90,"4":150,"5":5,"6":55,"7":0}' \
+  --probe-channel 6 --toward 20 --step 2 --allow-beyond-safe 20 170
+```
+
+Once you find the true contact angle, set that joint's `SAFE_LIMITS` in
+`constants.py` to just inside it.
 
 ---
 

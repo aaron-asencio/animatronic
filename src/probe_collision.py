@@ -63,6 +63,75 @@ _DEFAULT_LOG = "src/config/probe_disagreements.log"
 _DEFAULT_STEP_DEG = 2
 _SUBSTEP_DELAY = 0.02
 
+# Servo electrical actuation range. Even in --allow-beyond-safe mode we NEVER
+# drive outside this: the override only relaxes SAFE_LIMITS, not the hardware's
+# physical 0-270 range (past which the servo stalls against a stop).
+_SERVO_MIN = 0
+_SERVO_MAX = 270
+
+
+def _effective_clamp(controller, channel, angle, override_range):
+    """Clamps an angle to the override window if given, else to SAFE_LIMITS.
+
+    When ``override_range`` is provided the angle is clamped to that window
+    (intersected with the servo electrical range 0-270), deliberately allowing
+    travel BEYOND ``SAFE_LIMITS`` for supervised boundary discovery. When it is
+    None this is exactly ``controller.clamp_angle`` (SAFE_LIMITS).
+
+    Args:
+        controller: The ``TrunkController`` (for its SAFE_LIMITS clamp).
+        channel: PCA9685 channel number.
+        angle: Requested angle in degrees.
+        override_range: Optional ``(min_deg, max_deg)`` override window, or None.
+
+    Returns:
+        The clamped angle.
+    """
+    if override_range is None:
+        return controller.clamp_angle(channel, angle)
+    lo = max(_SERVO_MIN, min(override_range))
+    hi = min(_SERVO_MAX, max(override_range))
+    return max(lo, min(hi, angle))
+
+
+def _write_angle(controller, channel, angle, override_range):
+    """Writes one servo angle, honoring the override window if present.
+
+    In normal mode this defers to ``controller.set_angle`` (which clamps to
+    SAFE_LIMITS). In override mode it writes directly to the servo after
+    clamping to the override window and the electrical range -- the ONLY place
+    that intentionally bypasses SAFE_LIMITS, and only under the operator's
+    typed confirmation in :func:`run`.
+
+    Args:
+        controller: The ``TrunkController``.
+        channel: PCA9685 channel number.
+        angle: Requested angle in degrees.
+        override_range: Optional ``(min_deg, max_deg)`` override window, or None.
+
+    Returns:
+        The angle actually written.
+    """
+    if override_range is None:
+        return controller.set_angle(channel, angle)
+    safe = _effective_clamp(controller, channel, angle, override_range)
+    controller.kit.servo[channel].angle = safe
+    return safe
+
+
+def _beyond_safe(channel, angle):
+    """Returns whether an angle is outside the channel's normal SAFE_LIMITS.
+
+    Args:
+        channel: PCA9685 channel number.
+        angle: Angle in degrees.
+
+    Returns:
+        True if the angle is below the SAFE_LIMITS min or above its max.
+    """
+    lo, hi = constants.SAFE_LIMITS.get(channel, (_SERVO_MIN, _SERVO_MAX))
+    return angle < lo or angle > hi
+
 
 def _parse_base_pose(raw):
     """Parses the base-pose JSON (channel string -> degrees) into int channels.
@@ -136,20 +205,28 @@ def _prompt_step(name, angle):
         print("      please press Enter, or type 'c' or 'q'")
 
 
-def _probe_angles(start, toward, step_deg):
+def _probe_angles(controller, channel, start, toward, step_deg, override_range):
     """Builds the ordered list of probe servo angles from start toward a target.
 
+    Endpoints are clamped to the effective range (SAFE_LIMITS, or the override
+    window when given) so the probe never generates steps it cannot actually
+    drive -- which is what previously produced a wall of redundant CLAMPED
+    lines when ``--toward`` ran past SAFE_LIMITS.
+
     Args:
+        controller: The ``TrunkController`` (for clamping).
+        channel: PCA9685 channel number.
         start: Starting servo angle (from the base pose).
         toward: Target servo angle to approach.
         step_deg: Positive step magnitude in degrees.
+        override_range: Optional ``(min_deg, max_deg)`` override window, or None.
 
     Returns:
-        A list of integer angles from ``start`` to ``toward`` inclusive, moving
-        in ``step_deg`` increments (direction inferred from start vs toward).
+        A list of integer angles from the clamped start to the clamped target
+        inclusive, in ``step_deg`` increments (direction inferred).
     """
-    start = int(round(start))
-    toward = int(round(toward))
+    start = int(round(_effective_clamp(controller, channel, start, override_range)))
+    toward = int(round(_effective_clamp(controller, channel, toward, override_range)))
     if toward == start:
         return [start]
     direction = 1 if toward > start else -1
@@ -158,7 +235,7 @@ def _probe_angles(start, toward, step_deg):
     return angles
 
 
-async def _move_to(controller, channel, target, delay):
+async def _move_to(controller, channel, target, delay, override_range=None):
     """Moves one servo to ``target`` one degree at a time (clamped).
 
     Args:
@@ -166,21 +243,24 @@ async def _move_to(controller, channel, target, delay):
         channel: PCA9685 channel to move.
         target: Desired servo angle in degrees.
         delay: Seconds between one-degree steps.
+        override_range: Optional ``(min_deg, max_deg)`` window allowing travel
+            beyond SAFE_LIMITS (still clamped to the 0-270 electrical range).
+            None uses the normal SAFE_LIMITS clamp.
     """
     current = controller.kit.servo[channel].angle
-    target = int(round(controller.clamp_angle(channel, target)))
+    target = int(round(_effective_clamp(controller, channel, target, override_range)))
     if current is None:
-        controller.set_angle(channel, target)
+        _write_angle(controller, channel, target, override_range)
         return
     current = int(round(current))
     step = 1 if target >= current else -1
     for angle in range(current, target + step, step):
-        controller.set_angle(channel, angle)
+        _write_angle(controller, channel, angle, override_range)
         await asyncio.sleep(delay)
 
 
 async def run(base_pose, probe_channel, toward, step_deg, calibration_path,
-              urdf_path, margin, log_path):
+              urdf_path, margin, log_path, override_range=None):
     """Runs the interactive boundary probe for one joint.
 
     Args:
@@ -192,6 +272,10 @@ async def run(base_pose, probe_channel, toward, step_deg, calibration_path,
         urdf_path: Path to the URDF.
         margin: Proxy inflation margin (meters); None uses the model default.
         log_path: Where to append model/reality disagreements.
+        override_range: Optional ``(min_deg, max_deg)`` window that lets the
+            probe joint travel BEYOND its SAFE_LIMITS (still clamped to the
+            0-270 electrical range) for supervised boundary discovery. Requires
+            a typed confirmation below before any motion. None = normal mode.
     """
     # Imported here so a --dry-run that set SERVO_SIM=1 takes effect before the
     # ServoKit is constructed at import time.
@@ -211,21 +295,60 @@ async def run(base_pose, probe_channel, toward, step_deg, calibration_path,
         raise ValueError(
             f"probe channel {probe_channel} ({name}) must be in the base pose"
         )
+
+    # Warn if --toward runs past the effective range (the annoyance fix): the
+    # sweep will stop at the clamp, so say so once instead of spamming CLAMPED.
+    safe_lo, safe_hi = constants.SAFE_LIMITS.get(probe_channel, (_SERVO_MIN, _SERVO_MAX))
+    clamped_toward = _effective_clamp(controller=None, channel=probe_channel,
+                                      angle=int(round(toward)),
+                                      override_range=override_range) if override_range \
+        else max(safe_lo, min(safe_hi, int(round(toward))))
+    if clamped_toward != int(round(toward)):
+        if override_range is None:
+            print(f"NOTE: --toward {int(toward)} is outside {name} SAFE_LIMITS "
+                  f"{(safe_lo, safe_hi)}; the sweep will stop at {clamped_toward}. "
+                  f"Use --allow-beyond-safe MIN MAX to probe past the limit.")
+        else:
+            print(f"NOTE: --toward {int(toward)} is outside the override window "
+                  f"{override_range}; the sweep will stop at {clamped_toward}.")
+
     start_angle = base_pose[probe_channel]
-    angles = _probe_angles(start_angle, toward, step_deg)
+
+    controller = TrunkController("boundary-probe")
+
+    angles = _probe_angles(controller, probe_channel, start_angle, toward,
+                           step_deg, override_range)
 
     print(f"Boundary probe: {name} (ch {probe_channel}) from {int(start_angle)} "
-          f"-> {int(toward)} deg in ~{step_deg} deg steps ({len(angles)} steps).")
+          f"-> {angles[-1]} deg in ~{step_deg} deg steps ({len(angles)} steps).")
     print("Base pose (other joints held):")
     for ch, deg in sorted(base_pose.items()):
         tag = "  <-- probing" if ch == probe_channel else ""
         print(f"    ch{ch} {_channel_name(ch):20s} = {deg}{tag}")
-    print("\nSAFETY: only this joint moves; every write is clamped to SAFE_LIMITS.")
-    print("At each step the MODEL verdict is shown BEFORE the move. Press 'c' the")
-    print("instant parts touch, 'q' to abort. The joint parks on exit.\n")
-    input("Press Enter to begin...")
 
-    controller = TrunkController("boundary-probe")
+    if override_range is None:
+        print("\nSAFETY: only this joint moves; every write is clamped to SAFE_LIMITS.")
+        print("At each step the MODEL verdict is shown BEFORE the move. Press 'c' the")
+        print("instant parts touch, 'q' to abort. The joint parks on exit.\n")
+        input("Press Enter to begin...")
+    else:
+        # Supervised limit-override: loud warning + typed confirmation. This is
+        # the ONLY mode that can drive a joint into the body, on purpose, to find
+        # the true collision boundary.
+        print("\n" + "!" * 68)
+        print(f"DANGER: --allow-beyond-safe is ON for {name}.")
+        print(f"  Normal SAFE_LIMITS: {(safe_lo, safe_hi)}")
+        print(f"  Override window:    {tuple(override_range)} (clamped to 0-270)")
+        print("  This CAN drive the joint past its safe limit and into the body.")
+        print("  It moves in small steps and shows the model verdict first, but YOU")
+        print("  are the safety stop: press 'c' the instant parts touch, 'q' to abort,")
+        print("  and keep a hand on the power. The joint parks on exit.")
+        print("!" * 68)
+        confirm = input('Type "YES" (all caps) to arm override mode, anything else cancels: ').strip()
+        if confirm != "YES":
+            print("[probe] override not confirmed; aborting without moving.")
+            return
+        print()
 
     first_collision_index = None   # step where the MODEL first says COLLISION
     contact_index = None           # step where YOU report physical contact
@@ -233,8 +356,11 @@ async def run(base_pose, probe_channel, toward, step_deg, calibration_path,
 
     try:
         # Establish the full base pose on the hardware first (gentle moves).
+        # Base joints always respect SAFE_LIMITS; only the probe joint may use
+        # the override window.
         for ch, deg in base_pose.items():
-            await _move_to(controller, ch, deg, _SUBSTEP_DELAY)
+            ov = override_range if ch == probe_channel else None
+            await _move_to(controller, ch, deg, _SUBSTEP_DELAY, ov)
 
         for index, angle in enumerate(angles):
             pose = dict(base_pose)
@@ -246,13 +372,15 @@ async def run(base_pose, probe_channel, toward, step_deg, calibration_path,
                 break
 
             verdict = _verdict_line(result)
-            print(f"  step {index:2d}: {name}={angle:>3} deg -> MODEL {verdict}")
+            danger = "  [BEYOND SAFE_LIMITS]" if _beyond_safe(probe_channel, angle) else ""
+            print(f"  step {index:2d}: {name}={angle:>3} deg -> MODEL {verdict}{danger}")
             if not result.ok and first_collision_index is None:
                 first_collision_index = index
                 print(f"    ^ model FIRST flags a collision at step {index}.")
 
-            # Move the probe joint to this step's angle.
-            await _move_to(controller, probe_channel, angle, _SUBSTEP_DELAY)
+            # Move the probe joint to this step's angle (override window applies
+            # only to the probe joint).
+            await _move_to(controller, probe_channel, angle, _SUBSTEP_DELAY, override_range)
 
             choice = _prompt_step(name, angle)
             if choice == "contact":
@@ -268,7 +396,8 @@ async def run(base_pose, probe_channel, toward, step_deg, calibration_path,
         print("\n[probe] interrupted.")
     finally:
         try:
-            await _move_to(controller, probe_channel, start_angle, _SUBSTEP_DELAY)
+            await _move_to(controller, probe_channel, start_angle, _SUBSTEP_DELAY,
+                           override_range)
             print(f"[probe] returned {name} to its start ({int(start_angle)} deg).")
         except Exception as error:  # noqa: BLE001 - never mask the run outcome
             print(f"[probe] warning: could not park {name}: {error}")
@@ -400,12 +529,22 @@ def main(argv=None):
         "--dry-run", action="store_true",
         help="Force simulation (no hardware writes). Same as SERVO_SIM=1.",
     )
+    parser.add_argument(
+        "--allow-beyond-safe", type=float, nargs=2, metavar=("MIN", "MAX"),
+        default=None,
+        help=(
+            "DANGER: let the probe joint travel beyond its SAFE_LIMITS within "
+            "MIN..MAX (still clamped to 0-270) to find the true collision "
+            "boundary. Requires a typed YES confirmation and supervision."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.dry_run:
         os.environ["SERVO_SIM"] = "1"
 
     base_pose = _parse_base_pose(args.base)
+    override_range = tuple(args.allow_beyond_safe) if args.allow_beyond_safe else None
 
     asyncio.run(
         run(
@@ -417,6 +556,7 @@ def main(argv=None):
             urdf_path=args.urdf,
             margin=args.margin,
             log_path=args.log,
+            override_range=override_range,
         )
     )
     return 0
