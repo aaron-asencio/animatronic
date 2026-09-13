@@ -32,9 +32,10 @@ _URDF_PATH = os.path.abspath(
 )
 
 # A known-safe rest pose and a known elbow-flexed colliding pose (channel 5 =
-# RT_ELBOW_TILT bent to 145 degrees, a right-angle flexion).
+# elbow fully flexed (servo 160) at rest, which folds the hand back to the
+# shoulder -- a genuine self-collision (hand_link <-> shoulder_link).
 _REST_POSE = {"0": 90, "1": 90, "4": 150, "5": 5, "6": 55, "7": 0}
-_COLLISION_POSE = {"0": 90, "1": 90, "4": 150, "5": 145, "6": 55, "7": 0}
+_COLLISION_POSE = {"0": 90, "1": 90, "4": 150, "5": 160, "6": 55, "7": 0}
 
 
 def _base_argv(tmp_path):
@@ -77,8 +78,9 @@ def test_known_collision_prints_pair_and_joints(tmp_path, capsys):
         (line for line in out.splitlines() if line.startswith("COLLISION:")), None
     )
     assert verdict is not None
-    assert "upper_arm_link" in verdict
-    assert "lower_arm_link" in verdict
+    # The fully-flexed elbow folds the hand back onto the shoulder.
+    assert "hand_link" in verdict
+    assert "shoulder_link" in verdict
     # The offending joints must include one of the elbow servos.
     assert "RT_ELBOW_TILT" in verdict or "RT_ELBOW_ROTATOR" in verdict
 

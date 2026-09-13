@@ -32,7 +32,7 @@
   "elbow_pitch_joint": {
     "servo_channel": 5,
     "sign": 1.0,
-    "offset_deg": 0.0,
-    "scale": 0.5294
+    "offset_deg": 5.0,
+    "scale": 0.6429
   }
 }

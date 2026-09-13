@@ -61,9 +61,10 @@ _MODEL = CollisionModel(
 # The six required servo channels the model validates on every pose.
 _REQUIRED_CHANNELS = (0, 1, 4, 5, 6, 7)
 
-# Known example poses (channel -> angle in degrees).
+# Known example poses (channel -> angle in degrees). The collision pose flexes
+# the elbow fully (servo 160), folding the hand back onto the shoulder.
 _REST_POSE = {0: 90, 1: 90, 4: 150, 5: 5, 6: 55, 7: 0}
-_COLLISION_POSE = {0: 90, 1: 90, 4: 150, 5: 145, 6: 55, 7: 0}
+_COLLISION_POSE = {0: 90, 1: 90, 4: 150, 5: 160, 6: 55, 7: 0}
 
 
 def _valid_pose_strategy():
@@ -223,24 +224,26 @@ def test_rest_pose_is_safe():
 
 
 def test_elbow_flexed_pose_collides_on_arm_pair():
-    """Requirements 5.5, 6.2/6.3: an elbow-flexed pose collides on the arm pair.
+    """Requirements 5.5, 6.2/6.3: a fully-flexed elbow folds the hand into the body.
 
-    The elbow-flexed pose ({5: 145}) drives the lower arm into the upper arm.
-    The result must be COLLISION with at least one pair, some pair must involve
-    the upper/lower arm links, and the elbow servos must appear among the
-    offending joints across the reported pairs.
+    At full elbow flexion (servo 160) the forearm+hand fold back until the hand
+    reaches the shoulder. The result must be COLLISION with at least one pair,
+    some pair must involve the hand and an upper-arm/shoulder link, and the
+    elbow servos must appear among the offending joints.
     """
     result = _MODEL.is_pose_safe(_COLLISION_POSE)
 
     assert result.ok is False
     assert len(result.colliding_pairs) >= 1
 
-    # Some reported pair involves both the upper and lower arm links.
-    arm_pair_reported = any(
-        {pair.link_a, pair.link_b} == {"upper_arm_link", "lower_arm_link"}
+    # Some reported pair involves the hand folding back onto the shoulder /
+    # upper arm.
+    hand_into_body = any(
+        "hand_link" in {pair.link_a, pair.link_b}
+        and {pair.link_a, pair.link_b} & {"shoulder_link", "upper_arm_link"}
         for pair in result.colliding_pairs
     )
-    assert arm_pair_reported
+    assert hand_into_body
 
     # The elbow servos appear among the offending joints across all pairs.
     servo_names = {

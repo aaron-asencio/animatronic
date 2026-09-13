@@ -147,6 +147,8 @@ class Kinematics_Engine:
     # (pitch_neck_joint); it cannot self-collide in a damaging way, so all of its
     # internal pairs are exempt regardless of vertical spacing.
     SELF_COLLISION_EXEMPT_GROUPS = [
+        # Neck column: base + the three neck links + head. A coaxial stacked
+        # assembly driven only by the neck-tilt joint; cannot self-collide.
         frozenset(
             {
                 "base_link",
@@ -155,7 +157,22 @@ class Kinematics_Engine:
                 "upper_neck_link",
                 "head_link",
             }
-        )
+        ),
+        # Arm segment cluster: upper arm + elbow bracket + forearm. These three
+        # are chained through the elbow (elbow_yaw + elbow_pitch about a
+        # zero-length elbow_link), so when the elbow is near-straight the upper
+        # arm and forearm are nearly collinear and their capsule axes sit ~0
+        # apart -- which the analytic distance reads as an intersection even
+        # though a real elbow physically cannot fold the forearm back through
+        # the upper arm. Exempt these segments from colliding WITH EACH OTHER
+        # only; each still collides normally against the torso, head, and neck.
+        frozenset(
+            {
+                "upper_arm_link",
+                "elbow_link",
+                "lower_arm_link",
+            }
+        ),
     ]
 
     def __init__(self, urdf_path):
