@@ -112,13 +112,14 @@
 
   <link name="head_link">
     <visual>
+      <!-- Head modeled as an oriented box (better than a sphere for an oval
+           head): x=0.08 front-back depth, y=0.18 ear-to-ear width, z=0.105
+           height. Head center is at world z=0.48; the head_link origin is at
+           z=0.505, so the box visual sits 0.025 below the link origin. -->
       <geometry>
-        <sphere radius="0.105"/>
+        <box size="0.08 0.18 0.105"/>
       </geometry>
-      <!-- Need package to use mesh -->
-      <!-- <geometry>
-      <mesh filename="/mnt/c/users/aaro2215/workspace/ros2/meshes/skull.stl" scale="1 1 1"/>
-    </geometry> -->
+      <origin xyz="0 0 -0.025" rpy="0 0 0"/>
       <material name="white"/>
    </visual>
   </link>
