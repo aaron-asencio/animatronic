@@ -112,7 +112,7 @@ SAFE_LIMITS = {
     NECK_TILT:           (30, 160),   # up-down: 90=level, higher=chin down (160=chin-to-chest stop), lower=head up
     RT_SHOULDER_ROTATOR: (0, 270),    # raise/lower whole arm: 0=arm at side, 270=arm ~170deg up (nearly straight up); increase=arm up. Electrical 0-270 maps to a ~170deg physical arc (gearing), which limits over-rotation and mitigates most shoulder tilt+rotator collision risk.
     RT_SHOULDER_TILT:    (45, 270),   # shoulder raise/lower: increase=raise arm from side (abduction), decrease=toward body (adduction); 135=arm straight out. Below ~45 risks body collision (depends on RT_SHOULDER_ROTATOR) — min 55 stays clear.
-    RT_ELBOW_TILT:       (0, 90),     # elbow bend — TEMPORARILY widened to 0-90 for calibration/collision testing (was locked at 5=straight). Landmarks: 5=straight, 145=right angle, 210=full flexion. NOTE: elbow flexion is only collision-safe in certain shoulder positions — keep the arm clear of the body while testing this range.
+    RT_ELBOW_TILT:       (0, 160),     # elbow bend — TEMPORARILY widened to 0-90 for calibration/collision testing (was locked at 5=straight). Landmarks: 5=straight, 145=right angle, 210=full flexion. NOTE: elbow flexion is only collision-safe in certain shoulder positions — keep the arm clear of the body while testing this range.
     RT_ELBOW_ROTATOR:    (0, 270),    # forearm rotate (twist): 150=hand parallel to side, 270=palm up, 0=palm down. Full range — low collision risk.
 }
 
@@ -127,3 +127,29 @@ REST_POSITIONS = {
     RT_ELBOW_TILT:       5,    # elbow straight (within locked (5,5) range)
     RT_ELBOW_ROTATOR:    150,  # forearm neutral — hand parallel to side
 }
+
+
+# --------------------------------------------------------------------------- #
+# FORBIDDEN JOINT COMBINATIONS — multi-axis collisions the 3D model can't see  #
+# --------------------------------------------------------------------------- #
+#
+# The kinematic collision model is a DECOUPLED per-joint approximation, so it
+# loses accuracy at the far extremes of the coupled shoulder (tilt + rotator).
+# The one empirically-confirmed collision it under-predicts there is the
+# HAND-TO-FACE fold: at full elbow flexion with the shoulder rotated up, the
+# curled hand reaches the head. These rules are a conservative hard guard for
+# exactly those measured danger zones — the CollisionModel flags any pose that
+# matches a rule as unsafe, in addition to its geometric detection.
+#
+# Each rule: a human-readable reason + a dict of {channel: (min_deg, max_deg)}.
+# A pose MATCHES (is unsafe) when EVERY listed channel is within its inclusive
+# range. Tune the bounds as you discover more of the contact envelope.
+FORBIDDEN_COMBINATIONS = [
+    {
+        "reason": "hand-to-face: full elbow flexion + shoulder rotated up brings the curled hand into the head",
+        "ranges": {
+            RT_ELBOW_TILT:       (150, 270),  # near/at full flexion
+            RT_SHOULDER_ROTATOR: (210, 270),  # arm rotated up toward the head
+        },
+    },
+]

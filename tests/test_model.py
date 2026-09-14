@@ -350,3 +350,27 @@ def test_kinematics_package_imports_no_hardware_libraries():
                     assert not pattern.match(line), (
                         f"forbidden hardware import in {source_path}: {line.strip()}"
                     )
+
+
+def test_forbidden_combination_flags_hand_to_face():
+    """The forbidden-combination guard flags the measured hand-to-face danger zone.
+
+    A decoupled per-joint model under-predicts the hand-to-face fold (full elbow
+    flexion + shoulder rotated up), so constants.FORBIDDEN_COMBINATIONS adds a
+    hard guard. A matching pose must be COLLISION and name the elbow-tilt and
+    shoulder-rotator servos; a pose that flexes the elbow but keeps the rotator
+    low must remain SAFE (only the combination is guarded, not flexion itself).
+    """
+    # Full elbow flexion + shoulder rotated up -> guarded unsafe.
+    hand_to_face = {0: 90, 1: 90, 4: 150, 5: 160, 6: 45, 7: 270}
+    result = _MODEL.is_pose_safe(hand_to_face)
+    assert result.ok is False
+    servo_names = {
+        j.servo_name for p in result.colliding_pairs for j in p.offending_joints
+    }
+    assert {"RT_ELBOW_TILT", "RT_SHOULDER_ROTATOR"} <= servo_names
+
+    # Elbow flexed (near a right angle) with the arm out and the rotator NOT in
+    # the guarded range -> the guard does not fire, and the geometry is clear.
+    flex_not_combination = {0: 90, 1: 90, 4: 150, 5: 145, 6: 170, 7: 90}
+    assert _MODEL.is_pose_safe(flex_not_combination).ok is True
