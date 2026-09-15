@@ -19,7 +19,7 @@ import time
 
 from gpiozero import LED
 
-from model.constants import EYE_LIGHT_PIN
+from constants import EYE_LIGHT_PIN
 
 
 def flash_eyes(count, on_time, off_time):

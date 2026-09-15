@@ -3,7 +3,6 @@ from concurrent.futures import ThreadPoolExecutor
 from time import sleep, perf_counter
 from model.bodyparts import BodyParts
 from model.bodypart import BodyPart
-import model.constants
 
 
 class FacePalmAction:

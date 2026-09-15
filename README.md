@@ -170,6 +170,142 @@ sudo .venv/bin/python3 src/concurrentMovements.py
 
 ---
 
+## Kinematic collision model (offline authoring aid)
+
+`src/kinematics/` is a hardware-free 3D model that predicts self-collisions for
+a pose *before* you drive it to the servos. It runs anywhere (no Pi, no
+hardware libraries) and is meant for authoring gestures safely.
+
+A pose is a JSON object mapping servo channel to degrees, e.g. the rest pose
+`{"0":90,"1":90,"4":150,"5":5,"6":55,"7":0}`.
+
+### Check a pose (text verdict)
+
+```bash
+PYTHONPATH=src .venv/bin/python -m kinematics.cli \
+  --pose '{"0":90,"1":90,"4":150,"5":145,"6":55,"7":0}'
+```
+
+Prints `SAFE`, or `COLLISION: <link_a> <-> <link_b> (joints: ...)` per pose.
+Exit code is non-zero if any pose collides. Use `--sequence poses.json` for a
+list of poses, and `--margin 0.005` to override the safety inflation (meters).
+
+### View the 3D model
+
+Interactive window (needs a display + a viewer backend such as `pyglet`):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m kinematics.cli --pose '{...}' --preview
+```
+
+Headless (Raspberry Pi over SSH): there is no display, so render to an image
+file instead. This uses matplotlib's offscreen `Agg` backend and needs no
+display, X-forwarding, or `pyglet`:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m kinematics.cli \
+  --pose '{"0":90,"1":90,"4":150,"5":145,"6":55,"7":0}' \
+  --preview-out preview.png
+```
+
+Then open `preview.png`. Colliding links are drawn red, the rest of the robot
+gray. By default the image is a 4-view panel (front, side, top, and a 3/4
+perspective) with the verdict and offending joints in the title, so a collision
+reads clearly without an interactive window. Add `--single-view` for one 3/4
+view. For a sequence, `preview.png` becomes `preview_1.png`, `preview_2.png`,
+etc.
+
+The interactive `--preview` window uses trimesh's viewer when `pyglet` is
+installed, otherwise a matplotlib 3D window; both draw the full gray body plus
+red collision highlights.
+
+> Note: all per-joint calibration values in `src/config/calibration.json` are
+> provisional seeds pending hardware validation (see below).
+
+### Calibrating the model against the robot
+
+The model's predictions are only as good as `src/config/calibration.json`,
+whose `sign` / `offset_deg` / `scale` per joint start as **unverified seeds**.
+`calibrate_joints.py` is an interactive harness that confirms and corrects them
+by driving one joint at a time and asking what you observed, then writing the
+results back into the JSON (with a timestamped backup).
+
+Always dry-run first (logs every angle, moves nothing):
+
+```bash
+SERVO_SIM=1 PYTHONPATH=src .venv/bin/python -m calibrate_joints --dry-run
+```
+
+Then calibrate on hardware (root for GPIO/I2C). It moves one joint at a time,
+clamped to `SAFE_LIMITS`, and parks servos on exit:
+
+```bash
+sudo PYTHONPATH=src .venv/bin/python -m calibrate_joints
+# or a subset, by servo channel:
+sudo PYTHONPATH=src .venv/bin/python -m calibrate_joints --channels 6 4
+# sign + offset only (skip the arc-measurement step):
+sudo PYTHONPATH=src .venv/bin/python -m calibrate_joints --no-scale
+```
+
+For each joint it checks **direction** (does it move the way the model expects?
+flips `sign` if reversed), **offset** (which servo angle is the zero-landmark),
+and **scale** (measured physical arc ÷ commanded degrees). After writing, re-run
+a known SAFE pose through the CLI to sanity-check. A joint locked to a single
+angle in `SAFE_LIMITS` (e.g. `RT_ELBOW_TILT` when locked straight) can't have
+its arc measured until that range is temporarily widened.
+
+### Validating collision predictions (boundary probe)
+
+Once calibrated, `probe_collision.py` confirms the model flags a collision **at
+or before** parts physically touch. You give it a base pose and one joint to
+step toward a suspected collision; at each step it shows the model verdict
+*before* moving, then you press `c` the instant parts touch (or `q` to abort).
+It reports whether the model flagged before contact and logs any disagreement.
+
+Dry-run to rehearse (no motion):
+
+```bash
+SERVO_SIM=1 PYTHONPATH=src .venv/bin/python -m probe_collision \
+  --base '{"0":90,"1":90,"4":150,"5":5,"6":170,"7":0}' \
+  --probe-channel 7 --toward 270 --dry-run
+```
+
+Then on hardware (root; keep a hand on the power):
+
+```bash
+sudo PYTHONPATH=src .venv/bin/python -m probe_collision \
+  --base '{"0":90,"1":90,"4":150,"5":5,"6":170,"7":0}' \
+  --probe-channel 7 --toward 270 --step 2
+```
+
+Only the probe joint moves (clamped to `SAFE_LIMITS`); it parks on exit. A
+`PASS` means the model predicted the collision early (conservative = good); a
+`FAIL` means it flagged late or missed it — increase `--margin` or re-check the
+involved joint's calibration. If `--toward` is beyond the joint's `SAFE_LIMITS`,
+the sweep stops at the limit and prints a one-line NOTE (no clamp spam).
+
+#### Discovering real limits (supervised, drives past SAFE_LIMITS)
+
+Per-axis `SAFE_LIMITS` were set conservatively before the model existed, so they
+may cost range of motion. To find where a joint *actually* collides, `--allow-
+beyond-safe MIN MAX` lets the probe drive past `SAFE_LIMITS` within MIN..MAX
+(still clamped to the 0–270 electrical range). **This can drive a joint into the
+body on purpose** — it requires typing `YES` to arm, tags every step that is
+`[BEYOND SAFE_LIMITS]`, and you remain the safety stop (`c` = contact, `q` =
+abort, hand on the power).
+
+```bash
+# find where shoulder tilt actually contacts the body below the current floor:
+sudo PYTHONPATH=src .venv/bin/python -m probe_collision \
+  --base '{"0":90,"1":90,"4":150,"5":5,"6":55,"7":0}' \
+  --probe-channel 6 --toward 20 --step 2 --allow-beyond-safe 20 170
+```
+
+Once you find the true contact angle, set that joint's `SAFE_LIMITS` in
+`constants.py` to just inside it.
+
+---
+
 ## Hardware troubleshooting
 
 Quick standalone scripts to verify each piece of hardware in isolation. All

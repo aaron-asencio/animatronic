@@ -10,7 +10,7 @@
     tilt/rotator servo naming — watch this when building the 3D model.
 
       URDF joint            Servo constant          Channel
-      ------------------    --------------------    -------
+      ==================    ====================    =======
       yawl_neck_joint       NECK_PAN                0
       pitch_neck_joint      NECK_TILT               1
       shoulder_yaw_joint    RT_SHOULDER_TILT        6
@@ -112,13 +112,14 @@
 
   <link name="head_link">
     <visual>
+      <!-- Head modeled as an oriented box (better than a sphere for an oval
+           head): x=0.08 front-back depth, y=0.18 ear-to-ear width, z=0.105
+           height. Head center is at world z=0.48; the head_link origin is at
+           z=0.505, so the box visual sits 0.025 below the link origin. -->
       <geometry>
-        <sphere radius="0.105"/>
+        <box size="0.08 0.18 0.105"/>
       </geometry>
-      <!-- Need package to use mesh -->
-      <!-- <geometry>
-      <mesh filename="/mnt/c/users/aaro2215/workspace/ros2/meshes/skull.stl" scale="1 1 1"/>
-    </geometry> -->
+      <origin xyz="0 0 -0.025" rpy="0 0 0"/>
       <material name="white"/>
    </visual>
   </link>
@@ -146,7 +147,7 @@
   <joint name="pitch_neck_joint" type="revolute">
     <parent link="middle_neck_link"/>
     <child link="upper_neck_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <origin xyz="0 0 0.014" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <limit effort="2" velocity="1.0" lower="-0.5" upper="0.5"/>
   </joint>
@@ -167,7 +168,7 @@
   <joint name="lower_neck_joint" type="fixed">
     <parent link="lower_neck_link"/>
     <child link="middle_neck_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <origin xyz="0 0 0.046" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <limit effort="3" velocity="1.0" lower="-1.0" upper="1.0"/>
   </joint>
@@ -196,7 +197,10 @@
   <joint name="shoulder_yaw_joint" type="revolute">
     <parent link="base_link"/>
     <child link="shoulder_link"/>
-    <origin xyz="0.1325 0 0.250" rpy="0 0 0"/>
+    <!-- Shoulder-tilt joint sits 6.5 cm out from the torso edge (torso half-
+         width 0.1325 + 0.065 gap = 0.1975). The rotator servo is flush with
+         the torso; a horn+bracket carries the tilt servo out to here. -->
+    <origin xyz="0.1975 0 0.250" rpy="0 0 0"/>
     <axis xyz="1 0 0"/>
     <limit effort="5" velocity="1.0" lower="-.5" upper="3.93"/>
   </joint>
@@ -220,33 +224,34 @@
     <axis xyz="0 1 0"/>
     <limit effort="5" velocity="1.0" lower="0.52" upper="3.56"/>
   </joint>
-  <!-- Upper Arm -->
+  <!-- Upper Arm: 0.25 m from the shoulder-pitch joint to the elbow joint.
+       Measured shoulder-servo to elbow-servo = 25 cm. -->
   <link name="upper_arm_link">
     <visual>
       <geometry>
-        <cylinder length="0.19" radius="0.015"/>
+        <cylinder length="0.25" radius="0.015"/>
       </geometry>
-      <origin xyz="0 0 0.130" rpy="0 0 0"/>
+      <origin xyz="0 0 0.125" rpy="0 0 0"/>
       <material name="copper"/>
-
     </visual>
   </link>
 
-  <!-- Elbow -->
+  <!-- Elbow: the forearm-twist (yaw) and bend (pitch) both act AT the elbow,
+       0.25 m out along the upper arm. -->
    <joint name="elbow_yaw_joint" type="revolute">
     <parent link="upper_arm_link"/>
     <child link="elbow_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <origin xyz="0 0 0.25" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
     <limit effort="5" velocity="1.0" lower="0" upper="2.0"/>
   </joint> 
-  <!-- bracket to the elbow pitch joint-->
+  <!-- short elbow bracket at the elbow joint -->
   <link name="elbow_link">
     <visual>
       <geometry>
         <cylinder length="0.055" radius="0.056"/>
       </geometry>
-      <origin xyz="0 0 .25" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <material name="white"/>
     </visual>
   </link>
@@ -254,36 +259,39 @@
   <joint name="elbow_pitch_joint" type="revolute">
     <parent link="elbow_link"/>
     <child link="lower_arm_link"/>
-    <origin xyz="0 0 0.285" rpy="0 0 0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
     <axis xyz="1 0 0"/>
     <limit effort="5" velocity="0" lower="0" upper="-2.4"/>
   </joint>
 
-
+  <!-- Forearm: 0.18 m from the elbow joint to the wrist. -->
   <link name="lower_arm_link">
     <visual>
       <geometry>
-        <cylinder length="0.17" radius="0.015"/>
+        <cylinder length="0.18" radius="0.015"/>
       </geometry>
-      <origin xyz="0 0 0.085" rpy="0 0 0"/>
+      <origin xyz="0 0 0.090" rpy="0 0 0"/>
       <material name="coolgray"/>
-
     </visual>
   </link> 
 
    <joint name="wrist_joint" type="fixed">
     <parent link="lower_arm_link"/>
     <child link="hand_link"/>
-    <origin xyz="0 0 0.17" rpy="0 0 0"/>
+    <origin xyz="0 0 0.18" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <limit effort="3" velocity="1.0" lower="-1.0" upper="1.0"/>
   </joint>
+  <!-- Hand: 0.12 m long, but physically CURLED ~50 deg toward the head, which
+       brings the hand tip ~8 cm closer to the head than a straight hand would.
+       Model that curl with a 50 deg (0.87 rad) pitch of the hand's visual so
+       the collision proxy reaches where the real curled hand reaches. -->
   <link name="hand_link">
     <visual>
        <geometry>
         <box size="0.12 0.10 0.02"/>
       </geometry>
-      <origin xyz="0 0 0.06" rpy="0 1.57 0"/>
+      <origin xyz="0.046 0 0.039" rpy="0 0.873 0"/>
       <material name="bluegray"/>
     </visual>
   </link> 
@@ -299,6 +307,4 @@
     </joint>
     <!-- Add more <joint> tags for each servo -->
   </ros2_control>
-</robot>
-
 </robot>
