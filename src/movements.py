@@ -145,10 +145,10 @@ class Movements:
         with TrunkController.verified_pose_override(override):
             # UP: all four joints move together for a natural, non-robotic fold.
             # The shoulder (tilt + rotator) leads; the elbow and forearm hold
-            # until the motion is ~1/3 done, then catch up and arrive with
-            # everything else -- they are only collision-safe once the shoulder
-            # has rotated part-way (operator-observed), and this also reads far
-            # more lifelike than one-joint-at-a-time.
+            # done, then catch up and arrive with everything else. The elbow
+            # only needs the shoulder to have led by a little (operator-tuned),
+            # so it begins early (0.10) for a smooth, mostly-together fold that
+            # still lets the shoulder open the path first.
             await self.trunkController.move_to(
                 {
                     constants.RT_SHOULDER_TILT: TILT_YAWN,
@@ -158,8 +158,8 @@ class Movements:
                 },
                 steps=90, delay=0.02,
                 start_fractions={
-                    constants.RT_ELBOW_TILT: 0.33,
-                    constants.RT_ELBOW_ROTATOR: 0.33,
+                    constants.RT_ELBOW_TILT: 0.10,
+                    constants.RT_ELBOW_ROTATOR: 0.10,
                 },
             )
 
