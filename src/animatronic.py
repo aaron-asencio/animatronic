@@ -73,6 +73,7 @@ class Animatronic:
         'evil-laugh.wav',          # 16
         'vincent-price-laugh.wav', # 17
         'owl.wav',                 # 18
+        'yawn.wav',                # 19
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -99,6 +100,19 @@ class Animatronic:
             coro: An awaitable returned by a Movements method.
         """
         await asyncio.sleep(1)
+        await coro
+
+    async def _run_lead(self, coro, seconds):
+        """Wait ``seconds`` then run a Movements coroutine (custom lead-in).
+
+        Use for short audio clips where the default 3s idle would let the sound
+        finish before the gesture even starts.
+
+        Args:
+            coro: An awaitable returned by a Movements method.
+            seconds: Lead-in delay before the gesture begins.
+        """
+        await asyncio.sleep(seconds)
         await coro
 
     # ------------------------------------------------------------------ #
@@ -236,8 +250,8 @@ class Animatronic:
         self.run_action_and_audio("_do_swivel_head", self.music[18])
 
     def yawn(self):
-        """Yawn — cover mouth + look up (no audio, gesture test)."""
-        asyncio.run(self._do_yawn())
+        """Yawn audio + cover-mouth gesture (jaw syncs to the yawn.wav)."""
+        self.run_action_and_audio("_do_yawn", self.music[19])
 
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
@@ -268,8 +282,10 @@ class Animatronic:
         await self._run(mv.reach_and_look())
 
     async def _do_yawn(self):
+        # yawn.wav is only ~2.5s, so use a short lead-in: the arm rises WITH the
+        # yawn sound (and the jaw motion) rather than 3s after the clip ends.
         mv = Movements("Animatronic")
-        await self._run(mv.yawn_and_look_up())
+        await self._run_lead(mv.yawn_cover(), 0.3)
 
     async def _do_patrol(self):
         mv = Movements("Animatronic")
@@ -320,6 +336,7 @@ def main(args):
         'evilLaugh':      a.evil_laugh,
         'vincentPrice':   a.vincent_price,
         'owl':            a.owl,
+        'yawn':           a.yawn,
     }
 
     if args.action in action_map:
