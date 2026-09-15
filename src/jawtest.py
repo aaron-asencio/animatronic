@@ -24,7 +24,7 @@ import time
 
 from gpiozero import DigitalOutputDevice
 
-from model.constants import MOUTH_MOTOR_PIN
+from constants import MOUTH_MOTOR_PIN
 
 
 def flash_jaw(count, on_time, off_time):

@@ -1,0 +1,467 @@
+{
+  "pbtResults": {
+    "5.2 Write property test for conservative enclosure": {
+      "status": "passed",
+      "lastRunTimestamp": 1788593497441
+    },
+    "5.3 Write property test for margin monotonicity": {
+      "status": "passed",
+      "lastRunTimestamp": 1788593498373
+    },
+    "6.4 Write property test for adjacency exclusion": {
+      "status": "passed",
+      "lastRunTimestamp": 1788628471593
+    }
+  },
+  "executionHistory": {
+    "2.1 Implement `calibration.py` core": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593047812
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593054168
+      }
+    ],
+    "4.1 Implement `kinematics.py`": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593048875
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593055415
+      }
+    ],
+    "5.1 Implement `proxies.py`": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593049629
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593056591
+      }
+    ],
+    "2. Calibration transform and editable JSON store": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593054820
+      }
+    ],
+    "4. Kinematics engine (URDF load + forward kinematics)": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593056030
+      }
+    ],
+    "5. Collision proxies": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593057137
+      }
+    ],
+    "1. Dependencies and package scaffold": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593063947
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593070806
+      }
+    ],
+    "6.1 Implement analytic distances in `collision.py`": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593065534
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593071429
+      }
+    ],
+    "2.2 Write property test for the calibration transform round-trip": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593081583
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593088820
+      }
+    ],
+    "2.3 Write property test for the offset zero-crossing": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593083097
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593090330
+      }
+    ],
+    "2.4 Write property test for the calibration JSON round-trip": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593083952
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593091197
+      }
+    ],
+    "2.5 Write unit/edge tests for the calibration store": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593084590
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593092426
+      }
+    ],
+    "3. Checkpoint - calibration tests pass": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593098014
+      }
+    ],
+    "6.2 Implement `Collision_Detector`": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593123938
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594577484
+      }
+    ],
+    "4.2 Write property test for forward kinematics rigidity": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593124799
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594571887
+      }
+    ],
+    "4.3 Write unit/edge tests for the engine": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593126206
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594572750
+      }
+    ],
+    "5.2 Write property test for conservative enclosure": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593127236
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594574542
+      }
+    ],
+    "5.3 Write property test for margin monotonicity": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593128184
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594575240
+      }
+    ],
+    "5.4 Write unit/edge tests for proxy generation": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788593129315
+      },
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594576794
+      }
+    ],
+    "6. Collision detection and joint mapping": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594578099
+      }
+    ],
+    "8.1 Implement `model.py`": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594626903
+      },
+      {
+        "executionId": "1ab72c87-39e3-45ce-a836-9307e46f16d1",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788624908572
+      }
+    ],
+    "6.5 Write property test for offending-joint mapping": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594628557
+      },
+      {
+        "executionId": "1ab72c87-39e3-45ce-a836-9307e46f16d1",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788624907920
+      }
+    ],
+    "6.4 Write property test for adjacency exclusion": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594629516
+      },
+      {
+        "executionId": "1ab72c87-39e3-45ce-a836-9307e46f16d1",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788624907485
+      }
+    ],
+    "6.3 Write property test for distance detection correctness/symmetry": [
+      {
+        "executionId": "f98641cc-acd7-4fc5-9162-6df9484f81a2",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788594630479
+      },
+      {
+        "executionId": "1ab72c87-39e3-45ce-a836-9307e46f16d1",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788624905935
+      }
+    ],
+    "8. CollisionModel facade and data models": [
+      {
+        "executionId": "1ab72c87-39e3-45ce-a836-9307e46f16d1",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788624909168
+      }
+    ],
+    "7. Checkpoint - geometry and detection tests pass": [
+      {
+        "executionId": "1ab72c87-39e3-45ce-a836-9307e46f16d1",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788624997978
+      }
+    ],
+    "8.2 Write property test for determinism": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675197448
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675463688
+      }
+    ],
+    "8.3 Write property test for the ok⇔empty invariant": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675198971
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675464011
+      }
+    ],
+    "8.4 Write property test for sequence aggregation": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675199484
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675465190
+      }
+    ],
+    "8.5 Write example/edge tests for the facade": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675200647
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675466221
+      }
+    ],
+    "9.1 Implement `cli.py`": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675201649
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675460339
+      }
+    ],
+    "11.1 Implement `src/validate_hardware.py`": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675202902
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675462001
+      }
+    ],
+    "9. Command-line authoring aid": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675461460
+      }
+    ],
+    "11. Hardware validation driver (separate, outside the package)": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675462945
+      }
+    ],
+    "10.1 Implement `preview.py`": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675487937
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675779249
+      }
+    ],
+    "9.2 Write unit tests for the CLI": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675488816
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675780108
+      }
+    ],
+    "11.2 Write property test for the position-difference metric": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675489514
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675781111
+      }
+    ],
+    "11.3 Write property test for the boundary probe report": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675490536
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675782324
+      }
+    ],
+    "11.4 Write unit tests for verdict comparison and logging": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675491871
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675783277
+      }
+    ],
+    "10. Optional 3D preview": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675780591
+      }
+    ],
+    "10.2 Write unit test for preview laziness": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788675804917
+      },
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788676598154
+      }
+    ],
+    "12. Final checkpoint - ensure all tests pass": [
+      {
+        "executionId": "1722131a-21aa-4380-83e7-028e5910ba9a",
+        "chatSessionId": "sess_4271f050-dcf0-4650-90b2-8348dfa90eeb",
+        "timestamp": 1788676598938
+      }
+    ]
+  }
+}

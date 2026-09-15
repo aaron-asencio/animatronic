@@ -10,7 +10,7 @@ Usage:
     python3 controller.py --action=<action_name>
 
 ARM gestures (channels 4–7):
-    wave, come, comein, reachOut, yawnCover
+    wave, come, comein, beckon, reachOut, menacingReach, yawnCover, facePalm
 
 HEAD gestures (channels 0–1):
     nod, nodYes, lookUp, lookAround, lookAroundSmall, neckEllipse,
@@ -41,8 +41,11 @@ def main(args):
         'wave':             mv.wave,
         'come':             mv.come,
         'comein':           mv.comein,
+        'beckon':           mv.beckon,
         'reachOut':         mv.reach_out,
+        'menacingReach':    mv.menacing_reach,
         'yawnCover':        mv.yawn_cover,
+        'facePalm':         mv.face_palm,
 
         # --- HEAD gestures ---
         'nod':              mv.nod,
