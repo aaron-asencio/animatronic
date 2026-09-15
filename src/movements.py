@@ -109,47 +109,65 @@ class Movements:
             constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False)
 
     async def yawn_cover(self):
-        """Yawn cover: raise the arm and bring the forearm up toward the mouth.
+        """Yawn cover: bring the hand up in front of the mouth, hold, then lower.
 
         Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
                   RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
 
-        Raises the arm up-and-out and rotates it partway forward, then bends the
-        elbow and turns the forearm so the hand sweeps up near the mouth, holds
-        for the yawn, and lowers. Validated to stop CLEAR of the face (a polite
-        cover, not a full face-mash) -- the deeper hand-to-face fold is the
-        guarded danger zone this deliberately stays short of.
+        Target pose (HARDWARE-MEASURED, hand directly in front of the mouth):
+            tilt=35, rotator=200, elbow=170, forearm=185.
+
+        NOTE: this pose sits in the coupled-shoulder region where the decoupled
+        collision model is unreliable (it mislocates the folded-up hand), so the
+        keyframes here were confirmed SAFE on the physical robot rather than by
+        the model. The motion is staged to fold the arm up the same way a person
+        would -- raise/rotate the shoulder first, THEN flex the elbow and turn
+        the forearm to the mouth -- so the hand approaches the face from the
+        front rather than sweeping through the body.
         """
-        TILT_DOWN, TILT_UP = 55, 120
-        ROT_DOWN, ROT_UP = 0, 120
-        ELBOW_STRAIGHT, ELBOW_BENT = 5, 90
-        FOREARM_NEUTRAL, FOREARM_ACROSS = 150, 180
+        # Resting starts (from REST_POSITIONS) and measured yawn targets.
+        TILT_REST, TILT_YAWN = 55, 35
+        ROT_REST, ROT_YAWN = 0, 200
+        ELBOW_REST, ELBOW_YAWN = 5, 170
+        FOREARM_REST, FOREARM_YAWN = 150, 185
 
-        # Raise + rotate the arm up toward the face region simultaneously.
-        raise_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, True))
-        rotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, True))
-        await asyncio.gather(raise_task, rotate_task)
+        # tilt=35 and elbow=170 fall BELOW/ABOVE the conservative global
+        # SAFE_LIMITS (which stay tight because those angles collide in OTHER
+        # shoulder positions, e.g. arm rotated to the side/head). This exact
+        # folded-to-the-mouth pose was operator-verified safe on the physical
+        # robot, so widen the clamp for JUST these two channels for the duration
+        # of the gesture. All other channels keep the global limits, and the
+        # override is still bounded by the servo electrical range.
+        override = {
+            constants.RT_SHOULDER_TILT: (35, 270),
+            constants.RT_ELBOW_TILT: (0, 170),
+        }
+        with TrunkController.verified_pose_override(override):
+            # 1) Raise + rotate the shoulder up and forward toward the face.
+            raise_task = asyncio.create_task(self.trunkController.move_by_direction(
+                constants.RT_SHOULDER_TILT, TILT_YAWN, TILT_REST, 0.004, False))
+            rotate_task = asyncio.create_task(self.trunkController.move_by_direction(
+                constants.RT_SHOULDER_ROTATOR, ROT_REST, ROT_YAWN, 0.004, True))
+            await asyncio.gather(raise_task, rotate_task)
 
-        # Bend the elbow and turn the forearm across toward the mouth.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_BENT, 0.005, True)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR, FOREARM_NEUTRAL, FOREARM_ACROSS, 0.005, True)
+            # 2) Flex the elbow and turn the forearm so the hand comes to the mouth.
+            await self.trunkController.move_by_direction(
+                constants.RT_ELBOW_TILT, ELBOW_REST, ELBOW_YAWN, 0.004, True)
+            await self.trunkController.move_by_direction(
+                constants.RT_ELBOW_ROTATOR, FOREARM_REST, FOREARM_YAWN, 0.005, True)
 
-        await asyncio.sleep(1.5)  # hold the yawn
+            await asyncio.sleep(1.5)  # hold the yawn
 
-        # Reverse everything back to rest.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR, FOREARM_NEUTRAL, FOREARM_ACROSS, 0.005, False)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_BENT, 0.005, False)
-        lower_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False))
-        unrotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, False))
-        await asyncio.gather(lower_task, unrotate_task)
+            # 3) Reverse in the opposite order: open the forearm/elbow, then lower.
+            await self.trunkController.move_by_direction(
+                constants.RT_ELBOW_ROTATOR, FOREARM_REST, FOREARM_YAWN, 0.005, False)
+            await self.trunkController.move_by_direction(
+                constants.RT_ELBOW_TILT, ELBOW_REST, ELBOW_YAWN, 0.004, False)
+            lower_task = asyncio.create_task(self.trunkController.move_by_direction(
+                constants.RT_SHOULDER_TILT, TILT_YAWN, TILT_REST, 0.004, True))
+            unrotate_task = asyncio.create_task(self.trunkController.move_by_direction(
+                constants.RT_SHOULDER_ROTATOR, ROT_REST, ROT_YAWN, 0.004, False))
+            await asyncio.gather(lower_task, unrotate_task)
 
     async def face_palm(self):
         """Face palm: bring the hand up toward the face in exasperation, then drop.
