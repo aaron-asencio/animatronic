@@ -143,31 +143,44 @@ class Movements:
             constants.RT_ELBOW_TILT: (0, 170),
         }
         with TrunkController.verified_pose_override(override):
-            # 1) Raise + rotate the shoulder up and forward toward the face.
-            raise_task = asyncio.create_task(self.trunkController.move_by_direction(
-                constants.RT_SHOULDER_TILT, TILT_YAWN, TILT_REST, 0.004, False))
-            rotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-                constants.RT_SHOULDER_ROTATOR, ROT_REST, ROT_YAWN, 0.004, True))
-            await asyncio.gather(raise_task, rotate_task)
-
-            # 2) Flex the elbow and turn the forearm so the hand comes to the mouth.
-            await self.trunkController.move_by_direction(
-                constants.RT_ELBOW_TILT, ELBOW_REST, ELBOW_YAWN, 0.004, True)
-            await self.trunkController.move_by_direction(
-                constants.RT_ELBOW_ROTATOR, FOREARM_REST, FOREARM_YAWN, 0.005, True)
+            # UP: all four joints move together for a natural, non-robotic fold.
+            # The shoulder (tilt + rotator) leads; the elbow and forearm hold
+            # until the motion is ~1/3 done, then catch up and arrive with
+            # everything else -- they are only collision-safe once the shoulder
+            # has rotated part-way (operator-observed), and this also reads far
+            # more lifelike than one-joint-at-a-time.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_SHOULDER_TILT: TILT_YAWN,
+                    constants.RT_SHOULDER_ROTATOR: ROT_YAWN,
+                    constants.RT_ELBOW_TILT: ELBOW_YAWN,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_YAWN,
+                },
+                steps=90, delay=0.02,
+                start_fractions={
+                    constants.RT_ELBOW_TILT: 0.33,
+                    constants.RT_ELBOW_ROTATOR: 0.33,
+                },
+            )
 
             await asyncio.sleep(1.5)  # hold the yawn
 
-            # 3) Reverse in the opposite order: open the forearm/elbow, then lower.
-            await self.trunkController.move_by_direction(
-                constants.RT_ELBOW_ROTATOR, FOREARM_REST, FOREARM_YAWN, 0.005, False)
-            await self.trunkController.move_by_direction(
-                constants.RT_ELBOW_TILT, ELBOW_REST, ELBOW_YAWN, 0.004, False)
-            lower_task = asyncio.create_task(self.trunkController.move_by_direction(
-                constants.RT_SHOULDER_TILT, TILT_YAWN, TILT_REST, 0.004, True))
-            unrotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-                constants.RT_SHOULDER_ROTATOR, ROT_REST, ROT_YAWN, 0.004, False))
-            await asyncio.gather(lower_task, unrotate_task)
+            # DOWN: reverse. Open the elbow/forearm first (finish by 2/3), while
+            # the shoulder lowers over the whole move, so the arm unfolds before
+            # it drops -- the mirror of the safe ordering going up.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_ELBOW_TILT: ELBOW_REST,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                    constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                    constants.RT_SHOULDER_TILT: TILT_REST,
+                },
+                steps=90, delay=0.02,
+                start_fractions={
+                    constants.RT_SHOULDER_ROTATOR: 0.33,
+                    constants.RT_SHOULDER_TILT: 0.33,
+                },
+            )
 
     async def face_palm(self):
         """Face palm: bring the hand up toward the face in exasperation, then drop.

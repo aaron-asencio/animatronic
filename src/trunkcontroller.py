@@ -400,6 +400,64 @@ class TrunkController:
                 self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
 
+    async def move_to(self, targets, steps=60, delay=0.02, start_fractions=None):
+        """Move several joints to target angles SIMULTANEOUSLY, arriving together.
+
+        Unlike ``move``/``move_by_direction`` (which sweep one channel to
+        completion before the caller moves the next), this interpolates every
+        listed joint from its CURRENT angle to its target across the same
+        ``steps``, so the joints move together for natural, non-robotic motion.
+        Each joint covers its own distance at its own per-step increment; they
+        all finish on the final step.
+
+        Optionally, a joint can START PART-WAY through the timeline via
+        ``start_fractions`` (channel -> fraction in [0, 1)). This staggers a
+        joint so it only begins once the motion is a given fraction complete --
+        e.g. hold the elbow until the shoulder is 1/3 rotated, then let the
+        elbow catch up and arrive with everything else. This gives overlapping,
+        lifelike motion while respecting a safe ordering.
+
+        Every write goes through ``set_angle`` (clamped to SAFE_LIMITS or any
+        active verified-pose override).
+
+        Args:
+            targets: Mapping of channel -> target angle in degrees.
+            steps: Number of interpolation steps over the whole motion (more =
+                smoother/slower).
+            delay: Seconds to sleep between steps.
+            start_fractions: Optional mapping of channel -> fraction in [0, 1);
+                that joint stays at its start angle until the motion progress
+                reaches the fraction, then interpolates to its target by the
+                final step. Defaults to 0 (move from the start) for every joint.
+        """
+        start_fractions = start_fractions or {}
+        steps = max(1, int(steps))
+
+        # Capture each joint's starting angle (clamped; snap to target if unknown).
+        starts = {}
+        for channel, target in targets.items():
+            current = self.kit.servo[channel].angle
+            if current is None:
+                current = self.clamp_angle(channel, target)
+                self.set_angle(channel, current)
+            starts[channel] = float(current)
+
+        names = {constants.servos.get(c, f"ch{c}"): int(t) for c, t in targets.items()}
+        print(f"[trunk] move_to targets={names} steps={steps}")
+
+        for i in range(1, steps + 1):
+            progress = i / steps  # overall timeline fraction in (0, 1]
+            for channel, target in targets.items():
+                begin = start_fractions.get(channel, 0.0)
+                if progress <= begin:
+                    continue  # this joint hasn't started yet
+                # Remap the joint's own progress from its start fraction to 1.0.
+                local = (progress - begin) / (1.0 - begin) if begin < 1.0 else 1.0
+                local = min(1.0, max(0.0, local))
+                angle = starts[channel] + (float(target) - starts[channel]) * local
+                self.set_angle(channel, int(round(angle)))
+            await asyncio.sleep(delay)
+
     async def slow_scan(self, revert=True):
         """Slowly pan the neck left then right from center.
 
