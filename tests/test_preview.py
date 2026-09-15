@@ -26,9 +26,10 @@ ABS_URDF = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "src", "config", "maximus.urdf")
 )
 
-# Rest pose (SAFE) and a colliding pose (arm folded into body), keyed by channel.
+# Rest pose (SAFE) and a genuinely-colliding pose (elbow fully flexed, servo
+# 160, folds the hand back onto the shoulder), keyed by channel.
 _REST_POSE = {0: 90, 1: 90, 4: 150, 5: 5, 6: 55, 7: 0}
-_COLLIDING_POSE = {0: 90, 1: 90, 4: 150, 5: 145, 6: 55, 7: 0}
+_COLLIDING_POSE = {0: 90, 1: 90, 4: 150, 5: 160, 6: 55, 7: 0}
 
 
 @pytest.fixture

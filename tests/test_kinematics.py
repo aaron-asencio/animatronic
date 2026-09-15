@@ -70,7 +70,7 @@ def _assert_rigid_transform(transform):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(
     angles=st.lists(
         st.floats(

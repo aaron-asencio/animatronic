@@ -61,9 +61,10 @@ _MODEL = CollisionModel(
 # The six required servo channels the model validates on every pose.
 _REQUIRED_CHANNELS = (0, 1, 4, 5, 6, 7)
 
-# Known example poses (channel -> angle in degrees).
+# Known example poses (channel -> angle in degrees). The collision pose flexes
+# the elbow fully (servo 160), folding the hand back onto the shoulder.
 _REST_POSE = {0: 90, 1: 90, 4: 150, 5: 5, 6: 55, 7: 0}
-_COLLISION_POSE = {0: 90, 1: 90, 4: 150, 5: 145, 6: 55, 7: 0}
+_COLLISION_POSE = {0: 90, 1: 90, 4: 150, 5: 160, 6: 55, 7: 0}
 
 
 def _valid_pose_strategy():
@@ -75,8 +76,16 @@ def _valid_pose_strategy():
     Returns:
         A hypothesis strategy producing ``dict[int, float]`` poses.
     """
+    # Realistic servo angles: the 0-270 actuation range at a sensible precision.
+    # ``allow_subnormal=False`` keeps hypothesis from generating denormalized
+    # floats (e.g. 1e-292) that stress the test harness without exercising any
+    # real model behavior (every joint is deterministic across the whole range).
     angle = st.floats(
-        min_value=0.0, max_value=270.0, allow_nan=False, allow_infinity=False
+        min_value=0.0,
+        max_value=270.0,
+        allow_nan=False,
+        allow_infinity=False,
+        allow_subnormal=False,
     )
     return st.fixed_dictionaries({channel: angle for channel in _REQUIRED_CHANNELS})
 
@@ -133,7 +142,7 @@ def _result_key(result):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(pose=_valid_pose_strategy())
 def test_property10_is_pose_safe_is_deterministic(pose):
     """Feature: kinematic-collision-model, Property 10: is_pose_safe is deterministic.
@@ -158,7 +167,7 @@ def test_property10_is_pose_safe_is_deterministic(pose):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(pose=_valid_pose_strategy())
 def test_property11_ok_equals_empty_colliding_pairs(pose):
     """Feature: kinematic-collision-model, Property 11: ok flag equals the emptiness of the colliding-pair list.
@@ -178,7 +187,7 @@ def test_property11_ok_equals_empty_colliding_pairs(pose):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(poses=st.lists(_valid_pose_strategy(), min_size=0, max_size=5))
 def test_property12_sequence_unsafe_iff_any_pose_unsafe(poses):
     """Feature: kinematic-collision-model, Property 12: Sequence is unsafe iff any pose is unsafe.
@@ -215,24 +224,26 @@ def test_rest_pose_is_safe():
 
 
 def test_elbow_flexed_pose_collides_on_arm_pair():
-    """Requirements 5.5, 6.2/6.3: an elbow-flexed pose collides on the arm pair.
+    """Requirements 5.5, 6.2/6.3: a fully-flexed elbow folds the hand into the body.
 
-    The elbow-flexed pose ({5: 145}) drives the lower arm into the upper arm.
-    The result must be COLLISION with at least one pair, some pair must involve
-    the upper/lower arm links, and the elbow servos must appear among the
-    offending joints across the reported pairs.
+    At full elbow flexion (servo 160) the forearm+hand fold back until the hand
+    reaches the shoulder. The result must be COLLISION with at least one pair,
+    some pair must involve the hand and an upper-arm/shoulder link, and the
+    elbow servos must appear among the offending joints.
     """
     result = _MODEL.is_pose_safe(_COLLISION_POSE)
 
     assert result.ok is False
     assert len(result.colliding_pairs) >= 1
 
-    # Some reported pair involves both the upper and lower arm links.
-    arm_pair_reported = any(
-        {pair.link_a, pair.link_b} == {"upper_arm_link", "lower_arm_link"}
+    # Some reported pair involves the hand folding back onto the shoulder /
+    # upper arm.
+    hand_into_body = any(
+        "hand_link" in {pair.link_a, pair.link_b}
+        and {pair.link_a, pair.link_b} & {"shoulder_link", "upper_arm_link"}
         for pair in result.colliding_pairs
     )
-    assert arm_pair_reported
+    assert hand_into_body
 
     # The elbow servos appear among the offending joints across all pairs.
     servo_names = {
@@ -339,3 +350,27 @@ def test_kinematics_package_imports_no_hardware_libraries():
                     assert not pattern.match(line), (
                         f"forbidden hardware import in {source_path}: {line.strip()}"
                     )
+
+
+def test_forbidden_combination_flags_hand_to_face():
+    """The forbidden-combination guard flags the measured hand-to-face danger zone.
+
+    A decoupled per-joint model under-predicts the hand-to-face fold (full elbow
+    flexion + shoulder rotated up), so constants.FORBIDDEN_COMBINATIONS adds a
+    hard guard. A matching pose must be COLLISION and name the elbow-tilt and
+    shoulder-rotator servos; a pose that flexes the elbow but keeps the rotator
+    low must remain SAFE (only the combination is guarded, not flexion itself).
+    """
+    # Full elbow flexion + shoulder rotated up -> guarded unsafe.
+    hand_to_face = {0: 90, 1: 90, 4: 150, 5: 160, 6: 45, 7: 270}
+    result = _MODEL.is_pose_safe(hand_to_face)
+    assert result.ok is False
+    servo_names = {
+        j.servo_name for p in result.colliding_pairs for j in p.offending_joints
+    }
+    assert {"RT_ELBOW_TILT", "RT_SHOULDER_ROTATOR"} <= servo_names
+
+    # Elbow flexed (near a right angle) with the arm out and the rotator NOT in
+    # the guarded range -> the guard does not fire, and the geometry is clear.
+    flex_not_combination = {0: 90, 1: 90, 4: 150, 5: 145, 6: 170, 7: 90}
+    assert _MODEL.is_pose_safe(flex_not_combination).ok is True

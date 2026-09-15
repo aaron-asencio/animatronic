@@ -174,7 +174,70 @@ class CollisionModel:
         detected = self._detector.check(link_transforms)
 
         colliding_pairs = [self._to_collision_pair(pair) for pair in detected]
+
+        # Hard guard for measured multi-axis danger zones the decoupled model
+        # under-predicts (e.g. the hand-to-face fold). See
+        # constants.FORBIDDEN_COMBINATIONS.
+        colliding_pairs.extend(self._forbidden_combination_pairs(servo_angles))
+
         return PoseResult(ok=(len(colliding_pairs) == 0), colliding_pairs=colliding_pairs)
+
+    def _forbidden_combination_pairs(self, servo_angles):
+        """Returns a CollisionPair for each forbidden joint combination matched.
+
+        Complements the geometric detector with explicit, measured multi-axis
+        rules (``constants.FORBIDDEN_COMBINATIONS``). A rule matches when every
+        listed channel is within its inclusive ``(min, max)`` range. Each match
+        becomes a ``CollisionPair`` whose links name the rule and whose
+        offending joints are the channels that triggered it, so it flows through
+        the same ``ok == (colliding_pairs empty)`` invariant, CLI output, and
+        preview highlighting as a geometric collision.
+
+        Args:
+            servo_angles: The pose mapping of servo channel -> angle in degrees.
+
+        Returns:
+            A list of ``CollisionPair`` (empty when no forbidden rule matches).
+        """
+        pairs = []
+        for rule in getattr(constants, "FORBIDDEN_COMBINATIONS", []):
+            ranges = rule["ranges"]
+            matched = all(
+                channel in servo_angles
+                and lo <= servo_angles[channel] <= hi
+                for channel, (lo, hi) in ranges.items()
+            )
+            if not matched:
+                continue
+            offending = [
+                OffendingJoint(
+                    urdf_joint=self._channel_to_urdf_joint(channel),
+                    servo_channel=channel,
+                    servo_name=constants.servos.get(channel, str(channel)),
+                )
+                for channel in ranges
+            ]
+            pairs.append(
+                CollisionPair(
+                    link_a="forbidden-combination",
+                    link_b=rule["reason"],
+                    offending_joints=offending,
+                )
+            )
+        return pairs
+
+    def _channel_to_urdf_joint(self, channel):
+        """Returns the URDF joint name for a servo channel, or the channel string.
+
+        Args:
+            channel: PCA9685 channel number.
+
+        Returns:
+            The URDF joint name calibrated for that channel, or ``str(channel)``
+            when the channel is not in the calibration store.
+        """
+        cal = self._calibration._by_channel.get(channel)
+        return cal.urdf_joint if cal else str(channel)
 
     def check_sequence(self, poses):
         """Classifies an ordered sequence of poses.

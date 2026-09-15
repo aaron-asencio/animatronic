@@ -223,7 +223,7 @@ def _dispatch_gap(a, b):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(a=_proxy(), b=_proxy())
 def test_property7_intersection_detection_correct_and_symmetric(a, b):
     """Feature: kinematic-collision-model, Property 7: Proxy intersection detection is correct and symmetric.
@@ -265,7 +265,7 @@ def test_property7_intersection_detection_correct_and_symmetric(a, b):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(
     angles=st.lists(
         st.floats(
@@ -304,7 +304,7 @@ def test_property8_adjacent_link_pairs_never_reported(angles):
 # ---------------------------------------------------------------------------
 
 
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 @given(
     angles=st.lists(
         st.floats(

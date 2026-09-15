@@ -15,6 +15,7 @@ Hardware assumptions
 """
 
 import asyncio
+import contextlib
 import os
 import constants
 
@@ -183,13 +184,52 @@ class TrunkController:
     # Safety: clamp every write to the mechanism's SAFE_LIMITS             #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def clamp_angle(servo_num, angle):
+    # Scoped per-channel limit overrides. A gesture that has OPERATOR-VERIFIED a
+    # specific pose safe on the physical robot may temporarily widen the clamp
+    # for named channels via verified_pose_override(); clamp_angle consults this.
+    # Overrides are still bounded by the servo electrical range [0, MAX], so a
+    # motor can never be jammed. Empty by default -- the global SAFE_LIMITS
+    # apply to every gesture unless it explicitly opts in.
+    _limit_overrides = {}  # channel -> (lo, hi)
+
+    @classmethod
+    @contextlib.contextmanager
+    def verified_pose_override(cls, overrides):
+        """Temporarily widen SAFE_LIMITS for named channels within a gesture.
+
+        Use ONLY for a specific pose that has been verified safe on the physical
+        robot but whose angles fall outside the conservative global SAFE_LIMITS
+        (which stay tight because those angles are unsafe in OTHER poses). The
+        override is scoped to the ``with`` block, applies only to the named
+        channels, and is still bounded by the servo electrical range so the
+        motor cannot be jammed.
+
+        Args:
+            overrides: Mapping of channel -> (lo, hi) widened bounds for the
+                duration of the block.
+
+        Yields:
+            None. Restores the previous overrides on exit (even on error).
+        """
+        previous = dict(cls._limit_overrides)
+        cls._limit_overrides.update(overrides)
+        names = {constants.servos.get(ch, f"ch{ch}"): rng for ch, rng in overrides.items()}
+        print(f"[trunk] VERIFIED-POSE OVERRIDE active (operator-confirmed safe): {names}")
+        try:
+            yield
+        finally:
+            cls._limit_overrides = previous
+            print("[trunk] verified-pose override cleared; global SAFE_LIMITS restored")
+
+    @classmethod
+    def clamp_angle(cls, servo_num, angle):
         """Clamp a commanded angle to the safe range for this channel.
 
-        Falls back to the servo electrical range [0, SERVO_MAX_ANGLE] for any
-        channel without an explicit SAFE_LIMITS entry. This is the single point
-        that guarantees no gesture can drive a servo into a mechanical jam.
+        Uses the channel's SAFE_LIMITS by default, or a temporary widened range
+        when a gesture has an active :meth:`verified_pose_override` for it. In
+        all cases the result is additionally bounded by the servo electrical
+        range [0, SERVO_MAX_ANGLE], so no override can jam the motor. This is the
+        single point that guarantees no gesture drives a servo out of range.
 
         Args:
             servo_num: Channel index.
@@ -199,6 +239,12 @@ class TrunkController:
             The clamped angle (float/int) guaranteed within the safe range.
         """
         lo, hi = constants.SAFE_LIMITS.get(servo_num, (0, SERVO_MAX_ANGLE))
+        if servo_num in cls._limit_overrides:
+            olo, ohi = cls._limit_overrides[servo_num]
+            lo, hi = olo, ohi
+        # Never exceed the servo electrical range regardless of overrides.
+        lo = max(0, lo)
+        hi = min(SERVO_MAX_ANGLE, hi)
         if angle < lo:
             return lo
         if angle > hi:
@@ -353,6 +399,64 @@ class TrunkController:
             for i in range(stop, start, -step):
                 self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
+
+    async def move_to(self, targets, steps=60, delay=0.02, start_fractions=None):
+        """Move several joints to target angles SIMULTANEOUSLY, arriving together.
+
+        Unlike ``move``/``move_by_direction`` (which sweep one channel to
+        completion before the caller moves the next), this interpolates every
+        listed joint from its CURRENT angle to its target across the same
+        ``steps``, so the joints move together for natural, non-robotic motion.
+        Each joint covers its own distance at its own per-step increment; they
+        all finish on the final step.
+
+        Optionally, a joint can START PART-WAY through the timeline via
+        ``start_fractions`` (channel -> fraction in [0, 1)). This staggers a
+        joint so it only begins once the motion is a given fraction complete --
+        e.g. hold the elbow until the shoulder is 1/3 rotated, then let the
+        elbow catch up and arrive with everything else. This gives overlapping,
+        lifelike motion while respecting a safe ordering.
+
+        Every write goes through ``set_angle`` (clamped to SAFE_LIMITS or any
+        active verified-pose override).
+
+        Args:
+            targets: Mapping of channel -> target angle in degrees.
+            steps: Number of interpolation steps over the whole motion (more =
+                smoother/slower).
+            delay: Seconds to sleep between steps.
+            start_fractions: Optional mapping of channel -> fraction in [0, 1);
+                that joint stays at its start angle until the motion progress
+                reaches the fraction, then interpolates to its target by the
+                final step. Defaults to 0 (move from the start) for every joint.
+        """
+        start_fractions = start_fractions or {}
+        steps = max(1, int(steps))
+
+        # Capture each joint's starting angle (clamped; snap to target if unknown).
+        starts = {}
+        for channel, target in targets.items():
+            current = self.kit.servo[channel].angle
+            if current is None:
+                current = self.clamp_angle(channel, target)
+                self.set_angle(channel, current)
+            starts[channel] = float(current)
+
+        names = {constants.servos.get(c, f"ch{c}"): int(t) for c, t in targets.items()}
+        print(f"[trunk] move_to targets={names} steps={steps}")
+
+        for i in range(1, steps + 1):
+            progress = i / steps  # overall timeline fraction in (0, 1]
+            for channel, target in targets.items():
+                begin = start_fractions.get(channel, 0.0)
+                if progress <= begin:
+                    continue  # this joint hasn't started yet
+                # Remap the joint's own progress from its start fraction to 1.0.
+                local = (progress - begin) / (1.0 - begin) if begin < 1.0 else 1.0
+                local = min(1.0, max(0.0, local))
+                angle = starts[channel] + (float(target) - starts[channel]) * local
+                self.set_angle(channel, int(round(angle)))
+            await asyncio.sleep(delay)
 
     async def slow_scan(self, revert=True):
         """Slowly pan the neck left then right from center.
