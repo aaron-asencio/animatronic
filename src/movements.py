@@ -168,8 +168,9 @@ class Movements:
             # as the sound finishes (~2.5s clip - ~0.3s lead-in - ~0.9s fold).
             await asyncio.sleep(1.3)
 
-            # DOWN (~0.9s, also 2x faster): reverse. Open the elbow/forearm
-            # first, then the shoulder lowers -- the arm unfolds before it drops.
+            # DOWN (~1.1s): reverse. Open the elbow/forearm first, then the
+            # shoulder lowers -- the arm unfolds before it drops. Lowered 20%
+            # slower than the up-fold (steps 45 -> 56) for a relaxed settle.
             await self.trunkController.move_to(
                 {
                     constants.RT_ELBOW_TILT: ELBOW_REST,
@@ -177,7 +178,7 @@ class Movements:
                     constants.RT_SHOULDER_ROTATOR: ROT_REST,
                     constants.RT_SHOULDER_TILT: TILT_REST,
                 },
-                steps=45, delay=0.02,
+                steps=56, delay=0.02,
                 start_fractions={
                     constants.RT_SHOULDER_ROTATOR: 0.33,
                     constants.RT_SHOULDER_TILT: 0.33,
