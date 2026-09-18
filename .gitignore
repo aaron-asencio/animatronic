@@ -118,3 +118,6 @@ src/config/calibration.json.*.bak
 # Collision-model preview renders and probe disagreement logs
 preview*.png
 src/config/probe_disagreements.log
+
+# Personal command scratchpad (not part of the project)
+commands.txt
