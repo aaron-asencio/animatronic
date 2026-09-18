@@ -143,12 +143,13 @@ class Movements:
             constants.RT_ELBOW_TILT: (0, 170),
         }
         with TrunkController.verified_pose_override(override):
-            # UP: all four joints move together for a natural, non-robotic fold.
-            # The shoulder (tilt + rotator) leads; the elbow and forearm hold
-            # done, then catch up and arrive with everything else. The elbow
-            # only needs the shoulder to have led by a little (operator-tuned),
-            # so it begins early (0.10) for a smooth, mostly-together fold that
-            # still lets the shoulder open the path first.
+            # UP (~0.9s, 2x faster than before so the hand covers the mouth
+            # WHILE the ~2.5s yawn plays): the SHOULDER ROTATES FIRST -- rotator
+            # and tilt start immediately -- and the ELBOW + forearm hold until
+            # the move is 30% through, then bend the hand up to the mouth. This
+            # gives a clear "arm swings up, THEN the hand folds to the face"
+            # order (start_fractions are a portion of the whole move's timeline,
+            # 0.0-1.0; steps*delay sets the total duration).
             await self.trunkController.move_to(
                 {
                     constants.RT_SHOULDER_TILT: TILT_YAWN,
@@ -156,18 +157,19 @@ class Movements:
                     constants.RT_ELBOW_TILT: ELBOW_YAWN,
                     constants.RT_ELBOW_ROTATOR: FOREARM_YAWN,
                 },
-                steps=90, delay=0.02,
+                steps=45, delay=0.02,
                 start_fractions={
-                    constants.RT_ELBOW_TILT: 0.10,
-                    constants.RT_ELBOW_ROTATOR: 0.10,
+                    constants.RT_ELBOW_TILT: 0.30,
+                    constants.RT_ELBOW_ROTATOR: 0.30,
                 },
             )
 
-            await asyncio.sleep(1.5)  # hold the yawn
+            # Hold the hand over the mouth for the rest of the yawn, then lower
+            # as the sound finishes (~2.5s clip - ~0.3s lead-in - ~0.9s fold).
+            await asyncio.sleep(1.3)
 
-            # DOWN: reverse. Open the elbow/forearm first (finish by 2/3), while
-            # the shoulder lowers over the whole move, so the arm unfolds before
-            # it drops -- the mirror of the safe ordering going up.
+            # DOWN (~0.9s, also 2x faster): reverse. Open the elbow/forearm
+            # first, then the shoulder lowers -- the arm unfolds before it drops.
             await self.trunkController.move_to(
                 {
                     constants.RT_ELBOW_TILT: ELBOW_REST,
@@ -175,7 +177,7 @@ class Movements:
                     constants.RT_SHOULDER_ROTATOR: ROT_REST,
                     constants.RT_SHOULDER_TILT: TILT_REST,
                 },
-                steps=90, delay=0.02,
+                steps=45, delay=0.02,
                 start_fractions={
                     constants.RT_SHOULDER_ROTATOR: 0.33,
                     constants.RT_SHOULDER_TILT: 0.33,
