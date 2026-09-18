@@ -128,7 +128,7 @@ class Movements:
         # Resting starts (from REST_POSITIONS) and measured yawn targets.
         TILT_REST, TILT_YAWN = 55, 35
         ROT_REST, ROT_YAWN = 0, 200
-        ELBOW_REST, ELBOW_YAWN = 5, 170
+        ELBOW_REST, ELBOW_YAWN = 5, 165
         FOREARM_REST, FOREARM_YAWN = 150, 185
 
         # tilt=35 and elbow=170 fall BELOW/ABOVE the conservative global
