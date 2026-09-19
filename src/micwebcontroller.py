@@ -437,6 +437,27 @@ def start_recording():
     return jsonify({'status': 'success', 'message': 'Recording started'})
 
 
+def _make_user_readable(path):
+    """Make a sudo-created file readable by the normal (SUDO_USER) account.
+
+    The mic controller runs as root, so files it writes are owned by root with
+    0600 perms and can't be opened by the desktop user or an IDE. Set 0644 and,
+    when running under sudo, chown to the invoking user so recordings behave
+    like the other audio files.
+
+    Args:
+        path: Filesystem path of the just-written file.
+    """
+    try:
+        os.chmod(path, 0o644)
+        sudo_uid = os.environ.get('SUDO_UID')
+        sudo_gid = os.environ.get('SUDO_GID')
+        if sudo_uid is not None and sudo_gid is not None:
+            os.chown(path, int(sudo_uid), int(sudo_gid))
+    except OSError as e:
+        print(f"warning: could not adjust permissions on {path}: {e}")
+
+
 def stop_recording():
     """Stop recording and write the captured FX audio to audio/live_mic_<ts>.wav.
 
@@ -465,6 +486,10 @@ def stop_recording():
             wf.setsampwidth(2)          # paInt16 -> 2 bytes
             wf.setframerate(RATE)
             wf.writeframes(b''.join(frames))
+        # This process runs under sudo, so the file is born owned by root with
+        # restrictive perms -- unreadable by the normal user (and editors/IDEs).
+        # Make it world-readable and hand ownership back to the invoking user.
+        _make_user_readable(path)
         duration = sum(len(f) for f in frames) / (2 * CHANNELS * RATE)
         print(f"Saved recording: {path} ({duration:.2f}s)")
         return jsonify({
