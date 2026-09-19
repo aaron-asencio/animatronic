@@ -102,19 +102,19 @@ class Movements:
         keyframes validated collision-free.
 
         Args:
-            include_neck: When True, the head pans (80<->110) in sync with the
+            include_neck: When True, the head pans (84<->96) in sync with the
                 wave. Set False when a caller gathers this with a head gesture,
                 so the neck-pan channel isn't driven by two coroutines at once.
         """
         # Rest + arm-up values.
         ROT_REST, ROT_UP = 0, 270            # rotator lifts the arm
         TILT_REST, TILT_CENTER = 55, 55      # tilt stays ~55 (rest == wave center)
-        ELBOW_REST, ELBOW_CENTER = 5, 30
+        ELBOW_REST, ELBOW_CENTER = 0, 30
         FOREARM_REST, FOREARM_UP = 150, 29
         # Wave oscillation extremes (paired so the joints swing together).
         TILT_LO, TILT_HI = 45, 65
         ELBOW_LO, ELBOW_HI = 22, 38
-        PAN_LO, PAN_HI = 80, 110
+        PAN_LO, PAN_HI = 84, 96
         PAN_CENTER = constants.NECK_CENTER   # 90
 
         # RAISE: rotator up, elbow to the wave center, forearm to its up angle,
@@ -129,10 +129,11 @@ class Movements:
             steps=45, delay=0.02,
         )
 
-        # WAVE: a random 2-4 cycles. Each cycle swings the tilt/elbow/pan to one
+        # WAVE: a random 1-2 cycles. Each cycle swings the tilt/elbow/pan to one
         # extreme then the other (that is one back-and-forth wave), moved
-        # together via move_to for a natural synchronized wave.
-        cycles = random.randint(2, 4)
+        # together via move_to for a natural synchronized wave. delay=0.04 runs
+        # the wave at half the previous speed for a slower, smoother motion.
+        cycles = random.randint(1, 2)
         print(f"[wave] waving {cycles} time(s)")
         for _ in range(cycles):
             hi = {
@@ -146,8 +147,8 @@ class Movements:
             if include_neck:
                 hi[constants.NECK_PAN] = PAN_LO
                 lo[constants.NECK_PAN] = PAN_HI
-            await self.trunkController.move_to(hi, steps=16, delay=0.02)
-            await self.trunkController.move_to(lo, steps=16, delay=0.02)
+            await self.trunkController.move_to(hi, steps=16, delay=0.04)
+            await self.trunkController.move_to(lo, steps=16, delay=0.04)
 
         # Return the waved joints (and head, if we drove it) to center.
         recenter = {
