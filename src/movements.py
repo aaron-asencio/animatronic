@@ -109,12 +109,16 @@ class Movements:
             constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False)
 
     async def yawn_cover(self):
-        """Yawn cover: bring the hand up in front of the mouth, hold, then lower.
+        """Yawn cover: center the head, bring the hand to the mouth, hold, lower.
 
-        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
-                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
 
-        Target pose (HARDWARE-MEASURED, hand directly in front of the mouth):
+        The head is centered (pan=90, tilt=90) FIRST so the mouth faces forward
+        for the yawn -- otherwise, if a prior gesture left the head turned or
+        tilted, the hand would cover empty air instead of the mouth.
+
+        Target arm pose (HARDWARE-MEASURED, hand directly in front of the mouth):
             tilt=35, rotator=200, elbow=170, forearm=185.
 
         NOTE: this pose sits in the coupled-shoulder region where the decoupled
@@ -143,6 +147,17 @@ class Movements:
             constants.RT_ELBOW_TILT: (0, 170),
         }
         with TrunkController.verified_pose_override(override):
+            # Center the head first so the mouth faces forward for the yawn.
+            # Neck channels (0,1) are disjoint from the arm channels and use the
+            # normal global SAFE_LIMITS (the override only covers the arm).
+            await self.trunkController.move_to(
+                {
+                    constants.NECK_PAN: constants.NECK_CENTER,   # 90 = forward
+                    constants.NECK_TILT: 90,                     # 90 = level
+                },
+                steps=30, delay=0.02,
+            )
+
             # UP (~0.9s, 2x faster than before so the hand covers the mouth
             # WHILE the ~2.5s yawn plays): the SHOULDER ROTATES FIRST -- rotator
             # and tilt start immediately -- and the ELBOW + forearm hold until
