@@ -109,12 +109,16 @@ class Movements:
             constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False)
 
     async def yawn_cover(self):
-        """Yawn cover: bring the hand up in front of the mouth, hold, then lower.
+        """Yawn cover: center the head, bring the hand to the mouth, hold, lower.
 
-        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
-                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
 
-        Target pose (HARDWARE-MEASURED, hand directly in front of the mouth):
+        The head is centered (pan=90, tilt=90) FIRST so the mouth faces forward
+        for the yawn -- otherwise, if a prior gesture left the head turned or
+        tilted, the hand would cover empty air instead of the mouth.
+
+        Target arm pose (HARDWARE-MEASURED, hand directly in front of the mouth):
             tilt=35, rotator=200, elbow=170, forearm=185.
 
         NOTE: this pose sits in the coupled-shoulder region where the decoupled
@@ -128,7 +132,7 @@ class Movements:
         # Resting starts (from REST_POSITIONS) and measured yawn targets.
         TILT_REST, TILT_YAWN = 55, 35
         ROT_REST, ROT_YAWN = 0, 200
-        ELBOW_REST, ELBOW_YAWN = 5, 170
+        ELBOW_REST, ELBOW_YAWN = 5, 165
         FOREARM_REST, FOREARM_YAWN = 150, 185
 
         # tilt=35 and elbow=170 fall BELOW/ABOVE the conservative global
@@ -143,12 +147,24 @@ class Movements:
             constants.RT_ELBOW_TILT: (0, 170),
         }
         with TrunkController.verified_pose_override(override):
-            # UP: all four joints move together for a natural, non-robotic fold.
-            # The shoulder (tilt + rotator) leads; the elbow and forearm hold
-            # done, then catch up and arrive with everything else. The elbow
-            # only needs the shoulder to have led by a little (operator-tuned),
-            # so it begins early (0.10) for a smooth, mostly-together fold that
-            # still lets the shoulder open the path first.
+            # Center the head first so the mouth faces forward for the yawn.
+            # Neck channels (0,1) are disjoint from the arm channels and use the
+            # normal global SAFE_LIMITS (the override only covers the arm).
+            await self.trunkController.move_to(
+                {
+                    constants.NECK_PAN: constants.NECK_CENTER,   # 90 = forward
+                    constants.NECK_TILT: 90,                     # 90 = level
+                },
+                steps=30, delay=0.02,
+            )
+
+            # UP (~0.9s, 2x faster than before so the hand covers the mouth
+            # WHILE the ~2.5s yawn plays): the SHOULDER ROTATES FIRST -- rotator
+            # and tilt start immediately -- and the ELBOW + forearm hold until
+            # the move is 30% through, then bend the hand up to the mouth. This
+            # gives a clear "arm swings up, THEN the hand folds to the face"
+            # order (start_fractions are a portion of the whole move's timeline,
+            # 0.0-1.0; steps*delay sets the total duration).
             await self.trunkController.move_to(
                 {
                     constants.RT_SHOULDER_TILT: TILT_YAWN,
@@ -156,18 +172,20 @@ class Movements:
                     constants.RT_ELBOW_TILT: ELBOW_YAWN,
                     constants.RT_ELBOW_ROTATOR: FOREARM_YAWN,
                 },
-                steps=90, delay=0.02,
+                steps=45, delay=0.02,
                 start_fractions={
-                    constants.RT_ELBOW_TILT: 0.10,
-                    constants.RT_ELBOW_ROTATOR: 0.10,
+                    constants.RT_ELBOW_TILT: 0.30,
+                    constants.RT_ELBOW_ROTATOR: 0.30,
                 },
             )
 
-            await asyncio.sleep(1.5)  # hold the yawn
+            # Hold the hand over the mouth for the rest of the yawn, then lower
+            # as the sound finishes (~2.5s clip - ~0.3s lead-in - ~0.9s fold).
+            await asyncio.sleep(1.3)
 
-            # DOWN: reverse. Open the elbow/forearm first (finish by 2/3), while
-            # the shoulder lowers over the whole move, so the arm unfolds before
-            # it drops -- the mirror of the safe ordering going up.
+            # DOWN (~1.1s): reverse. Open the elbow/forearm first, then the
+            # shoulder lowers -- the arm unfolds before it drops. Lowered 20%
+            # slower than the up-fold (steps 45 -> 56) for a relaxed settle.
             await self.trunkController.move_to(
                 {
                     constants.RT_ELBOW_TILT: ELBOW_REST,
@@ -175,7 +193,7 @@ class Movements:
                     constants.RT_SHOULDER_ROTATOR: ROT_REST,
                     constants.RT_SHOULDER_TILT: TILT_REST,
                 },
-                steps=90, delay=0.02,
+                steps=56, delay=0.02,
                 start_fractions={
                     constants.RT_SHOULDER_ROTATOR: 0.33,
                     constants.RT_SHOULDER_TILT: 0.33,
@@ -183,40 +201,85 @@ class Movements:
             )
 
     async def face_palm(self):
-        """Face palm: bring the hand up toward the face in exasperation, then drop.
+        """Face palm: head drops into the hand, shakes 3x in dismay, then recovers.
 
-        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
-                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
 
-        Raises and rotates the arm, then flexes the elbow to bring the palm up to
-        the face -- stopping at the model-validated "approach" pose (elbow ~140,
-        rotator ~190) that reaches the face WITHOUT entering the guarded
-        hand-to-head zone. Holds the palm-to-face beat, then lowers.
+        Hardware-measured hand-at-face pose:
+            NECK_PAN=90, NECK_TILT=140 (head down), elbow_rot=150, elbow_tilt=145,
+            shoulder_tilt=40, shoulder_rotator=260.
+
+        The arm folds up to the face while the head drops to meet it; then, with
+        the hand covering the face, the head shakes side to side 3x (pan +/-15
+        from center) in a "I can't believe it" dismay; then the arm lowers and
+        the head returns to level.
+
+        NOTE: shoulder_tilt=40 is just below the global SAFE_LIMITS floor (45),
+        so this operator-verified pose widens that one channel via a verified-
+        pose override for the duration of the gesture. All other channels use
+        the normal global limits.
         """
-        TILT_DOWN, TILT_HOLD = 55, 60
-        ROT_DOWN, ROT_UP = 0, 190
-        ELBOW_STRAIGHT, ELBOW_FLEX = 5, 140
+        # Rest starts and measured face-palm targets.
+        NECK_PAN_CENTER = constants.NECK_CENTER          # 90
+        NECK_TILT_LEVEL, NECK_TILT_DOWN = 90, 140
+        TILT_REST, TILT_FACE = 55, 40                    # shoulder tilt unchanged
+        ROT_REST, ROT_FACE = 0, 200                      # ch7 = 200 (measured)
+        ELBOW_REST, ELBOW_FACE = 5, 145                  # ch5 = 145
+        FOREARM_REST, FOREARM_FACE = 150, 200            # ch4 = 200 (forearm turned)
 
-        # Tilt slightly + rotate the arm up in front of the face.
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_HOLD, 0.005, True)
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, True)
+        # Head-shake parameters (pan +/-7 from center, 3x).
+        SHAKE_LEFT, SHAKE_RIGHT = NECK_PAN_CENTER + 7, NECK_PAN_CENTER - 7  # 97 / 83
 
-        # Flex the elbow to bring the palm to the face (the "ugh" moment).
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_FLEX, 0.004, True)
+        # shoulder_tilt=40 is below the global floor (45); operator-verified safe
+        # in this folded-to-the-face pose only, so widen just that channel.
+        override = {constants.RT_SHOULDER_TILT: (40, 270)}
+        with TrunkController.verified_pose_override(override):
+            # Make sure the head starts centered in pan before it drops.
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_CENTER}, steps=20, delay=0.02)
 
-        await asyncio.sleep(1.2)  # hold the face-palm
+            # UP: shoulder rotates first, elbow folds the hand to the face, and
+            # the head drops to meet it -- all together for a natural motion.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_SHOULDER_TILT: TILT_FACE,
+                    constants.RT_SHOULDER_ROTATOR: ROT_FACE,
+                    constants.RT_ELBOW_TILT: ELBOW_FACE,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_FACE,
+                    constants.NECK_TILT: NECK_TILT_DOWN,
+                },
+                steps=45, delay=0.02,
+                start_fractions={
+                    constants.RT_ELBOW_TILT: 0.30,
+                    constants.RT_ELBOW_ROTATOR: 0.30,
+                },
+            )
 
-        # Drop the hand and lower the arm.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_FLEX, 0.005, False)
-        lower_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, False))
-        untilt_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_HOLD, 0.005, False))
-        await asyncio.gather(lower_task, untilt_task)
+            # HOLD + head shake: with the hand over the face, shake the head
+            # side to side 3x (+/-15 from center), then return to center.
+            for _ in range(3):
+                await self.trunkController.move(
+                    constants.NECK_PAN, SHAKE_RIGHT, SHAKE_LEFT, 0.024, True, 0.05)
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_CENTER}, steps=20, delay=0.02)
+
+            # DOWN (~1.1s, 20% slower): open the elbow first, then the shoulder
+            # lowers and the head comes back up to level.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_ELBOW_TILT: ELBOW_REST,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                    constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                    constants.RT_SHOULDER_TILT: TILT_REST,
+                    constants.NECK_TILT: NECK_TILT_LEVEL,
+                },
+                steps=84, delay=0.02,
+                start_fractions={
+                    constants.RT_SHOULDER_ROTATOR: 0.33,
+                    constants.RT_SHOULDER_TILT: 0.33,
+                },
+            )
 
     async def menacing_reach(self):
         """Menacing reach: slowly extend the arm out toward the audience, claw, retract.

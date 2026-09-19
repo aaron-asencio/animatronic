@@ -129,7 +129,7 @@ pip install -r requirements.txt
 Run from the repo root (the venv lives at the repo root):
 
 ```bash
-sudo .venv/bin/python3 src/animatronic.py --action=<action>
+sudo .venv/bin/python src/animatronic.py --action=<action>
 ```
 
 Available actions:
@@ -155,7 +155,7 @@ Available actions:
 ### Test an individual gesture (no audio)
 
 ```bash
-sudo .venv/bin/python3 src/controller.py --action=<action>
+sudo .venv/bin/python src/controller.py --action=<action>
 ```
 
 Available gesture actions: `wave`, `yes`, `no`, `smno`, `lookAround`,
@@ -165,7 +165,7 @@ Available gesture actions: `wave`, `yes`, `no`, `smno`, `lookAround`,
 ### Run the face-palm concurrent movement demo
 
 ```bash
-sudo .venv/bin/python3 src/concurrentMovements.py
+sudo .venv/bin/python src/concurrentMovements.py
 ```
 
 ---
@@ -319,10 +319,10 @@ Flashes the eye LED on `EYE_LIGHT_PIN` on and off to confirm wiring:
 
 ```bash
 # 5 blinks at the default 0.5s on/off
-sudo .venv/bin/python3 src/eyetest.py
+sudo .venv/bin/python src/eyetest.py
 
 # Custom: 10 fast blinks
-sudo .venv/bin/python3 src/eyetest.py --count 10 --on-time 0.25 --off-time 0.25
+sudo .venv/bin/python src/eyetest.py --count 10 --on-time 0.25 --off-time 0.25
 ```
 
 Options: `--count` (blink cycles, default 5), `--on-time` / `--off-time`
@@ -335,10 +335,10 @@ the audio pipeline pulses from amplitude:
 
 ```bash
 # 5 open/close cycles at the default 0.3s
-sudo .venv/bin/python3 src/jawtest.py
+sudo .venv/bin/python src/jawtest.py
 
 # Custom: 10 quick cycles
-sudo .venv/bin/python3 src/jawtest.py --count 10 --on-time 0.15 --off-time 0.15
+sudo .venv/bin/python src/jawtest.py --count 10 --on-time 0.15 --off-time 0.15
 ```
 
 Options: `--count` (cycles, default 5), `--on-time` / `--off-time` (seconds,
@@ -352,16 +352,16 @@ Angles are clamped to the known-safe `SAFE_LIMITS` by default.
 
 ```bash
 # Read a channel's current angle (no movement)
-sudo .venv/bin/python3 src/calibrate.py --channel 1 --read
+sudo .venv/bin/python src/calibrate.py --channel 1 --read
 
 # Move channel 1 to 45 degrees (clamped to SAFE_LIMITS)
-sudo .venv/bin/python3 src/calibrate.py --channel 1 --angle 45
+sudo .venv/bin/python src/calibrate.py --channel 1 --angle 45
 
 # Nudge a few degrees from the current position (safer for probing)
-sudo .venv/bin/python3 src/calibrate.py --channel 1 --nudge 5
+sudo .venv/bin/python src/calibrate.py --channel 1 --nudge 5
 
 # Bus / wiring health check (no channel needed)
-sudo .venv/bin/python3 src/calibrate.py --health
+sudo .venv/bin/python src/calibrate.py --health
 ```
 
 Key options: `--channel N` (servo channel; see the channel table above),
@@ -418,14 +418,14 @@ Tuning tabs to work (that process owns the mic stream and effects engine).
 # Run from the repo root
 
 # 1. Start the mic controller (owns the PyAudio stream + effects) on port 5000
-sudo .venv/bin/python3 src/micwebcontroller.py &
+sudo .venv/bin/python src/micwebcontroller.py &
 
 # 2. Start the control panel on port 8000 (auto-reload is on by default)
-sudo .venv/bin/python3 src/webapp.py
+sudo .venv/bin/python src/webapp.py
 ```
 
 > Auto-reload restarts the app when you edit code. For the live display, run
-> `WEBAPP_DEV=0 sudo .venv/bin/python3 src/webapp.py` to disable it — see
+> `WEBAPP_DEV=0 sudo .venv/bin/python src/webapp.py` to disable it — see
 > [Dev auto-reload](#dev-auto-reload) below.
 
 Then open the panel in a browser on the same network:
@@ -468,14 +468,14 @@ edit `webapp.py` or any of the sibling project modules (`servo_lock.py`,
 `animatronic.py`, `controller.py`, etc.). Just run it normally:
 
 ```bash
-.venv/bin/python3 src/webapp.py
+.venv/bin/python src/webapp.py
 ```
 
 For the **live display**, disable auto-reload so a reload triggered mid-routine
 can't interrupt servo motion. Set `WEBAPP_DEV=0` (also accepts `false`/`no`/`off`):
 
 ```bash
-WEBAPP_DEV=0 sudo .venv/bin/python3 src/webapp.py
+WEBAPP_DEV=0 sudo .venv/bin/python src/webapp.py
 ```
 
 (The reloader is reloader-safe: the automation threads start only in the worker
@@ -488,7 +488,7 @@ it must be running for the Voice FX and Jaw Tuning tabs to work. To run it in th
 background and keep it alive across SSH sessions:
 
 ```bash
-sudo nohup .venv/bin/python3 src/micwebcontroller.py > /tmp/micwebcontroller.log 2>&1 &
+sudo nohup .venv/bin/python src/micwebcontroller.py > /tmp/micwebcontroller.log 2>&1 &
 ```
 
 Verify it's up:
@@ -608,4 +608,4 @@ styles.
 3. Create a method on `Animatronic` calling `self.run_action_and_audio("gesture_name", self.music[n])`.
 4. Add the action name to the `action_map` dict in `main()` in `src/animatronic.py`.
 5. Optionally register the gesture in `src/controller.py` for audio-free testing.
-6. Test the gesture alone first: `sudo .venv/bin/python3 src/controller.py --action=<gesture>`.
+6. Test the gesture alone first: `sudo .venv/bin/python src/controller.py --action=<gesture>`.

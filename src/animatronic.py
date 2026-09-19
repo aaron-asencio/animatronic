@@ -283,9 +283,10 @@ class Animatronic:
 
     async def _do_yawn(self):
         # yawn.wav is only ~2.5s, so use a short lead-in: the arm rises WITH the
-        # yawn sound (and the jaw motion) rather than 3s after the clip ends.
+        # yawn sound (and the jaw motion). Lead-in tuned to 0.05s so the hand
+        # reaches the mouth on time (was arriving slightly late at 0.3s).
         mv = Movements("Animatronic")
-        await self._run_lead(mv.yawn_cover(), 0.3)
+        await self._run_lead(mv.yawn_cover(), 0.05)
 
     async def _do_patrol(self):
         mv = Movements("Animatronic")
