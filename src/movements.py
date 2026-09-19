@@ -225,7 +225,7 @@ class Movements:
         NECK_TILT_LEVEL, NECK_TILT_DOWN = 90, 140
         TILT_REST, TILT_FACE = 55, 40
         ROT_REST, ROT_FACE = 0, 260
-        ELBOW_REST, ELBOW_FACE = 5, 145
+        ELBOW_REST, ELBOW_FACE = 5, 140
         FOREARM_REST, FOREARM_FACE = 150, 150            # forearm stays neutral
 
         # Head-shake parameters (pan +/-15 from center, 3x).
@@ -260,7 +260,7 @@ class Movements:
             # side to side 3x (+/-15 from center), then return to center.
             for _ in range(3):
                 await self.trunkController.move(
-                    constants.NECK_PAN, SHAKE_RIGHT, SHAKE_LEFT, 0.006, True, 0.05)
+                    constants.NECK_PAN, SHAKE_RIGHT, SHAKE_LEFT, 0.012, True, 0.05)
             await self.trunkController.move_to(
                 {constants.NECK_PAN: NECK_PAN_CENTER}, steps=20, delay=0.02)
 
@@ -274,7 +274,7 @@ class Movements:
                     constants.RT_SHOULDER_TILT: TILT_REST,
                     constants.NECK_TILT: NECK_TILT_LEVEL,
                 },
-                steps=56, delay=0.02,
+                steps=84, delay=0.02,
                 start_fractions={
                     constants.RT_SHOULDER_ROTATOR: 0.33,
                     constants.RT_SHOULDER_TILT: 0.33,
