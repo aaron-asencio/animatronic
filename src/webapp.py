@@ -364,8 +364,12 @@ def stop():
 # ── Routes: mic stream (proxied) ─────────────────────────────────────────────
 @app.route('/mic/<state>', methods=['POST'])
 def mic(state):
-    if state not in ('start', 'stop'):
-        return jsonify({'status': 'error', 'message': 'state must be start or stop'}), 400
+    # start/stop control the mic passthrough; record_start/record_stop capture
+    # the FX-processed output to a WAV in audio/ (proxied to the mic controller).
+    valid = ('start', 'stop', 'record_start', 'record_stop')
+    if state not in valid:
+        return jsonify({'status': 'error',
+                        'message': f'state must be one of {valid}'}), 400
     body, code = _proxy('POST', '/handler', {'action': state})
     return jsonify(body), code
 
