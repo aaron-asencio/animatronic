@@ -381,42 +381,58 @@ class Movements:
         await asyncio.gather(lower_task, unreach_task)
 
     async def beckon(self):
-        """Beckon "come here": raise the arm, palm up, curl the forearm inward 3x.
+        """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.
 
         Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
                   RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
 
-        Raises the arm up-and-forward, turns the palm up, then curls the elbow in
-        and out three times (the "come here" summon), and lowers. Rotator stays
-        modest so the curling forearm never enters the hand-to-face zone.
+        Hardware-measured beckon pose (arm closest to the body): shoulder
+        rotator=90 (lifts the arm), shoulder tilt=55, elbow rotator=30, elbow
+        tilt=125. The "come here" curl swings the elbow tilt 115<->125. The curl
+        begins before the shoulder rotation finishes -- once the raise is ~4/5
+        (0.8) complete -- so the beckon flows out of the lift. Repeats a random
+        2-3 times, then lowers. All keyframes validated collision-free.
         """
-        TILT_DOWN, TILT_UP = 55, 150
-        ROT_DOWN, ROT_UP = 0, 90
-        FOREARM_NEUTRAL, FOREARM_PALM_UP = 150, 270
-        ELBOW_OPEN, ELBOW_CURL = 5, 100
+        # Rest + beckon-pose values.
+        ROT_REST, ROT_UP = 0, 90             # shoulder rotator lifts the arm
+        TILT_REST, TILT_UP = 55, 55          # shoulder tilt stays ~55
+        FOREARM_REST, FOREARM_UP = 150, 30   # elbow rotator
+        ELBOW_REST = 0                       # elbow tilt at rest (arm extended)
+        ELBOW_LO, ELBOW_HI = 115, 125        # the "come here" curl arc
+        ELBOW_START_FRACTION = 0.8           # elbow holds until raise is 4/5 done
 
-        # Raise the arm up and forward, palm turning up.
-        raise_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, True))
-        rotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, True))
-        await asyncio.gather(raise_task, rotate_task)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR, FOREARM_NEUTRAL, FOREARM_PALM_UP, 0.003, True)
+        # RAISE: rotator up + tilt + forearm from t=0; the elbow tilt holds open
+        # until the rotation is 4/5 complete, then curls in to the first extreme.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: ROT_UP,
+                constants.RT_SHOULDER_TILT: TILT_UP,
+                constants.RT_ELBOW_ROTATOR: FOREARM_UP,
+                constants.RT_ELBOW_TILT: ELBOW_LO,
+            },
+            steps=45, delay=0.02,
+            start_fractions={constants.RT_ELBOW_TILT: ELBOW_START_FRACTION},
+        )
 
-        # Beckon: curl the elbow in and out 3x.
-        for _ in range(3):
-            await self.trunkController.move(
-                constants.RT_ELBOW_TILT, ELBOW_OPEN, ELBOW_CURL, 0.004, True, self.DEFAULT_DELAY)
+        # BECKON: curl the forearm in and out a random 2-3 times.
+        curls = random.randint(2, 3)
+        print(f"[beckon] beckoning {curls} time(s)")
+        for _ in range(curls):
+            await self.trunkController.move_to(
+                {constants.RT_ELBOW_TILT: ELBOW_HI}, steps=14, delay=0.02)
+            await self.trunkController.move_to(
+                {constants.RT_ELBOW_TILT: ELBOW_LO}, steps=14, delay=0.02)
 
-        # Lower everything back to rest.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR, FOREARM_NEUTRAL, FOREARM_PALM_UP, 0.003, False)
-        lower_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False))
-        unrotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, False))
-        await asyncio.gather(lower_task, unrotate_task)
+        # LOWER: extend the elbow, lower the arm, forearm back to rest, together.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                constants.RT_SHOULDER_TILT: TILT_REST,
+                constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                constants.RT_ELBOW_TILT: ELBOW_REST,
+            },
+            steps=50, delay=0.02,
+        )
 
     async def come(self):
         """Beckon: raise arm, rotate palm up, curl elbow 3×, lower.
