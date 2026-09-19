@@ -38,6 +38,7 @@ Dependency chain
 """
 
 import asyncio
+import random
 from trunkcontroller import TrunkController
 import constants
 
@@ -76,37 +77,97 @@ class Movements:
     #   RT_ELBOW_ROTATOR (4): 150=neutral, 270=palm up, 0=palm down
 
     async def wave(self):
-        """Wave hello: raise the arm up and out, then rock the forearm.
+        """Wave hello: raise the arm up, wave it while the head pans, then lower.
 
-        Channels: RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+        Channels: NECK_PAN (0), RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
 
-        Raises the arm out to the side and up (tilt 55 -> 180), bends the elbow
-        to a right angle so the forearm points up, rocks the forearm side to
-        side 3x (the wave), then lowers. Shoulder rotator stays at 0, so this is
-        a clean out-to-the-side wave that never approaches the head.
+        Standalone signature wave: the head pans as part of the gesture. For use
+        inside composites that pair the wave with a separate head gesture, call
+        _wave_arm(include_neck=False) so the head gesture owns the neck channels.
         """
-        TILT_DOWN, TILT_UP = 55, 180
-        ELBOW_STRAIGHT, ELBOW_BENT = 5, 90
-        FOREARM_LEFT, FOREARM_RIGHT = 90, 210
+        await self._wave_arm(include_neck=True)
 
-        # Raise the arm out to the side, then bend the elbow up.
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.003, True)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_BENT, 0.004, True)
+    async def _wave_arm(self, include_neck=True):
+        """Core wave motion: raise the arm, oscillate it, then lower.
 
-        # Wave: rock the forearm between the two rotator angles 3x.
-        for i in range(3):
-            revert = i % 2 == 0
-            await self.trunkController.move(
-                constants.RT_ELBOW_ROTATOR,
-                FOREARM_LEFT, FOREARM_RIGHT, 0.003, revert, 0.04)
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4), and optionally
+                  NECK_PAN (0).
 
-        # Lower: straighten the elbow, then bring the arm back down.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_BENT, 0.004, False)
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False)
+        Hardware-measured arm-up pose: shoulder rotator=270 (this is what lifts
+        the arm), shoulder tilt=55, elbow tilt=30, forearm=29. With the arm up,
+        the wave oscillates the shoulder tilt (45<->65) and elbow tilt (22<->38)
+        TOGETHER a random 2-4 times, then returns to center and lowers. All
+        keyframes validated collision-free.
+
+        Args:
+            include_neck: When True, the head pans (80<->110) in sync with the
+                wave. Set False when a caller gathers this with a head gesture,
+                so the neck-pan channel isn't driven by two coroutines at once.
+        """
+        # Rest + arm-up values.
+        ROT_REST, ROT_UP = 0, 270            # rotator lifts the arm
+        TILT_REST, TILT_CENTER = 55, 55      # tilt stays ~55 (rest == wave center)
+        ELBOW_REST, ELBOW_CENTER = 5, 30
+        FOREARM_REST, FOREARM_UP = 150, 29
+        # Wave oscillation extremes (paired so the joints swing together).
+        TILT_LO, TILT_HI = 45, 65
+        ELBOW_LO, ELBOW_HI = 22, 38
+        PAN_LO, PAN_HI = 80, 110
+        PAN_CENTER = constants.NECK_CENTER   # 90
+
+        # RAISE: rotator up, elbow to the wave center, forearm to its up angle,
+        # all together for a smooth lift.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: ROT_UP,
+                constants.RT_SHOULDER_TILT: TILT_CENTER,
+                constants.RT_ELBOW_TILT: ELBOW_CENTER,
+                constants.RT_ELBOW_ROTATOR: FOREARM_UP,
+            },
+            steps=45, delay=0.02,
+        )
+
+        # WAVE: a random 2-4 cycles. Each cycle swings the tilt/elbow/pan to one
+        # extreme then the other (that is one back-and-forth wave), moved
+        # together via move_to for a natural synchronized wave.
+        cycles = random.randint(2, 4)
+        print(f"[wave] waving {cycles} time(s)")
+        for _ in range(cycles):
+            hi = {
+                constants.RT_SHOULDER_TILT: TILT_HI,
+                constants.RT_ELBOW_TILT: ELBOW_HI,
+            }
+            lo = {
+                constants.RT_SHOULDER_TILT: TILT_LO,
+                constants.RT_ELBOW_TILT: ELBOW_LO,
+            }
+            if include_neck:
+                hi[constants.NECK_PAN] = PAN_LO
+                lo[constants.NECK_PAN] = PAN_HI
+            await self.trunkController.move_to(hi, steps=16, delay=0.02)
+            await self.trunkController.move_to(lo, steps=16, delay=0.02)
+
+        # Return the waved joints (and head, if we drove it) to center.
+        recenter = {
+            constants.RT_SHOULDER_TILT: TILT_CENTER,
+            constants.RT_ELBOW_TILT: ELBOW_CENTER,
+        }
+        if include_neck:
+            recenter[constants.NECK_PAN] = PAN_CENTER
+        await self.trunkController.move_to(recenter, steps=16, delay=0.02)
+
+        # LOWER: rotator back down, elbow/forearm back to rest, together.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                constants.RT_SHOULDER_TILT: TILT_REST,
+                constants.RT_ELBOW_TILT: ELBOW_REST,
+                constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+            },
+            steps=56, delay=0.02,
+        )
 
     async def yawn_cover(self):
         """Yawn cover: center the head, bring the hand to the mouth, hold, lower.
@@ -656,30 +717,39 @@ class Movements:
     async def wave_and_nod(self):
         """Wave the arm while nodding yes.
 
-        ARM: wave()  ·  HEAD: nod_yes()
+        ARM: _wave_arm(no neck)  ·  HEAD: nod_yes()
+
+        Uses the neck-free wave so the head gesture owns the neck channels; the
+        two coroutines then drive disjoint servos (arm+forearm vs. neck tilt).
         """
         await asyncio.gather(
-            asyncio.create_task(self.wave()),
+            asyncio.create_task(self._wave_arm(include_neck=False)),
             asyncio.create_task(self.nod_yes()),
         )
 
     async def wave_and_look_around(self):
         """Wave the arm while scanning the environment.
 
-        ARM: wave()  ·  HEAD: look_around()
+        ARM: _wave_arm(no neck)  ·  HEAD: look_around()
+
+        Uses the neck-free wave so look_around() owns NECK_PAN/NECK_TILT without
+        the wave fighting it for the pan channel.
         """
         await asyncio.gather(
-            asyncio.create_task(self.wave()),
+            asyncio.create_task(self._wave_arm(include_neck=False)),
             asyncio.create_task(self.look_around()),
         )
 
     async def wave_and_swivel(self):
         """Wave the arm while doing a double neck-ellipse swivel.
 
-        ARM: wave()  ·  HEAD: swivel_head()
+        ARM: _wave_arm(no neck)  ·  HEAD: swivel_head()
+
+        Uses the neck-free wave so swivel_head() owns the neck channels without
+        the wave fighting it for the pan channel.
         """
         await asyncio.gather(
-            asyncio.create_task(self.wave()),
+            asyncio.create_task(self._wave_arm(include_neck=False)),
             asyncio.create_task(self.swivel_head()),
         )
 
