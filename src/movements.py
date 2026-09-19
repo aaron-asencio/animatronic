@@ -194,7 +194,7 @@ class Movements:
         # Resting starts (from REST_POSITIONS) and measured yawn targets.
         TILT_REST, TILT_YAWN = 55, 35
         ROT_REST, ROT_YAWN = 0, 200
-        ELBOW_REST, ELBOW_YAWN = 5, 165
+        ELBOW_REST, ELBOW_YAWN = 0, 165
         FOREARM_REST, FOREARM_YAWN = 150, 185
 
         # tilt=35 and elbow=170 fall BELOW/ABOVE the conservative global
@@ -287,7 +287,7 @@ class Movements:
         NECK_TILT_LEVEL, NECK_TILT_DOWN = 90, 140
         TILT_REST, TILT_FACE = 55, 40                    # shoulder tilt unchanged
         ROT_REST, ROT_FACE = 0, 200                      # ch7 = 200 (measured)
-        ELBOW_REST, ELBOW_FACE = 5, 145                  # ch5 = 145
+        ELBOW_REST, ELBOW_FACE = 0, 145                  # ch5 = 145
         FOREARM_REST, FOREARM_FACE = 150, 200            # ch4 = 200 (forearm turned)
 
         # Head-shake parameters (pan +/-7 from center, 3x).
