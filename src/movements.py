@@ -96,9 +96,10 @@ class Movements:
                   NECK_PAN (0).
 
         Hardware-measured arm-up pose: shoulder rotator=270 (this is what lifts
-        the arm), shoulder tilt=55, elbow tilt=30, forearm=29. With the arm up,
-        the wave oscillates the shoulder tilt (45<->65) and elbow tilt (22<->38)
-        TOGETHER a random 2-4 times, then returns to center and lowers. All
+        the arm), shoulder tilt=55, elbow tilt=0 (arm extended), forearm=30.
+        With the arm up, the wave flaps the elbow rotator (22<->38) and swings
+        the shoulder tilt (45<->65) TOGETHER a random 1-2 times, then returns to
+        center and lowers. The elbow tilt stays flat at 0 throughout. All
         keyframes validated collision-free.
 
         Args:
@@ -107,13 +108,13 @@ class Movements:
                 so the neck-pan channel isn't driven by two coroutines at once.
         """
         # Rest + arm-up values.
-        ROT_REST, ROT_UP = 0, 270            # rotator lifts the arm
-        TILT_REST, TILT_CENTER = 55, 55      # tilt stays ~55 (rest == wave center)
-        ELBOW_REST, ELBOW_CENTER = 0, 30
-        FOREARM_REST, FOREARM_UP = 150, 29
+        ROT_REST, ROT_UP = 0, 270            # shoulder rotator lifts the arm
+        TILT_REST, TILT_CENTER = 55, 55      # shoulder tilt stays ~55 (rest == wave center)
+        ELBOW_REST, ELBOW_UP = 0, 0          # elbow tilt held flat (arm extended)
+        FOREARM_REST, FOREARM_CENTER = 150, 30
         # Wave oscillation extremes (paired so the joints swing together).
-        TILT_LO, TILT_HI = 45, 65
-        ELBOW_LO, ELBOW_HI = 22, 38
+        TILT_LO, TILT_HI = 45, 65            # shoulder tilt
+        FOREARM_LO, FOREARM_HI = 22, 38      # elbow rotator (ch4) = the wave flap
         PAN_LO, PAN_HI = 84, 96
         PAN_CENTER = constants.NECK_CENTER   # 90
 
@@ -123,8 +124,8 @@ class Movements:
             {
                 constants.RT_SHOULDER_ROTATOR: ROT_UP,
                 constants.RT_SHOULDER_TILT: TILT_CENTER,
-                constants.RT_ELBOW_TILT: ELBOW_CENTER,
-                constants.RT_ELBOW_ROTATOR: FOREARM_UP,
+                constants.RT_ELBOW_TILT: ELBOW_UP,
+                constants.RT_ELBOW_ROTATOR: FOREARM_CENTER,
             },
             steps=45, delay=0.02,
         )
@@ -138,11 +139,11 @@ class Movements:
         for _ in range(cycles):
             hi = {
                 constants.RT_SHOULDER_TILT: TILT_HI,
-                constants.RT_ELBOW_TILT: ELBOW_HI,
+                constants.RT_ELBOW_ROTATOR: FOREARM_HI,
             }
             lo = {
                 constants.RT_SHOULDER_TILT: TILT_LO,
-                constants.RT_ELBOW_TILT: ELBOW_LO,
+                constants.RT_ELBOW_ROTATOR: FOREARM_LO,
             }
             if include_neck:
                 hi[constants.NECK_PAN] = PAN_LO
@@ -153,7 +154,7 @@ class Movements:
         # Return the waved joints (and head, if we drove it) to center.
         recenter = {
             constants.RT_SHOULDER_TILT: TILT_CENTER,
-            constants.RT_ELBOW_TILT: ELBOW_CENTER,
+            constants.RT_ELBOW_ROTATOR: FOREARM_CENTER,
         }
         if include_neck:
             recenter[constants.NECK_PAN] = PAN_CENTER
