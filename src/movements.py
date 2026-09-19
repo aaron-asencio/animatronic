@@ -228,8 +228,8 @@ class Movements:
         ELBOW_REST, ELBOW_FACE = 5, 140
         FOREARM_REST, FOREARM_FACE = 150, 150            # forearm stays neutral
 
-        # Head-shake parameters (pan +/-15 from center, 3x).
-        SHAKE_LEFT, SHAKE_RIGHT = NECK_PAN_CENTER + 15, NECK_PAN_CENTER - 15  # 105 / 75
+        # Head-shake parameters (pan +/-7 from center, 3x).
+        SHAKE_LEFT, SHAKE_RIGHT = NECK_PAN_CENTER + 7, NECK_PAN_CENTER - 7  # 97 / 83
 
         # shoulder_tilt=40 is below the global floor (45); operator-verified safe
         # in this folded-to-the-face pose only, so widen just that channel.
