@@ -223,10 +223,10 @@ class Movements:
         # Rest starts and measured face-palm targets.
         NECK_PAN_CENTER = constants.NECK_CENTER          # 90
         NECK_TILT_LEVEL, NECK_TILT_DOWN = 90, 140
-        TILT_REST, TILT_FACE = 55, 40
-        ROT_REST, ROT_FACE = 0, 260
-        ELBOW_REST, ELBOW_FACE = 5, 135
-        FOREARM_REST, FOREARM_FACE = 150, 150            # forearm stays neutral
+        TILT_REST, TILT_FACE = 55, 40                    # shoulder tilt unchanged
+        ROT_REST, ROT_FACE = 0, 200                      # ch7 = 200 (measured)
+        ELBOW_REST, ELBOW_FACE = 5, 145                  # ch5 = 145
+        FOREARM_REST, FOREARM_FACE = 150, 200            # ch4 = 200 (forearm turned)
 
         # Head-shake parameters (pan +/-7 from center, 3x).
         SHAKE_LEFT, SHAKE_RIGHT = NECK_PAN_CENTER + 7, NECK_PAN_CENTER - 7  # 97 / 83
