@@ -680,7 +680,7 @@ class Movements:
         # Start centered so every scan begins from a known head-level pose.
         await self.trunkController.move_to(
             {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
-            steps=25, delay=0.02,
+            steps=25, delay=0.04,
         )
 
         loop = asyncio.get_event_loop()
@@ -699,7 +699,7 @@ class Movements:
             steps = random.randint(22, 34)
             await self.trunkController.move_to(
                 {constants.NECK_PAN: pan, constants.NECK_TILT: tilt},
-                steps=steps, delay=0.02,
+                steps=steps, delay=0.04,
             )
             # Brief settle/gaze pause before the next glance.
             await asyncio.sleep(random.uniform(0.2, 0.6))
@@ -707,7 +707,7 @@ class Movements:
         # Return to the resting center when done.
         await self.trunkController.move_to(
             {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
-            steps=25, delay=0.02,
+            steps=25, delay=0.04,
         )
 
     async def look_around_small(self):
