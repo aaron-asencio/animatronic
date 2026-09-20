@@ -410,7 +410,7 @@ class Movements:
                 constants.RT_ELBOW_ROTATOR: FOREARM_UP,
                 constants.RT_ELBOW_TILT: ELBOW_LO,
             },
-            steps=45, delay=0.02,
+            steps=45, delay=0.025,
         )
 
         # BECKON: curl the forearm in and out a random 3-4 times.
@@ -418,9 +418,9 @@ class Movements:
         print(f"[beckon] beckoning {curls} time(s)")
         for _ in range(curls):
             await self.trunkController.move_to(
-                {constants.RT_ELBOW_TILT: ELBOW_HI}, steps=14, delay=0.02)
+                {constants.RT_ELBOW_TILT: ELBOW_HI}, steps=14, delay=0.025)
             await self.trunkController.move_to(
-                {constants.RT_ELBOW_TILT: ELBOW_LO}, steps=14, delay=0.02)
+                {constants.RT_ELBOW_TILT: ELBOW_LO}, steps=14, delay=0.025)
 
         # Hold the beckon pose briefly before lowering.
         await asyncio.sleep(0.25)
@@ -433,7 +433,7 @@ class Movements:
                 constants.RT_ELBOW_ROTATOR: FOREARM_REST,
                 constants.RT_ELBOW_TILT: ELBOW_REST,
             },
-            steps=50, delay=0.02,
+            steps=50, delay=0.025,
         )
 
     async def come(self):
