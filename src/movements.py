@@ -701,8 +701,8 @@ class Movements:
                 {constants.NECK_PAN: pan, constants.NECK_TILT: tilt},
                 steps=steps, delay=0.04,
             )
-            # Brief settle/gaze pause before the next glance.
-            await asyncio.sleep(random.uniform(0.2, 0.6))
+            # Random settle/gaze pause before the next glance.
+            await asyncio.sleep(random.uniform(0.4, 1.2))
 
         # Return to the resting center when done.
         await self.trunkController.move_to(
