@@ -391,7 +391,7 @@ class Movements:
         tilt=125. The "come here" curl swings the elbow tilt 115<->125. The curl
         begins before the shoulder rotation finishes -- once the raise is ~4/5
         (0.8) complete -- so the beckon flows out of the lift. Repeats a random
-        2-3 times, then lowers. All keyframes validated collision-free.
+        3-4 times, holds briefly, then lowers. All keyframes validated collision-free.
         """
         # Rest + beckon-pose values.
         ROT_REST, ROT_UP = 0, 90             # shoulder rotator lifts the arm
@@ -414,14 +414,17 @@ class Movements:
             start_fractions={constants.RT_ELBOW_TILT: ELBOW_START_FRACTION},
         )
 
-        # BECKON: curl the forearm in and out a random 2-3 times.
-        curls = random.randint(2, 3)
+        # BECKON: curl the forearm in and out a random 3-4 times.
+        curls = random.randint(3, 4)
         print(f"[beckon] beckoning {curls} time(s)")
         for _ in range(curls):
             await self.trunkController.move_to(
                 {constants.RT_ELBOW_TILT: ELBOW_HI}, steps=14, delay=0.02)
             await self.trunkController.move_to(
                 {constants.RT_ELBOW_TILT: ELBOW_LO}, steps=14, delay=0.02)
+
+        # Hold the beckon pose briefly before lowering.
+        await asyncio.sleep(0.5)
 
         # LOWER: extend the elbow, lower the arm, forearm back to rest, together.
         await self.trunkController.move_to(
