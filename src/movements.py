@@ -605,30 +605,22 @@ class Movements:
 
         Channels: NECK_TILT (1)
 
-        Args:
-            reps: Number of nod cycles (default 2).
-        """
-        NECK_TILT_MIN = 20
-        NECK_TILT_MAX = 60
-        for _ in range(reps):
-            await self.trunkController.move(
-                constants.NECK_TILT,
-                NECK_TILT_MIN, NECK_TILT_MAX, 0.015, True, 0.05)
-
-    async def nod_yes(self, reps=2):
-        """Emphatic yes-nod: wider tilt arc than nod(), same repeat pattern.
-
-        Channels: NECK_TILT (1)
+        Starts and ends level (tilt=90). Uses move_to so the smoothstep
+        ease-in/out applies to each dip.
 
         Args:
             reps: Number of nod cycles (default 2).
         """
-        NECK_TILT_MIN = 0
-        NECK_TILT_MAX = 30
+        NECK_TILT_LEVEL = constants.NECK_CENTER   # 90 = level
+        NECK_TILT_DOWN = 120                       # chin down for the nod
+        # Start level.
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: NECK_TILT_LEVEL}, steps=15, delay=0.02)
         for _ in range(reps):
-            await self.trunkController.move(
-                constants.NECK_TILT,
-                NECK_TILT_MIN, NECK_TILT_MAX, 0.015, True, 0.05)
+            await self.trunkController.move_to(
+                {constants.NECK_TILT: NECK_TILT_DOWN}, steps=18, delay=0.02)
+            await self.trunkController.move_to(
+                {constants.NECK_TILT: NECK_TILT_LEVEL}, steps=18, delay=0.02)
 
     async def look_up(self):
         """Look up: tilt head back, hold briefly, return to level.
@@ -751,41 +743,56 @@ class Movements:
         await asyncio.sleep(1)
         await self.trunkController.neck_center()
 
-    async def scan(self):
-        """Pan the head side-to-side twice, return to center.
+    async def scan(self, reps=2):
+        """Pan the head side-to-side, return to center.
 
-        Channels: NECK_PAN (0)
+        Channels: NECK_PAN (0), NECK_TILT (1)
+
+        Levels the tilt to 90 and centers pan first, sweeps left/right via
+        move_to (smoothstep eased), then returns to center.
+
+        Args:
+            reps: Number of full side-to-side sweeps (default 2).
         """
-        await self.trunkController.neck_center()
-        for _ in range(2):
-            await self.trunkController.neck_pan()
-        await asyncio.sleep(1)
-        await self.trunkController.neck_center()
-
-    async def slow_scan(self):
-        """Deliberate surveillance sweep: center → left → right → center.
-
-        Channels: NECK_PAN (0)
-        """
-        await self.trunkController.neck_center()
-        await self.trunkController.slow_scan()
+        CENTER = constants.NECK_CENTER   # 90 pan + tilt neutral
+        PAN_LEFT, PAN_RIGHT = 120, 60
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=18, delay=0.02)
+        for _ in range(reps):
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: PAN_LEFT}, steps=22, delay=0.02)
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: PAN_RIGHT}, steps=22, delay=0.02)
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=18, delay=0.02)
 
     async def shake_head(self, reps=3):
         """Side-to-side head shake (full pan arc).
 
-        Channels: NECK_PAN (0)
+        Channels: NECK_PAN (0), NECK_TILT (1)
+
+        Levels the tilt to 90 and centers pan first, shakes left/right via
+        move_to (smoothstep eased), then returns to center.
 
         Args:
             reps: Number of pan sweeps (default 3).
         """
+        CENTER = constants.NECK_CENTER   # 90
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 120
-        await self.trunkController.neck_center()
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=18, delay=0.02)
         for _ in range(reps):
-            await self.trunkController.move(
-                constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, True, 1)
-        await asyncio.sleep(1)
-        await self.trunkController.neck_center()
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_MAX}, steps=20, delay=0.02)
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_MIN}, steps=20, delay=0.02)
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=18, delay=0.02)
 
     async def shake_no(self, reps=2):
         """Emphatic "no" shake: wide pan arc (30–150°).
@@ -795,14 +802,20 @@ class Movements:
         Args:
             reps: Number of pan sweeps (default 2).
         """
+        CENTER = constants.NECK_CENTER   # 90
         NECK_PAN_MIN = 30
         NECK_PAN_MAX = 150
-        await self.trunkController.neck_center()
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=18, delay=0.02)
         for _ in range(reps):
-            await self.trunkController.move(
-                constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, True, 0.01)
-        await asyncio.sleep(.5)
-        await self.trunkController.neck_center()
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_MAX}, steps=18, delay=0.02)
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_MIN}, steps=18, delay=0.02)
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=18, delay=0.02)
 
     async def small_shake_no(self, reps=2):
         """Subtle "no" shake: narrow pan arc (70–110°).
@@ -812,14 +825,20 @@ class Movements:
         Args:
             reps: Number of pan sweeps (default 2).
         """
+        CENTER = constants.NECK_CENTER   # 90
         NECK_PAN_MIN = 70
         NECK_PAN_MAX = 110
-        await self.trunkController.neck_center()
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=15, delay=0.02)
         for _ in range(reps):
-            await self.trunkController.move(
-                constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.005, True, 0.01)
-        await asyncio.sleep(1)
-        await self.trunkController.neck_center()
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_MAX}, steps=15, delay=0.02)
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: NECK_PAN_MIN}, steps=15, delay=0.02)
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=15, delay=0.02)
 
     # ================================================================== #
     # COMPOSITE gestures — arm + head gathered simultaneously             #
