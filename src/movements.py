@@ -345,40 +345,60 @@ class Movements:
             )
 
     async def menacing_reach(self):
-        """Menacing reach: slowly extend the arm out toward the audience, claw, retract.
+        """Menacing reach: extend the arm out, then slowly menace with the shoulder tilt.
 
         Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
-                  RT_ELBOW_TILT (5)
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
 
-        Raises the arm out to roughly shoulder height and rotates it forward
-        toward the audience (a slow, deliberate reach), then curls the elbow
-        slightly into a grasping "claw", holds, and retracts. Stays out in front
-        -- never near the head/body.
+        Hardware-measured arm-out pose: shoulder rotator=209 (rotates the
+        extended arm out toward the audience), shoulder tilt=40, elbow rotator=0,
+        elbow tilt=0 (arm straight). With the arm out, the shoulder tilt swings
+        slowly 25<->55 three times (the menacing reach), then the arm retracts.
+
+        shoulder_tilt dips to 25, below the global floor (45); this is
+        operator-verified safe in this arm-out pose only, so widen just that
+        channel via verified_pose_override. All keyframes validated
+        collision-free against the kinematic model.
         """
-        TILT_DOWN, TILT_OUT = 55, 130
-        ROT_DOWN, ROT_FWD = 0, 100
-        ELBOW_STRAIGHT, ELBOW_CLAW = 5, 40
+        # Rest + arm-out pose values.
+        ROT_REST, ROT_OUT = 0, 209           # shoulder rotator extends the arm out
+        TILT_REST, TILT_CENTER = 55, 40      # shoulder tilt (40 = reach center)
+        FOREARM_REST, FOREARM_OUT = 150, 0   # elbow rotator (arm extended)
+        ELBOW_REST, ELBOW_OUT = 0, 0         # elbow tilt straight (arm extended)
+        TILT_LO, TILT_HI = 25, 55            # the slow menacing swing
 
-        # Slow, deliberate raise + forward reach (simultaneous for a smooth reach).
-        raise_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_OUT, 0.006, True))
-        reach_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_FWD, 0.006, True))
-        await asyncio.gather(raise_task, reach_task)
+        # tilt dips to 25, below the global floor of 45; operator-verified safe
+        # in this arm-out pose only, so widen just that channel.
+        override = {constants.RT_SHOULDER_TILT: (25, 270)}
+        with TrunkController.verified_pose_override(override):
+            # REACH: rotate the extended arm out and forward together.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_SHOULDER_ROTATOR: ROT_OUT,
+                    constants.RT_SHOULDER_TILT: TILT_CENTER,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_OUT,
+                    constants.RT_ELBOW_TILT: ELBOW_OUT,
+                },
+                steps=50, delay=0.025,
+            )
 
-        # Claw: curl the elbow slightly, a couple of grasping motions.
-        for _ in range(2):
-            await self.trunkController.move(
-                constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_CLAW, 0.005, True, 0.2)
+            # MENACE: swing the shoulder tilt slowly 25<->55, three times.
+            for _ in range(3):
+                await self.trunkController.move_to(
+                    {constants.RT_SHOULDER_TILT: TILT_HI}, steps=24, delay=0.03)
+                await self.trunkController.move_to(
+                    {constants.RT_SHOULDER_TILT: TILT_LO}, steps=24, delay=0.03)
 
-        await asyncio.sleep(0.6)  # hold the reach
-
-        # Retract slowly.
-        lower_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_OUT, 0.006, False))
-        unreach_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_FWD, 0.006, False))
-        await asyncio.gather(lower_task, unreach_task)
+            # RETRACT: return the arm to rest.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                    constants.RT_SHOULDER_TILT: TILT_REST,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                    constants.RT_ELBOW_TILT: ELBOW_REST,
+                },
+                steps=55, delay=0.025,
+            )
 
     async def beckon(self):
         """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.
