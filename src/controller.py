@@ -10,15 +10,15 @@ Usage:
     python3 controller.py --action=<action_name>
 
 ARM gestures (channels 4–7):
-    wave, come, comein, beckon, reachOut, menacingReach, yawnCover, facePalm
+    wave, come, beckon, comeHere, reachOut, menacingReach, yawnCover, facePalm
 
 HEAD gestures (channels 0–1):
-    nod, nodYes, lookUp, lookAround, lookAroundSmall, neckEllipse,
+    nod, nodYes, lookUp, lookAround, lookAroundSmall, lookAroundRandom, neckEllipse,
     swivelHead, scan, slowScan, shakeHead, shakeNo, smallShakeNo
 
 COMPOSITE gestures (arm + head simultaneously):
-    waveAndNod, waveAndLookAround, waveAndSwivel,
-    comeAndLook, comeAndSwivel, reachAndLook, yawnAndLookUp, patrol
+    waveAndSwivel,
+    comeAndLook, reachAndLook, patrol
 """
 
 from movements import Movements
@@ -40,8 +40,8 @@ def main(args):
         # --- ARM gestures ---
         'wave':             mv.wave,
         'come':             mv.come,
-        'comein':           mv.comein,
         'beckon':           mv.beckon,
+        'comeHere':         mv.come_here,
         'reachOut':         mv.reach_out,
         'menacingReach':    mv.menacing_reach,
         'yawnCover':        mv.yawn_cover,
@@ -53,6 +53,7 @@ def main(args):
         'lookUp':           mv.look_up,
         'lookAround':       mv.look_around,
         'lookAroundSmall':  mv.look_around_small,
+        'lookAroundRandom': mv.look_around_random,
         'neckEllipse':      mv.neck_ellipse,
         'swivelHead':       mv.swivel_head,
         'scan':             mv.scan,
@@ -62,13 +63,9 @@ def main(args):
         'smno':             mv.small_shake_no,
 
         # --- COMPOSITE gestures ---
-        'waveAndNod':       mv.wave_and_nod,
-        'waveAndLookAround': mv.wave_and_look_around,
         'waveAndSwivel':    mv.wave_and_swivel,
         'comeAndLook':      mv.come_and_look,
-        'comeAndSwivel':    mv.come_and_swivel,
         'reachAndLook':     mv.reach_and_look,
-        'yawnAndLookUp':    mv.yawn_and_look_up,
         'patrol':           mv.patrol,
     }
 

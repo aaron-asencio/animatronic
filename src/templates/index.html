@@ -114,6 +114,20 @@
     .stop-btn:hover { background: #e74c3c; }
     .stop-btn:active { transform: scale(0.96); }
     #busy-banner .stop-btn { margin-left: auto; }
+    /* Record button (FX mic capture) */
+    #record-btn {
+      background: var(--panel); color: #eee; border: 1px solid var(--border);
+      padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+      font-weight: 600;
+    }
+    #record-btn:hover:not(:disabled) { border-color: #e74c3c; color: #fff; }
+    #record-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    #record-btn.recording {
+      background: #c0392b; color: #fff; border-color: #e74c3c;
+      animation: rec-pulse 1s infinite;
+    }
+    @keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
   </style>
 </head>
 <body>
@@ -145,6 +159,11 @@
       <input type="checkbox" id="mic-toggle" onchange="toggleMic(this.checked)">
       <span class="slider-sw"></span>
     </label>
+    &nbsp;|&nbsp;
+    <button id="record-btn" onclick="toggleRecord()" disabled
+            title="Record the FX-processed mic voice to audio/live_mic_<timestamp>.wav (mic must be on)">
+      ● Record
+    </button>
   </div>
 
   <!-- ROUTINES -->
@@ -397,6 +416,31 @@
     // ── Mic ────────────────────────────────────────────────────────────────
     function toggleMic(on) { post('/mic/' + (on ? 'start' : 'stop')); }
 
+    // Record the FX-processed mic output to audio/live_mic_<timestamp>.wav.
+    // Only meaningful while the mic is streaming; the server rejects otherwise.
+    let recording = false;
+    async function toggleRecord() {
+      const data = await post('/mic/' + (recording ? 'record_stop' : 'record_start'));
+      // Reflect the new state; on stop, surface the saved filename.
+      if (data && data.status === 'success') {
+        recording = !recording;
+        if (!recording && data.filename) toast('Saved: ' + data.filename);
+      }
+      updateRecordButton();
+    }
+
+    // Enable/label the record button from the current mic + record state.
+    function updateRecordButton(streaming) {
+      const btn = document.getElementById('record-btn');
+      if (!btn) return;
+      const micOn = (typeof streaming === 'boolean')
+        ? streaming
+        : document.getElementById('mic-toggle').checked;
+      btn.disabled = !micOn;
+      btn.textContent = recording ? '■ Stop Recording' : '● Record';
+      btn.classList.toggle('recording', recording);
+    }
+
     // ── Voice FX ─────────────────────────────────────────────────────────────
     function setStyle(style) {
       post('/effects', null, {style}).then(() => syncStyleToControls(style));
@@ -473,6 +517,10 @@
         setBusy(!!data.servos_busy);
         const micToggle = document.getElementById('mic-toggle');
         if (micToggle && typeof streaming === 'boolean') micToggle.checked = streaming;
+        // Sync record state from the server (it auto-finalizes if the mic stops).
+        const serverRecording = data.mic && data.mic.is_recording;
+        if (typeof serverRecording === 'boolean') recording = serverRecording;
+        updateRecordButton(streaming);
         // Keep automation toggles in sync with server state.
         if (data.automation) {
           document.querySelectorAll('input[type=checkbox][data-auto]').forEach(cb => {

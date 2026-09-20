@@ -36,6 +36,22 @@ SERVO_PWM_FREQ_TOLERANCE = 5  # Hz
 SERVO_SIM = os.environ.get('SERVO_SIM') == '1'
 
 
+def _ease_in_out(t):
+    """Smoothstep easing: map linear progress t in [0, 1] to an S-curve.
+
+    Uses 3t^2 - 2t^3, whose derivative is 0 at both ends -- the joint eases
+    into acceleration from a standstill and decelerates smoothly into the
+    target instead of starting/stopping abruptly. This removes the jerk at the
+    start and end of each linear move. Endpoints are preserved exactly:
+    ease(0) == 0 and ease(1) == 1, so every keyframe is still hit.
+    """
+    if t <= 0.0:
+        return 0.0
+    if t >= 1.0:
+        return 1.0
+    return t * t * (3.0 - 2.0 * t)
+
+
 class _FakeServo:
     """Stand-in for a single servo channel in simulation mode."""
     def __init__(self, channel):
@@ -400,7 +416,8 @@ class TrunkController:
                 self.set_angle(servo_num, i)
                 await asyncio.sleep(delay)
 
-    async def move_to(self, targets, steps=60, delay=0.02, start_fractions=None):
+    async def move_to(self, targets, steps=60, delay=0.02, start_fractions=None,
+                      ease=True):
         """Move several joints to target angles SIMULTANEOUSLY, arriving together.
 
         Unlike ``move``/``move_by_direction`` (which sweep one channel to
@@ -429,6 +446,9 @@ class TrunkController:
                 that joint stays at its start angle until the motion progress
                 reaches the fraction, then interpolates to its target by the
                 final step. Defaults to 0 (move from the start) for every joint.
+            ease: When True (default), apply smoothstep ease-in/ease-out to each
+                joint's motion so it accelerates and decelerates smoothly rather
+                than jerking at the start/stop. Set False for pure linear motion.
         """
         start_fractions = start_fractions or {}
         steps = max(1, int(steps))
@@ -454,7 +474,10 @@ class TrunkController:
                 # Remap the joint's own progress from its start fraction to 1.0.
                 local = (progress - begin) / (1.0 - begin) if begin < 1.0 else 1.0
                 local = min(1.0, max(0.0, local))
-                angle = starts[channel] + (float(target) - starts[channel]) * local
+                # Ease in/out so the joint accelerates and decelerates smoothly
+                # instead of jerking at the endpoints (linear when ease=False).
+                eased = _ease_in_out(local) if ease else local
+                angle = starts[channel] + (float(target) - starts[channel]) * eased
                 self.set_angle(channel, int(round(angle)))
             await asyncio.sleep(delay)
 

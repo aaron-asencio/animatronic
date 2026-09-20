@@ -38,6 +38,7 @@ Dependency chain
 """
 
 import asyncio
+import random
 from trunkcontroller import TrunkController
 import constants
 
@@ -76,37 +77,102 @@ class Movements:
     #   RT_ELBOW_ROTATOR (4): 150=neutral, 270=palm up, 0=palm down
 
     async def wave(self):
-        """Wave hello: raise the arm up and out, then rock the forearm.
+        """Wave hello: raise the arm up, wave it while the head pans, then lower.
 
-        Channels: RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+        Channels: NECK_PAN (0), RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
 
-        Raises the arm out to the side and up (tilt 55 -> 180), bends the elbow
-        to a right angle so the forearm points up, rocks the forearm side to
-        side 3x (the wave), then lowers. Shoulder rotator stays at 0, so this is
-        a clean out-to-the-side wave that never approaches the head.
+        Standalone signature wave: the head pans as part of the gesture. For use
+        inside composites that pair the wave with a separate head gesture, call
+        _wave_arm(include_neck=False) so the head gesture owns the neck channels.
         """
-        TILT_DOWN, TILT_UP = 55, 180
-        ELBOW_STRAIGHT, ELBOW_BENT = 5, 90
-        FOREARM_LEFT, FOREARM_RIGHT = 90, 210
+        await self._wave_arm(include_neck=True)
 
-        # Raise the arm out to the side, then bend the elbow up.
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.003, True)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_BENT, 0.004, True)
+    async def _wave_arm(self, include_neck=True):
+        """Core wave motion: raise the arm, oscillate it, then lower.
 
-        # Wave: rock the forearm between the two rotator angles 3x.
-        for i in range(3):
-            revert = i % 2 == 0
-            await self.trunkController.move(
-                constants.RT_ELBOW_ROTATOR,
-                FOREARM_LEFT, FOREARM_RIGHT, 0.003, revert, 0.04)
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4), and optionally
+                  NECK_PAN (0).
 
-        # Lower: straighten the elbow, then bring the arm back down.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_BENT, 0.004, False)
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False)
+        Hardware-measured arm-up pose: shoulder rotator=270 (this is what lifts
+        the arm), shoulder tilt=55, elbow tilt=0 (arm extended), forearm=30.
+        With the arm up, the wave flaps the elbow rotator (22<->38) and swings
+        the shoulder tilt (45<->65) TOGETHER a random 1-2 times, then returns to
+        center and lowers. The elbow tilt stays flat at 0 throughout. All
+        keyframes validated collision-free.
+
+        Args:
+            include_neck: When True, the head pans (84<->96) in sync with the
+                wave. Set False when a caller gathers this with a head gesture,
+                so the neck-pan channel isn't driven by two coroutines at once.
+        """
+        # Rest + arm-up values.
+        ROT_REST, ROT_UP = 0, 270            # shoulder rotator lifts the arm
+        TILT_REST, TILT_CENTER = 55, 55      # shoulder tilt stays ~55 (rest == wave center)
+        ELBOW_REST, ELBOW_UP = 0, 0          # elbow tilt held flat (arm extended)
+        FOREARM_REST, FOREARM_CENTER = 150, 30
+        # Wave oscillation extremes (paired so the joints swing together).
+        TILT_LO, TILT_HI = 45, 65            # shoulder tilt
+        FOREARM_LO, FOREARM_HI = 22, 38      # elbow rotator (ch4) = the wave flap
+        PAN_LO, PAN_HI = 84, 96
+        PAN_CENTER = constants.NECK_CENTER   # 90
+        NECK_TILT_LEVEL = 90                 # head level
+
+        # RAISE: rotator up, elbow to the wave center, forearm to its up angle,
+        # all together for a smooth lift. When we own the neck (standalone
+        # wave), also level the head tilt to 90 so the wave starts head-level
+        # regardless of where a prior gesture left it.
+        raise_targets = {
+            constants.RT_SHOULDER_ROTATOR: ROT_UP,
+            constants.RT_SHOULDER_TILT: TILT_CENTER,
+            constants.RT_ELBOW_TILT: ELBOW_UP,
+            constants.RT_ELBOW_ROTATOR: FOREARM_CENTER,
+        }
+        if include_neck:
+            raise_targets[constants.NECK_TILT] = NECK_TILT_LEVEL
+        await self.trunkController.move_to(raise_targets, steps=45, delay=0.02)
+
+        # WAVE: a random 1-2 cycles. Each cycle swings the tilt/elbow/pan to one
+        # extreme then the other (that is one back-and-forth wave), moved
+        # together via move_to for a natural synchronized wave. delay=0.04 runs
+        # the wave at half the previous speed for a slower, smoother motion.
+        cycles = random.randint(1, 2)
+        print(f"[wave] waving {cycles} time(s)")
+        for _ in range(cycles):
+            hi = {
+                constants.RT_SHOULDER_TILT: TILT_HI,
+                constants.RT_ELBOW_ROTATOR: FOREARM_HI,
+            }
+            lo = {
+                constants.RT_SHOULDER_TILT: TILT_LO,
+                constants.RT_ELBOW_ROTATOR: FOREARM_LO,
+            }
+            if include_neck:
+                hi[constants.NECK_PAN] = PAN_LO
+                lo[constants.NECK_PAN] = PAN_HI
+            await self.trunkController.move_to(hi, steps=16, delay=0.04)
+            await self.trunkController.move_to(lo, steps=16, delay=0.04)
+
+        # Return the waved joints (and head, if we drove it) to center.
+        recenter = {
+            constants.RT_SHOULDER_TILT: TILT_CENTER,
+            constants.RT_ELBOW_ROTATOR: FOREARM_CENTER,
+        }
+        if include_neck:
+            recenter[constants.NECK_PAN] = PAN_CENTER
+        await self.trunkController.move_to(recenter, steps=16, delay=0.02)
+
+        # LOWER: rotator back down, elbow/forearm back to rest, together.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                constants.RT_SHOULDER_TILT: TILT_REST,
+                constants.RT_ELBOW_TILT: ELBOW_REST,
+                constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+            },
+            steps=56, delay=0.02,
+        )
 
     async def yawn_cover(self):
         """Yawn cover: center the head, bring the hand to the mouth, hold, lower.
@@ -132,7 +198,7 @@ class Movements:
         # Resting starts (from REST_POSITIONS) and measured yawn targets.
         TILT_REST, TILT_YAWN = 55, 35
         ROT_REST, ROT_YAWN = 0, 200
-        ELBOW_REST, ELBOW_YAWN = 5, 165
+        ELBOW_REST, ELBOW_YAWN = 0, 165
         FOREARM_REST, FOREARM_YAWN = 150, 185
 
         # tilt=35 and elbow=170 fall BELOW/ABOVE the conservative global
@@ -225,7 +291,7 @@ class Movements:
         NECK_TILT_LEVEL, NECK_TILT_DOWN = 90, 140
         TILT_REST, TILT_FACE = 55, 40                    # shoulder tilt unchanged
         ROT_REST, ROT_FACE = 0, 200                      # ch7 = 200 (measured)
-        ELBOW_REST, ELBOW_FACE = 5, 145                  # ch5 = 145
+        ELBOW_REST, ELBOW_FACE = 0, 145                  # ch5 = 145
         FOREARM_REST, FOREARM_FACE = 150, 200            # ch4 = 200 (forearm turned)
 
         # Head-shake parameters (pan +/-7 from center, 3x).
@@ -282,78 +348,164 @@ class Movements:
             )
 
     async def menacing_reach(self):
-        """Menacing reach: slowly extend the arm out toward the audience, claw, retract.
-
-        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
-                  RT_ELBOW_TILT (5)
-
-        Raises the arm out to roughly shoulder height and rotates it forward
-        toward the audience (a slow, deliberate reach), then curls the elbow
-        slightly into a grasping "claw", holds, and retracts. Stays out in front
-        -- never near the head/body.
-        """
-        TILT_DOWN, TILT_OUT = 55, 130
-        ROT_DOWN, ROT_FWD = 0, 100
-        ELBOW_STRAIGHT, ELBOW_CLAW = 5, 40
-
-        # Slow, deliberate raise + forward reach (simultaneous for a smooth reach).
-        raise_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_OUT, 0.006, True))
-        reach_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_FWD, 0.006, True))
-        await asyncio.gather(raise_task, reach_task)
-
-        # Claw: curl the elbow slightly, a couple of grasping motions.
-        for _ in range(2):
-            await self.trunkController.move(
-                constants.RT_ELBOW_TILT, ELBOW_STRAIGHT, ELBOW_CLAW, 0.005, True, 0.2)
-
-        await asyncio.sleep(0.6)  # hold the reach
-
-        # Retract slowly.
-        lower_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_OUT, 0.006, False))
-        unreach_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_FWD, 0.006, False))
-        await asyncio.gather(lower_task, unreach_task)
-
-    async def beckon(self):
-        """Beckon "come here": raise the arm, palm up, curl the forearm inward 3x.
+        """Menacing reach: extend the arm out, then slowly menace with the shoulder tilt.
 
         Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
                   RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
 
-        Raises the arm up-and-forward, turns the palm up, then curls the elbow in
-        and out three times (the "come here" summon), and lowers. Rotator stays
-        modest so the curling forearm never enters the hand-to-face zone.
+        Hardware-measured arm-out pose: shoulder rotator=209 (rotates the
+        extended arm out toward the audience), shoulder tilt=40, elbow rotator=0,
+        elbow tilt=0 (arm straight). With the arm out, the shoulder tilt swings
+        slowly 25<->55 three times (the menacing reach), then the arm retracts.
+
+        shoulder_tilt dips to 25, below the global floor (45); this is
+        operator-verified safe in this arm-out pose only, so widen just that
+        channel via verified_pose_override. All keyframes validated
+        collision-free against the kinematic model.
         """
-        TILT_DOWN, TILT_UP = 55, 150
-        ROT_DOWN, ROT_UP = 0, 90
-        FOREARM_NEUTRAL, FOREARM_PALM_UP = 150, 270
-        ELBOW_OPEN, ELBOW_CURL = 5, 100
+        # Rest + arm-out pose values.
+        ROT_REST, ROT_OUT = 0, 209           # shoulder rotator extends the arm out
+        TILT_REST, TILT_CENTER = 55, 40      # shoulder tilt (40 = reach center)
+        FOREARM_REST, FOREARM_OUT = 150, 0   # elbow rotator (arm extended)
+        ELBOW_REST, ELBOW_OUT = 0, 0         # elbow tilt straight (arm extended)
+        TILT_LO, TILT_HI = 25, 55            # the slow menacing swing
 
-        # Raise the arm up and forward, palm turning up.
-        raise_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, True))
-        rotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, True))
-        await asyncio.gather(raise_task, rotate_task)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR, FOREARM_NEUTRAL, FOREARM_PALM_UP, 0.003, True)
+        # tilt dips to 25, below the global floor of 45; operator-verified safe
+        # in this arm-out pose only, so widen just that channel.
+        override = {constants.RT_SHOULDER_TILT: (25, 270)}
+        with TrunkController.verified_pose_override(override):
+            # REACH: rotate the extended arm out and forward together.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_SHOULDER_ROTATOR: ROT_OUT,
+                    constants.RT_SHOULDER_TILT: TILT_CENTER,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_OUT,
+                    constants.RT_ELBOW_TILT: ELBOW_OUT,
+                },
+                steps=50, delay=0.025,
+            )
 
-        # Beckon: curl the elbow in and out 3x.
-        for _ in range(3):
-            await self.trunkController.move(
-                constants.RT_ELBOW_TILT, ELBOW_OPEN, ELBOW_CURL, 0.004, True, self.DEFAULT_DELAY)
+            # MENACE: swing the shoulder tilt slowly 25<->55, three times.
+            for _ in range(3):
+                await self.trunkController.move_to(
+                    {constants.RT_SHOULDER_TILT: TILT_HI}, steps=24, delay=0.03)
+                await self.trunkController.move_to(
+                    {constants.RT_SHOULDER_TILT: TILT_LO}, steps=24, delay=0.03)
 
-        # Lower everything back to rest.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR, FOREARM_NEUTRAL, FOREARM_PALM_UP, 0.003, False)
-        lower_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT, TILT_DOWN, TILT_UP, 0.004, False))
-        unrotate_task = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR, ROT_DOWN, ROT_UP, 0.004, False))
-        await asyncio.gather(lower_task, unrotate_task)
+            # RETRACT: return the arm to rest.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                    constants.RT_SHOULDER_TILT: TILT_REST,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                    constants.RT_ELBOW_TILT: ELBOW_REST,
+                },
+                steps=55, delay=0.025,
+            )
+
+    async def come_here(self):
+        """Come here: wave someone toward you -- sweep the arm from rest to a
+        pulled-in "come toward me" pose, twice.
+
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
+
+        Each rep runs from the resting position to the hardware-measured closed
+        pose (arm closest to the body): shoulder rotator=129, shoulder tilt=14,
+        elbow rotator=189, elbow tilt=140. All joints move concurrently. Runs
+        twice with a 0.1s pause at the closed pose between reps.
+
+        shoulder_tilt dips to 14, below the global floor (45); operator-verified
+        safe in this pose only, so widen just that channel via
+        verified_pose_override. All keyframes validated collision-free against
+        the kinematic model.
+        """
+        # Rest + closed-pose values.
+        ROT_REST, ROT_CLOSED = 0, 129        # shoulder rotator
+        TILT_REST, TILT_CLOSED = 55, 14      # shoulder tilt (14 = pulled in)
+        FOREARM_REST, FOREARM_CLOSED = 150, 189   # elbow rotator
+        ELBOW_REST, ELBOW_CLOSED = 0, 140    # elbow tilt (deep flex = come here)
+
+        closed = {
+            constants.RT_SHOULDER_ROTATOR: ROT_CLOSED,
+            constants.RT_SHOULDER_TILT: TILT_CLOSED,
+            constants.RT_ELBOW_ROTATOR: FOREARM_CLOSED,
+            constants.RT_ELBOW_TILT: ELBOW_CLOSED,
+        }
+        rest = {
+            constants.RT_SHOULDER_ROTATOR: ROT_REST,
+            constants.RT_SHOULDER_TILT: TILT_REST,
+            constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+            constants.RT_ELBOW_TILT: ELBOW_REST,
+        }
+
+        # tilt dips to 14, below the global floor of 45; operator-verified safe
+        # in this pulled-in pose only, so widen just that channel.
+        override = {constants.RT_SHOULDER_TILT: (14, 270)}
+        with TrunkController.verified_pose_override(override):
+            for rep in range(2):
+                # Sweep everything from rest to the closed pose, concurrently.
+                await self.trunkController.move_to(closed, steps=40, delay=0.02)
+                # Hold the "come here" pose briefly (0.1s).
+                await asyncio.sleep(0.1)
+                # Return to rest (concurrently) before the next rep / finish.
+                await self.trunkController.move_to(rest, steps=40, delay=0.02)
+
+    async def beckon(self):
+        """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.
+
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
+
+        Hardware-measured beckon pose (arm closest to the body): shoulder
+        rotator=90 (lifts the arm), shoulder tilt=55, elbow rotator=270, elbow
+        tilt=125. The "come here" curl swings the elbow tilt 105<->135, the
+        shoulder rotation and elbow tilt moving concurrently as the arm lifts.
+        Repeats a random 3-4 times, holds briefly, then lowers. All keyframes
+        validated collision-free.
+        """
+        # Rest + beckon-pose values.
+        ROT_REST, ROT_UP = 0, 90             # shoulder rotator lifts the arm
+        TILT_REST, TILT_UP = 55, 55          # shoulder tilt stays ~55
+        FOREARM_REST, FOREARM_UP = 150, 270  # elbow rotator (palm turned in)
+        ELBOW_REST = 0                       # elbow tilt at rest (arm extended)
+        ELBOW_LO, ELBOW_HI = 105, 135        # the "come here" curl arc
+
+        # RAISE: rotator up, tilt, forearm and the elbow-tilt curl all move
+        # together from t=0 -- the shoulder rotation and elbow tilt happen
+        # concurrently so the arm curls in as it lifts.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: ROT_UP,
+                constants.RT_SHOULDER_TILT: TILT_UP,
+                constants.RT_ELBOW_ROTATOR: FOREARM_UP,
+                constants.RT_ELBOW_TILT: ELBOW_LO,
+            },
+            steps=45, delay=0.025,
+        )
+
+        # BECKON: curl the forearm in and out a random 3-4 times.
+        curls = random.randint(3, 4)
+        print(f"[beckon] beckoning {curls} time(s)")
+        for _ in range(curls):
+            await self.trunkController.move_to(
+                {constants.RT_ELBOW_TILT: ELBOW_HI}, steps=14, delay=0.025)
+            await self.trunkController.move_to(
+                {constants.RT_ELBOW_TILT: ELBOW_LO}, steps=14, delay=0.025)
+
+        # Hold the beckon pose briefly before lowering.
+        await asyncio.sleep(0.25)
+
+        # LOWER: extend the elbow, lower the arm, forearm back to rest, together.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                constants.RT_SHOULDER_TILT: TILT_REST,
+                constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                constants.RT_ELBOW_TILT: ELBOW_REST,
+            },
+            steps=50, delay=0.025,
+        )
 
     async def come(self):
         """Beckon: raise arm, rotate palm up, curl elbow 3×, lower.
@@ -397,43 +549,6 @@ class Movements:
         await self.trunkController.move_by_direction(
             constants.RT_ELBOW_ROTATOR,
             RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-
-    async def comein(self):
-        """Compact beckon: tighter elbow rotation arc than come().
-
-        Channels: RT_SHOULDER_ROTATOR (7), RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
-
-        Like come() but rotates the elbow to 130° (vs 260°), giving a more
-        restrained "come inside" motion with a wider elbow curl (25 → 160°).
-        """
-        RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 40
-        RT_ELBOW_ROTATE_MIN     = 10
-        RT_ELBOW_ROTATE_MAX     = 130
-        RT_ELBOW_TILT_MIN       = 25
-        RT_ELBOW_TILT_MAX       = 160
-
-        increasing = True
-
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR,
-            RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-
-        for _ in range(3):
-            await self.trunkController.move(
-                constants.RT_ELBOW_TILT,
-                RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, True, self.DEFAULT_DELAY)
-
-        increasing = False
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR,
-            RT_ELBOW_TILT_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
 
     async def reach_out(self):
         """Reach: extend arm forward at shoulder height, then retract.
@@ -540,6 +655,64 @@ class Movements:
         neck_pan  = asyncio.create_task(self.trunkController.neck_pan())
         await asyncio.gather(neck_tilt, neck_pan)
         await self.trunkController.neck_center()
+
+    async def look_around_random(self, duration=15.0):
+        """Idly scan the room: look to random spots for ~15s, then return to rest.
+
+        Channels: NECK_PAN (0), NECK_TILT (1)
+
+        Starts from center (pan=90, tilt=90) and, for ``duration`` seconds,
+        repeatedly picks a random head direction and moves there:
+          - pan (left/right): 40..140  (center 90 +/- 50)
+          - tilt (up/down):   85..115  (85 = looking up, 115 = looking down)
+        Both neck joints move together via move_to, so the smoothstep ease-in/
+        ease-out applies and each glance accelerates and settles smoothly. A
+        short random pause between glances makes the scanning feel natural.
+        Returns to the resting center when the time is up.
+
+        Args:
+            duration: How long to keep looking around, in seconds.
+        """
+        PAN_MIN, PAN_MAX = 40, 140           # 90 +/- 50
+        TILT_MIN, TILT_MAX = 85, 115         # 85 = up, 115 = down
+        CENTER = constants.NECK_CENTER       # 90 (pan + tilt neutral)
+
+        # Start centered so every scan begins from a known head-level pose.
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=25, delay=0.04,
+        )
+
+        loop = asyncio.get_event_loop()
+        start = loop.time()
+        last_pan = CENTER
+        while (loop.time() - start) < duration:
+            # Pick a fresh random pan/tilt target each glance. Pan roams freely
+            # across its whole range, so successive looks vary naturally -- a
+            # short hop back toward center, a return near the same side, or a
+            # full left<->right crossing -- rather than always swinging side to
+            # side. We only reject a target so close to the current one that it
+            # wouldn't visibly move.
+            pan = random.randint(PAN_MIN, PAN_MAX)
+            while abs(pan - last_pan) < 8:
+                pan = random.randint(PAN_MIN, PAN_MAX)
+            tilt = random.randint(TILT_MIN, TILT_MAX)
+            last_pan = pan
+
+            # Vary the travel time a little so the scanning looks organic.
+            steps = random.randint(22, 34)
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: pan, constants.NECK_TILT: tilt},
+                steps=steps, delay=0.04,
+            )
+            # Random settle/gaze pause before the next glance.
+            await asyncio.sleep(random.uniform(1.2, 3.6))
+
+        # Return to the resting center when done.
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=25, delay=0.04,
+        )
 
     async def look_around_small(self):
         """Subtle look-around: tighter tilt range, repeated twice.
@@ -653,33 +826,16 @@ class Movements:
     # Each method documents which arm and head gesture it combines.       #
     # ================================================================== #
 
-    async def wave_and_nod(self):
-        """Wave the arm while nodding yes.
-
-        ARM: wave()  ·  HEAD: nod_yes()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.wave()),
-            asyncio.create_task(self.nod_yes()),
-        )
-
-    async def wave_and_look_around(self):
-        """Wave the arm while scanning the environment.
-
-        ARM: wave()  ·  HEAD: look_around()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.wave()),
-            asyncio.create_task(self.look_around()),
-        )
-
     async def wave_and_swivel(self):
         """Wave the arm while doing a double neck-ellipse swivel.
 
-        ARM: wave()  ·  HEAD: swivel_head()
+        ARM: _wave_arm(no neck)  ·  HEAD: swivel_head()
+
+        Uses the neck-free wave so swivel_head() owns the neck channels without
+        the wave fighting it for the pan channel.
         """
         await asyncio.gather(
-            asyncio.create_task(self.wave()),
+            asyncio.create_task(self._wave_arm(include_neck=False)),
             asyncio.create_task(self.swivel_head()),
         )
 
@@ -693,16 +849,6 @@ class Movements:
             asyncio.create_task(self.look_around()),
         )
 
-    async def come_and_swivel(self):
-        """Beckon while doing a double neck-ellipse swivel.
-
-        ARM: come()  ·  HEAD: swivel_head()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.come()),
-            asyncio.create_task(self.swivel_head()),
-        )
-
     async def reach_and_look(self):
         """Reach toward audience while looking around.
 
@@ -711,16 +857,6 @@ class Movements:
         await asyncio.gather(
             asyncio.create_task(self.reach_out()),
             asyncio.create_task(self.look_around()),
-        )
-
-    async def yawn_and_look_up(self):
-        """Cover mouth for a yawn while tilting head back.
-
-        ARM: yawn_cover()  ·  HEAD: look_up()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.yawn_cover()),
-            asyncio.create_task(self.look_up()),
         )
 
     async def patrol(self):
@@ -738,5 +874,3 @@ if __name__ == '__main__':
     mv = Movements("Servo Movements")
     # asyncio.run(mv.wave())
     # asyncio.run(mv.come())
-    # asyncio.run(mv.wave_and_nod())
-    # asyncio.run(mv.yawn_and_look_up())

@@ -265,17 +265,9 @@ class Animatronic:
         mv = Movements("Animatronic")
         await self._run(mv.wave_and_swivel())
 
-    async def _do_wave_and_nod(self):
-        mv = Movements("Animatronic")
-        await self._run(mv.wave_and_nod())
-
     async def _do_come_and_look(self):
         mv = Movements("Animatronic")
         await self._run(mv.come_and_look())
-
-    async def _do_come_and_swivel(self):
-        mv = Movements("Animatronic")
-        await self._run(mv.come_and_swivel())
 
     async def _do_reach_and_look(self):
         mv = Movements("Animatronic")

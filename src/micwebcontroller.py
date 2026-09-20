@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 import pyaudio
 import threading
 import wave
+import os
 import numpy as np
 import time
 from gpiozero import PWMLED
@@ -25,8 +26,17 @@ audio_state = {
     'audio': None,
     'is_streaming': False,
     'thread': None,
-    'echo_buffer': deque([np.zeros(CHUNK, dtype=np.int16)] * 3, maxlen=3)
+    'echo_buffer': deque([np.zeros(CHUNK, dtype=np.int16)] * 3, maxlen=3),
+    # Recording of the FX-processed mic output. When is_recording is True, the
+    # stream callback appends each processed chunk (the exact bytes sent to the
+    # speaker) to record_frames; stop_recording writes them to a WAV.
+    'is_recording': False,
+    'record_frames': [],
 }
+
+# Recorded FX voices are saved to the repo's audio/ directory as
+# live_mic_<timestamp>.wav (mono, 16-bit, RATE Hz -- same format as the stream).
+AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'audio')
 
 # Audio configuration
 stream_timeout_seconds = 30
@@ -161,7 +171,11 @@ def stream_mic():
         talk(audio, start_time =  datetime.now().timestamp())
         
         processed = apply_effects(audio)
-        return (processed.tobytes(), pyaudio.paContinue)
+        processed_bytes = processed.tobytes()
+        # If recording, capture the FX-processed output (what the speaker hears).
+        if audio_state['is_recording']:
+            audio_state['record_frames'].append(processed_bytes)
+        return (processed_bytes, pyaudio.paContinue)
         
     # Open stream with callback
     stream = audio_state['audio'].open(format=FORMAT,
@@ -378,6 +392,11 @@ def stop_streaming():
         return jsonify({'status': 'error', 'message': 'Not streaming'}), 400
     
     try:
+        # If a recording is in progress, finalize it before tearing down the
+        # stream so the captured audio is saved rather than lost.
+        if audio_state['is_recording']:
+            stop_recording()
+
         # Stop streaming
         audio_state['is_streaming'] = False
         
@@ -398,6 +417,89 @@ def stop_streaming():
     
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+def start_recording():
+    """Begin recording the FX-processed mic output to a buffer.
+
+    Recording captures the SAME audio that goes to the speaker (post-effects),
+    so a voice recorded here has the current effect chain baked in. Requires an
+    active mic stream (there is nothing to record otherwise).
+    """
+    if not audio_state['is_streaming']:
+        return jsonify({'status': 'error',
+                        'message': 'Start the mic stream before recording'}), 400
+    if audio_state['is_recording']:
+        return jsonify({'status': 'error', 'message': 'Already recording'}), 400
+
+    audio_state['record_frames'] = []
+    audio_state['is_recording'] = True
+    return jsonify({'status': 'success', 'message': 'Recording started'})
+
+
+def _make_user_readable(path):
+    """Make a sudo-created file readable by the normal (SUDO_USER) account.
+
+    The mic controller runs as root, so files it writes are owned by root with
+    0600 perms and can't be opened by the desktop user or an IDE. Set 0644 and,
+    when running under sudo, chown to the invoking user so recordings behave
+    like the other audio files.
+
+    Args:
+        path: Filesystem path of the just-written file.
+    """
+    try:
+        os.chmod(path, 0o644)
+        sudo_uid = os.environ.get('SUDO_UID')
+        sudo_gid = os.environ.get('SUDO_GID')
+        if sudo_uid is not None and sudo_gid is not None:
+            os.chown(path, int(sudo_uid), int(sudo_gid))
+    except OSError as e:
+        print(f"warning: could not adjust permissions on {path}: {e}")
+
+
+def stop_recording():
+    """Stop recording and write the captured FX audio to audio/live_mic_<ts>.wav.
+
+    Writes a mono 16-bit WAV at the stream sample rate (RATE) so it plays back
+    through the existing AudioPlayer file path unchanged.
+    """
+    if not audio_state['is_recording']:
+        return jsonify({'status': 'error', 'message': 'Not recording'}), 400
+
+    # Stop capturing first, then snapshot and clear the buffer.
+    audio_state['is_recording'] = False
+    frames = audio_state['record_frames']
+    audio_state['record_frames'] = []
+
+    if not frames:
+        return jsonify({'status': 'error',
+                        'message': 'No audio captured'}), 400
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'live_mic_{timestamp}.wav'
+    try:
+        os.makedirs(AUDIO_DIR, exist_ok=True)
+        path = os.path.join(AUDIO_DIR, filename)
+        with wave.open(path, 'wb') as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(2)          # paInt16 -> 2 bytes
+            wf.setframerate(RATE)
+            wf.writeframes(b''.join(frames))
+        # This process runs under sudo, so the file is born owned by root with
+        # restrictive perms -- unreadable by the normal user (and editors/IDEs).
+        # Make it world-readable and hand ownership back to the invoking user.
+        _make_user_readable(path)
+        duration = sum(len(f) for f in frames) / (2 * CHANNELS * RATE)
+        print(f"Saved recording: {path} ({duration:.2f}s)")
+        return jsonify({
+            'status': 'success',
+            'message': f'Saved {filename} ({duration:.1f}s)',
+            'filename': filename,
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 @app.route('/config', methods=['POST'])
 def set_config():
@@ -559,6 +661,10 @@ def handler():
             return start_streaming()
         elif action == 'stop':
             return stop_streaming()
+        elif action == 'record_start':
+            return start_recording()
+        elif action == 'record_stop':
+            return stop_recording()
 
     return jsonify({'status': 'error', 'message': 'Unknown action'}), 400
 
@@ -573,6 +679,7 @@ def get_status():
     """
     return jsonify({
         'is_streaming': audio_state['is_streaming'],
+        'is_recording': audio_state['is_recording'],
         'profiles': jaw_profiles,   # {"file": {...}, "mic": {...}}
         'effects': effects_config,
         'styles': list(STYLE_PRESETS.keys()),
