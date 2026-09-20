@@ -550,43 +550,6 @@ class Movements:
             constants.RT_ELBOW_ROTATOR,
             RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
 
-    async def comein(self):
-        """Compact beckon: tighter elbow rotation arc than come().
-
-        Channels: RT_SHOULDER_ROTATOR (7), RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
-
-        Like come() but rotates the elbow to 130° (vs 260°), giving a more
-        restrained "come inside" motion with a wider elbow curl (25 → 160°).
-        """
-        RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 40
-        RT_ELBOW_ROTATE_MIN     = 10
-        RT_ELBOW_ROTATE_MAX     = 130
-        RT_ELBOW_TILT_MIN       = 25
-        RT_ELBOW_TILT_MAX       = 160
-
-        increasing = True
-
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR,
-            RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-
-        for _ in range(3):
-            await self.trunkController.move(
-                constants.RT_ELBOW_TILT,
-                RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, True, self.DEFAULT_DELAY)
-
-        increasing = False
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR,
-            RT_ELBOW_TILT_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-
     async def reach_out(self):
         """Reach: extend arm forward at shoulder height, then retract.
 
@@ -805,32 +768,6 @@ class Movements:
     # Each method documents which arm and head gesture it combines.       #
     # ================================================================== #
 
-    async def wave_and_nod(self):
-        """Wave the arm while nodding yes.
-
-        ARM: _wave_arm(no neck)  ·  HEAD: nod_yes()
-
-        Uses the neck-free wave so the head gesture owns the neck channels; the
-        two coroutines then drive disjoint servos (arm+forearm vs. neck tilt).
-        """
-        await asyncio.gather(
-            asyncio.create_task(self._wave_arm(include_neck=False)),
-            asyncio.create_task(self.nod_yes()),
-        )
-
-    async def wave_and_look_around(self):
-        """Wave the arm while scanning the environment.
-
-        ARM: _wave_arm(no neck)  ·  HEAD: look_around()
-
-        Uses the neck-free wave so look_around() owns NECK_PAN/NECK_TILT without
-        the wave fighting it for the pan channel.
-        """
-        await asyncio.gather(
-            asyncio.create_task(self._wave_arm(include_neck=False)),
-            asyncio.create_task(self.look_around()),
-        )
-
     async def wave_and_swivel(self):
         """Wave the arm while doing a double neck-ellipse swivel.
 
@@ -854,16 +791,6 @@ class Movements:
             asyncio.create_task(self.look_around()),
         )
 
-    async def come_and_swivel(self):
-        """Beckon while doing a double neck-ellipse swivel.
-
-        ARM: come()  ·  HEAD: swivel_head()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.come()),
-            asyncio.create_task(self.swivel_head()),
-        )
-
     async def reach_and_look(self):
         """Reach toward audience while looking around.
 
@@ -872,16 +799,6 @@ class Movements:
         await asyncio.gather(
             asyncio.create_task(self.reach_out()),
             asyncio.create_task(self.look_around()),
-        )
-
-    async def yawn_and_look_up(self):
-        """Cover mouth for a yawn while tilting head back.
-
-        ARM: yawn_cover()  ·  HEAD: look_up()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.yawn_cover()),
-            asyncio.create_task(self.look_up()),
         )
 
     async def patrol(self):
@@ -899,5 +816,3 @@ if __name__ == '__main__':
     mv = Movements("Servo Movements")
     # asyncio.run(mv.wave())
     # asyncio.run(mv.come())
-    # asyncio.run(mv.wave_and_nod())
-    # asyncio.run(mv.yawn_and_look_up())

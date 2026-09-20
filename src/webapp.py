@@ -67,11 +67,11 @@ ROUTINE_ACTIONS = {
 }
 
 MOVEMENT_ACTIONS = {
-    'wave', 'come', 'comein', 'reachOut', 'yawnCover',
+    'wave', 'come', 'reachOut', 'yawnCover',
     'nod', 'nodYes', 'lookUp', 'lookAround', 'lookAroundSmall', 'neckEllipse',
     'swivelHead', 'scan', 'slowScan', 'shakeHead', 'no', 'smno',
-    'waveAndNod', 'waveAndLookAround', 'waveAndSwivel', 'comeAndLook',
-    'comeAndSwivel', 'reachAndLook', 'yawnAndLookUp', 'patrol',
+    'waveAndSwivel', 'comeAndLook',
+    'reachAndLook', 'patrol',
 }
 
 VOICE_STYLES = ['natural', 'demon', 'ghost', 'robot', 'chipmunk', 'possessed']
@@ -83,7 +83,7 @@ ROUTINE_POOL = ['blah', 'exorcist', 'startParty', 'waiting', 'krusty', 'vaderFat
 # Only valid MOVEMENT_ACTIONS — the old Node-RED Switch used 'yes'/'no' labels,
 # but the controller's actual actions are 'nodYes'/'no'. Using canonical names here.
 MOVEMENT_POOL = ['slowScan', 'nodYes', 'no', 'lookAround', 'lookAroundSmall',
-                 'scan', 'neckEllipse', 'swivelHead', 'come', 'comein', 'wave']
+                 'scan', 'neckEllipse', 'swivelHead', 'come', 'wave']
 
 # ── Automation state ─────────────────────────────────────────────────────────
 automation = {
