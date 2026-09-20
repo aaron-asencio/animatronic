@@ -387,7 +387,7 @@ class Movements:
                   RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
 
         Hardware-measured beckon pose (arm closest to the body): shoulder
-        rotator=90 (lifts the arm), shoulder tilt=55, elbow rotator=30, elbow
+        rotator=90 (lifts the arm), shoulder tilt=55, elbow rotator=270, elbow
         tilt=125. The "come here" curl swings the elbow tilt 115<->125. The curl
         begins before the shoulder rotation finishes -- once the raise is ~4/5
         (0.8) complete -- so the beckon flows out of the lift. Repeats a random
@@ -396,7 +396,7 @@ class Movements:
         # Rest + beckon-pose values.
         ROT_REST, ROT_UP = 0, 90             # shoulder rotator lifts the arm
         TILT_REST, TILT_UP = 55, 55          # shoulder tilt stays ~55
-        FOREARM_REST, FOREARM_UP = 150, 30   # elbow rotator
+        FOREARM_REST, FOREARM_UP = 150, 270  # elbow rotator (palm turned in)
         ELBOW_REST = 0                       # elbow tilt at rest (arm extended)
         ELBOW_LO, ELBOW_HI = 115, 125        # the "come here" curl arc
         ELBOW_START_FRACTION = 0.8           # elbow holds until raise is 4/5 done
