@@ -410,7 +410,7 @@ class Movements:
         Each rep runs from the resting position to the hardware-measured closed
         pose (arm closest to the body): shoulder rotator=129, shoulder tilt=14,
         elbow rotator=189, elbow tilt=140. All joints move concurrently. Runs
-        twice with a 0.5s pause at the closed pose between reps.
+        twice with a 0.1s pause at the closed pose between reps.
 
         shoulder_tilt dips to 14, below the global floor (45); operator-verified
         safe in this pose only, so widen just that channel via
@@ -443,8 +443,8 @@ class Movements:
             for rep in range(2):
                 # Sweep everything from rest to the closed pose, concurrently.
                 await self.trunkController.move_to(closed, steps=40, delay=0.02)
-                # Hold the "come here" pose briefly.
-                await asyncio.sleep(0.5)
+                # Hold the "come here" pose briefly (0.1s).
+                await asyncio.sleep(0.1)
                 # Return to rest (concurrently) before the next rep / finish.
                 await self.trunkController.move_to(rest, steps=40, delay=0.02)
 
