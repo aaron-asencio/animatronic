@@ -121,3 +121,6 @@ src/config/probe_disagreements.log
 
 # Personal command scratchpad (not part of the project)
 commands.txt
+
+# FX mic recordings (runtime output, machine-local)
+audio/live_mic_*.wav

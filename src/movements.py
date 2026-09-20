@@ -656,6 +656,60 @@ class Movements:
         await asyncio.gather(neck_tilt, neck_pan)
         await self.trunkController.neck_center()
 
+    async def look_around_random(self, duration=15.0):
+        """Idly scan the room: look to random spots for ~15s, then return to rest.
+
+        Channels: NECK_PAN (0), NECK_TILT (1)
+
+        Starts from center (pan=90, tilt=90) and, for ``duration`` seconds,
+        repeatedly picks a random head direction and moves there:
+          - pan (left/right): 40..140  (center 90 +/- 50)
+          - tilt (up/down):   85..115  (85 = looking up, 115 = looking down)
+        Both neck joints move together via move_to, so the smoothstep ease-in/
+        ease-out applies and each glance accelerates and settles smoothly. A
+        short random pause between glances makes the scanning feel natural.
+        Returns to the resting center when the time is up.
+
+        Args:
+            duration: How long to keep looking around, in seconds.
+        """
+        PAN_MIN, PAN_MAX = 40, 140           # 90 +/- 50
+        TILT_MIN, TILT_MAX = 85, 115         # 85 = up, 115 = down
+        CENTER = constants.NECK_CENTER       # 90 (pan + tilt neutral)
+
+        # Start centered so every scan begins from a known head-level pose.
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=25, delay=0.02,
+        )
+
+        loop = asyncio.get_event_loop()
+        start = loop.time()
+        last_pan = CENTER
+        while (loop.time() - start) < duration:
+            # Pick a new pan/tilt target; nudge pan to a clearly different side
+            # so we don't make imperceptible micro-moves in place.
+            pan = random.randint(PAN_MIN, PAN_MAX)
+            while abs(pan - last_pan) < 20:
+                pan = random.randint(PAN_MIN, PAN_MAX)
+            tilt = random.randint(TILT_MIN, TILT_MAX)
+            last_pan = pan
+
+            # Vary the travel time a little so the scanning looks organic.
+            steps = random.randint(22, 34)
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: pan, constants.NECK_TILT: tilt},
+                steps=steps, delay=0.02,
+            )
+            # Brief settle/gaze pause before the next glance.
+            await asyncio.sleep(random.uniform(0.2, 0.6))
+
+        # Return to the resting center when done.
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
+            steps=25, delay=0.02,
+        )
+
     async def look_around_small(self):
         """Subtle look-around: tighter tilt range, repeated twice.
 

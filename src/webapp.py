@@ -68,7 +68,7 @@ ROUTINE_ACTIONS = {
 
 MOVEMENT_ACTIONS = {
     'wave', 'come', 'reachOut', 'yawnCover',
-    'nod', 'nodYes', 'lookUp', 'lookAround', 'lookAroundSmall', 'neckEllipse',
+    'nod', 'nodYes', 'lookUp', 'lookAround', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
     'swivelHead', 'scan', 'slowScan', 'shakeHead', 'no', 'smno',
     'waveAndSwivel', 'comeAndLook',
     'reachAndLook', 'patrol',
