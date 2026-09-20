@@ -400,6 +400,54 @@ class Movements:
                 steps=55, delay=0.025,
             )
 
+    async def come_here(self):
+        """Come here: wave someone toward you -- sweep the arm from rest to a
+        pulled-in "come toward me" pose, twice.
+
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
+
+        Each rep runs from the resting position to the hardware-measured closed
+        pose (arm closest to the body): shoulder rotator=129, shoulder tilt=14,
+        elbow rotator=189, elbow tilt=140. All joints move concurrently. Runs
+        twice with a 0.5s pause at the closed pose between reps.
+
+        shoulder_tilt dips to 14, below the global floor (45); operator-verified
+        safe in this pose only, so widen just that channel via
+        verified_pose_override. All keyframes validated collision-free against
+        the kinematic model.
+        """
+        # Rest + closed-pose values.
+        ROT_REST, ROT_CLOSED = 0, 129        # shoulder rotator
+        TILT_REST, TILT_CLOSED = 55, 14      # shoulder tilt (14 = pulled in)
+        FOREARM_REST, FOREARM_CLOSED = 150, 189   # elbow rotator
+        ELBOW_REST, ELBOW_CLOSED = 0, 140    # elbow tilt (deep flex = come here)
+
+        closed = {
+            constants.RT_SHOULDER_ROTATOR: ROT_CLOSED,
+            constants.RT_SHOULDER_TILT: TILT_CLOSED,
+            constants.RT_ELBOW_ROTATOR: FOREARM_CLOSED,
+            constants.RT_ELBOW_TILT: ELBOW_CLOSED,
+        }
+        rest = {
+            constants.RT_SHOULDER_ROTATOR: ROT_REST,
+            constants.RT_SHOULDER_TILT: TILT_REST,
+            constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+            constants.RT_ELBOW_TILT: ELBOW_REST,
+        }
+
+        # tilt dips to 14, below the global floor of 45; operator-verified safe
+        # in this pulled-in pose only, so widen just that channel.
+        override = {constants.RT_SHOULDER_TILT: (14, 270)}
+        with TrunkController.verified_pose_override(override):
+            for rep in range(2):
+                # Sweep everything from rest to the closed pose, concurrently.
+                await self.trunkController.move_to(closed, steps=40, delay=0.02)
+                # Hold the "come here" pose briefly.
+                await asyncio.sleep(0.5)
+                # Return to rest (concurrently) before the next rep / finish.
+                await self.trunkController.move_to(rest, steps=40, delay=0.02)
+
     async def beckon(self):
         """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.
 
