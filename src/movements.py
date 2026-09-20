@@ -687,10 +687,14 @@ class Movements:
         start = loop.time()
         last_pan = CENTER
         while (loop.time() - start) < duration:
-            # Pick a new pan/tilt target; nudge pan to a clearly different side
-            # so we don't make imperceptible micro-moves in place.
+            # Pick a fresh random pan/tilt target each glance. Pan roams freely
+            # across its whole range, so successive looks vary naturally -- a
+            # short hop back toward center, a return near the same side, or a
+            # full left<->right crossing -- rather than always swinging side to
+            # side. We only reject a target so close to the current one that it
+            # wouldn't visibly move.
             pan = random.randint(PAN_MIN, PAN_MAX)
-            while abs(pan - last_pan) < 20:
+            while abs(pan - last_pan) < 8:
                 pan = random.randint(PAN_MIN, PAN_MAX)
             tilt = random.randint(TILT_MIN, TILT_MAX)
             last_pan = pan
@@ -702,7 +706,7 @@ class Movements:
                 steps=steps, delay=0.04,
             )
             # Random settle/gaze pause before the next glance.
-            await asyncio.sleep(random.uniform(0.4, 1.2))
+            await asyncio.sleep(random.uniform(1.2, 3.6))
 
         # Return to the resting center when done.
         await self.trunkController.move_to(
