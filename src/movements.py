@@ -117,18 +117,21 @@ class Movements:
         FOREARM_LO, FOREARM_HI = 22, 38      # elbow rotator (ch4) = the wave flap
         PAN_LO, PAN_HI = 84, 96
         PAN_CENTER = constants.NECK_CENTER   # 90
+        NECK_TILT_LEVEL = 90                 # head level
 
         # RAISE: rotator up, elbow to the wave center, forearm to its up angle,
-        # all together for a smooth lift.
-        await self.trunkController.move_to(
-            {
-                constants.RT_SHOULDER_ROTATOR: ROT_UP,
-                constants.RT_SHOULDER_TILT: TILT_CENTER,
-                constants.RT_ELBOW_TILT: ELBOW_UP,
-                constants.RT_ELBOW_ROTATOR: FOREARM_CENTER,
-            },
-            steps=45, delay=0.02,
-        )
+        # all together for a smooth lift. When we own the neck (standalone
+        # wave), also level the head tilt to 90 so the wave starts head-level
+        # regardless of where a prior gesture left it.
+        raise_targets = {
+            constants.RT_SHOULDER_ROTATOR: ROT_UP,
+            constants.RT_SHOULDER_TILT: TILT_CENTER,
+            constants.RT_ELBOW_TILT: ELBOW_UP,
+            constants.RT_ELBOW_ROTATOR: FOREARM_CENTER,
+        }
+        if include_neck:
+            raise_targets[constants.NECK_TILT] = NECK_TILT_LEVEL
+        await self.trunkController.move_to(raise_targets, steps=45, delay=0.02)
 
         # WAVE: a random 1-2 cycles. Each cycle swings the tilt/elbow/pan to one
         # extreme then the other (that is one back-and-forth wave), moved
