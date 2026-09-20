@@ -13,8 +13,8 @@ ARM gestures (channels 4–7):
     wave, come, beckon, comeHere, reachOut, menacingReach, yawnCover, facePalm
 
 HEAD gestures (channels 0–1):
-    nod, nodYes, lookUp, lookAround, lookAroundSmall, lookAroundRandom, neckEllipse,
-    swivelHead, scan, slowScan, shakeHead, shakeNo, smallShakeNo
+    nod, lookUp, lookAround, lookAroundSmall, lookAroundRandom, neckEllipse,
+    swivelHead, scan, shakeHead, shakeNo, smallShakeNo
 
 COMPOSITE gestures (arm + head simultaneously):
     waveAndSwivel,
@@ -49,7 +49,6 @@ def main(args):
 
         # --- HEAD gestures ---
         'nod':              mv.nod,
-        'nodYes':           mv.nod_yes,
         'lookUp':           mv.look_up,
         'lookAround':       mv.look_around,
         'lookAroundSmall':  mv.look_around_small,
@@ -57,7 +56,6 @@ def main(args):
         'neckEllipse':      mv.neck_ellipse,
         'swivelHead':       mv.swivel_head,
         'scan':             mv.scan,
-        'slowScan':         mv.slow_scan,
         'shakeHead':        mv.shake_head,
         'no':               mv.shake_no,
         'smno':             mv.small_shake_no,

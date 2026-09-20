@@ -68,8 +68,8 @@ ROUTINE_ACTIONS = {
 
 MOVEMENT_ACTIONS = {
     'wave', 'come', 'reachOut', 'yawnCover',
-    'nod', 'nodYes', 'lookUp', 'lookAround', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
-    'swivelHead', 'scan', 'slowScan', 'shakeHead', 'no', 'smno',
+    'nod', 'lookUp', 'lookAround', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
+    'swivelHead', 'scan', 'shakeHead', 'no', 'smno',
     'waveAndSwivel', 'comeAndLook',
     'reachAndLook', 'patrol',
 }
@@ -81,8 +81,8 @@ VOICE_EFFECTS = ['pitch', 'distortion', 'echo', 'reverb', 'tremolo',
 # Pools the automation loops draw from (mirrors the old Node-RED Switch nodes).
 ROUTINE_POOL = ['blah', 'exorcist', 'startParty', 'waiting', 'krusty', 'vaderFather']
 # Only valid MOVEMENT_ACTIONS — the old Node-RED Switch used 'yes'/'no' labels,
-# but the controller's actual actions are 'nodYes'/'no'. Using canonical names here.
-MOVEMENT_POOL = ['slowScan', 'nodYes', 'no', 'lookAround', 'lookAroundSmall',
+# but the controller's actual actions are 'nod'/'no'. Using canonical names here.
+MOVEMENT_POOL = ['no', 'lookAround', 'lookAroundSmall',
                  'scan', 'neckEllipse', 'swivelHead', 'come', 'wave']
 
 # ── Automation state ─────────────────────────────────────────────────────────
