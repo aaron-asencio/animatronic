@@ -27,6 +27,14 @@ from movements import Movements
 from audio_player import AudioPlayer
 from audio_streamer import AudioStreamer
 from servo_lock import servo_lock, ServoBusyError, BUSY_EXIT_CODE
+from performance import (
+    ConcurrentGroup,
+    MovementSpec,
+    PerformanceDefinition,
+    PerformanceRunner,
+    PerformanceStep,
+)
+import constants
 import asyncio
 import threading
 import argparse
@@ -74,6 +82,7 @@ class Animatronic:
         'vincent-price-laugh.wav', # 17
         'owl.wav',                 # 18
         'yawn.wav',                # 19
+        'brains.wav',              # 20
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -253,6 +262,83 @@ class Animatronic:
         """Yawn audio + cover-mouth gesture (jaw syncs to the yawn.wav)."""
         self.run_action_and_audio("_do_yawn", self.music[19])
 
+    # --- Performance-framework routines ---
+
+    def brains(self):
+        """"Brains" audio — concurrent menacing reach + head scan, audio-synced.
+
+        Unlike the other routines (which pair one gesture coroutine with an
+        AudioPlayer thread via run_action_and_audio), ``brains`` is driven by the
+        reusable Performance_Framework: it declares a single-step
+        ``PerformanceDefinition`` whose concurrent group runs ``menacing_reach``
+        (arm channels 4-7) and ``look_around_random`` (neck channels 0-1) at the
+        same time, loops both for the duration of ``brains.wav``, and starts
+        audio ungated at t=0 (no gate, no pause).
+
+        The two movements own disjoint channels ({4,5,6,7} vs {0,1}), so the
+        concurrent group is valid. Audio is ungated (``gate=None``), so playback
+        begins at t=0 alongside both movements — the arm reach and the head scan
+        both also begin at t=0 (neither ``supplies_gate``). Both loop bodies
+        repeat while playback is active, but with a per-movement cutoff on the
+        arm: ``menacing_reach`` sets ``stop_loop_lead_seconds=4.0``, so it stops
+        starting new swings once the audio is within ~4s of ending and retracts
+        in time (the in-progress swing always completes first). The head scan
+        (``look_around_random``) has no such cutoff, so it keeps looping until
+        the audio fully ends. Both then return to rest — the arm retracts, the
+        neck centers — with the runner sweeping any residual channels home on
+        completion or failure.
+
+        A single ``Movements`` instance backs every ``MovementSpec`` phase
+        callable so the arm and neck adapters share one ``TrunkController``. The
+        runner is a coroutine, so it is launched with ``asyncio.run`` here at the
+        top of the call stack (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        BRAINS = PerformanceDefinition(
+            name="brains",
+            audio_file=self.music[20],  # brains.wav — ~15.2 s
+            gate=None,                  # ungated: audio starts at t=0
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="menacing_reach",
+                            owned_channels=frozenset({
+                                constants.RT_SHOULDER_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_ELBOW_TILT,
+                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                            }),
+                            lead_in=mv.menacing_reach_lead_in,      # reach out
+                            loop_body=mv.menacing_reach_loop_body,  # one menace swing
+                            do_return=mv.menacing_reach_return,     # retract
+                            supplies_gate=False,
+                            # Stop starting new swings once brains.wav (~15.2s)
+                            # is within 4s of ending, so the last swing plus the
+                            # ~40%-faster retract finish before the audio does.
+                            stop_loop_lead_seconds=4.0,
+                        ),
+                        MovementSpec(
+                            name="look_around_random",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                            }),
+                            lead_in=None,                     # starts at t=0
+                            loop_body=mv.look_scan_loop_body, # one random glance
+                            do_return=mv.look_scan_return,    # neck to center
+                            supplies_gate=False,
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(BRAINS, mv, audio_dir).run())
+
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
     # ------------------------------------------------------------------ #
@@ -330,6 +416,8 @@ def main(args):
         'vincentPrice':   a.vincent_price,
         'owl':            a.owl,
         'yawn':           a.yawn,
+        # Performance-framework routines
+        'brains':         a.brains,
     }
 
     if args.action in action_map:

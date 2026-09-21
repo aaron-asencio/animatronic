@@ -1,0 +1,387 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Create `src/performance.py` with data models and channel-ownership validation": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965443566
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965462522
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965590787
+      }
+    ],
+    "2.1 Implement `PlaybackController` in `src/performance.py`": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965445415
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965598640
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965682049
+      }
+    ],
+    "3.1 Implement `PerformanceRunner.run()` — validation, ordered steps, concurrency": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965446073
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965700397
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965882888
+      }
+    ],
+    "3.4 Implement gated audio start in `run()`": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965446745
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965887757
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789967395956
+      }
+    ],
+    "4. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965447592
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789967401653
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789967457227
+      }
+    ],
+    "5.1 Implement loop-until-audio in `run()`": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965448870
+      },
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789967461769
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001402857
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001431610
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001502245
+      }
+    ],
+    "6.1 Implement return phases, inter-step rest, and exception safe-rest in `run()`": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965449846
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001403642
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001509555
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001756619
+      }
+    ],
+    "7. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965450493
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001404277
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001761747
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001781087
+      }
+    ],
+    "8.1 Add `menacing_reach` phase adapters to `Movements`": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965450901
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001405041
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001787852
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790002460182
+      }
+    ],
+    "8.4 Add `look_around_random` phase adapters to `Movements`": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965451537
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001405756
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790002464280
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790002597993
+      }
+    ],
+    "9. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965452280
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001406654
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790002602820
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790002626215
+      }
+    ],
+    "10.1 Build the `BRAINS` PerformanceDefinition and wire it into `animatronic.py`": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965453493
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001407446
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790002630678
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790003321508
+      }
+    ],
+    "13. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965454031
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001408159
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790003326696
+      },
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790003843510
+      }
+    ],
+    "1. Create the framework module skeleton and data models": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965591435
+      }
+    ],
+    "2. Implement the audio bridge (PlaybackController)": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789965682645
+      }
+    ],
+    "3. Implement the generic PerformanceRunner": [
+      {
+        "executionId": "4ffa36cc-f0c3-4636-9b6d-ce8201d8a5d4",
+        "chatSessionId": "sess_271c9e8a-4095-4499-9314-c22a83f1cb91",
+        "timestamp": 1789967396597
+      }
+    ],
+    "5.2 Write property test for loop-until-audio (no mid-move cutoff)": [
+      {
+        "executionId": "b1347504-63d9-4ccc-b20e-58024c9e1de9",
+        "chatSessionId": "sess_bbdda3ac-a0c5-42f4-834d-a0d2f2bee0c0",
+        "timestamp": 1790001160935
+      },
+      {
+        "executionId": "b1347504-63d9-4ccc-b20e-58024c9e1de9",
+        "chatSessionId": "sess_bbdda3ac-a0c5-42f4-834d-a0d2f2bee0c0",
+        "timestamp": 1790001317945
+      }
+    ],
+    "5. Implement Loop_Until_Audio and loop targeting": [
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001503028
+      }
+    ],
+    "6. Implement return-to-rest and safe-rest recovery": [
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790001757258
+      }
+    ],
+    "8. Add Movements phase adapters": [
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790002598373
+      }
+    ],
+    "10. Define and register the `brains` performance": [
+      {
+        "executionId": "e9a40add-bdc7-454f-91a9-6fc17adfdc53",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790003322315
+      }
+    ],
+    "1.2 Write property test for channel-ownership enforcement": [
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790004360267
+      },
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790004468608
+      }
+    ],
+    "6.2 Write property test for every owned channel ending at rest": [
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790004472830
+      },
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790004614515
+      }
+    ],
+    "8.2 Write property test for phased-vs-standalone equivalence": [
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790004619262
+      },
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790006381872
+      }
+    ],
+    "12.1 Write integration test for combined extreme poses (collision model)": [
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790006386652
+      },
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790006545127
+      }
+    ],
+    "12. Collision-safety integration coverage": [
+      {
+        "executionId": "a21b93c6-2b2f-4f0d-a22e-42540a43766f",
+        "chatSessionId": "sess_0041337d-e77c-4b27-83d7-7a90d4e7641a",
+        "timestamp": 1790006545585
+      }
+    ]
+  }
+}
