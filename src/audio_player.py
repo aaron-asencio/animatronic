@@ -14,7 +14,8 @@ import sys
 
 class AudioPlayer:
     def __init__(self, silence_floor=None, open_ratio=None, close_ratio=None,
-                 ema_alpha=None, close_hold_frames=None):
+                 ema_alpha=None, close_hold_frames=None,
+                 drive_jaw=True, drive_eyes=True):
         """Initialise the audio player, jaw motor, and eye LED.
 
         The jaw is a binary (on/off) DC motor driven from the audio envelope.
@@ -37,6 +38,15 @@ class AudioPlayer:
         the shared config store; any argument passed explicitly (non-None)
         overrides the corresponding stored value.
 
+        The two ``drive_*`` flags gate which hardware this player claims and
+        actuates from the envelope. When a flag is ``False`` the corresponding
+        device is NOT constructed (left ``None``), so this player never claims
+        that GPIO pin -- letting a separate owner (e.g. an independent eye
+        blinker) drive it without a gpiozero "pin already in use" error. The
+        envelope math still runs regardless; only the hardware calls are
+        suppressed for a disabled device. Both default ``True`` so every
+        existing caller keeps today's jaw + envelope-driven eyes behaviour.
+
         Args:
             silence_floor:     Absolute RMS below which the jaw is always closed.
             open_ratio:        Open when level > open_ratio * running average.
@@ -47,10 +57,24 @@ class AudioPlayer:
                                envelope; higher adapts faster.
             close_hold_frames: Consecutive frames satisfying the close condition
                                before the jaw actually closes (debounce).
+            drive_jaw:         When ``True`` (default) construct and drive the
+                               jaw motor on ``MOUTH_MOTOR_PIN`` from the
+                               envelope. When ``False`` the jaw motor is not
+                               constructed (``self.jaw_motor is None``) and the
+                               pin is left free.
+            drive_eyes:        When ``True`` (default) construct and drive the
+                               eye LED on ``EYE_LIGHT_PIN`` from the envelope.
+                               When ``False`` the eye LED is not constructed
+                               (``self.led_eye_light is None``) so ``EYE_LIGHT_PIN``
+                               stays free for a separate blinker to own.
         """
         logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-        self.led_eye_light = LED(EYE_LIGHT_PIN)
-        self.jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
+        self.drive_jaw = drive_jaw
+        self.drive_eyes = drive_eyes
+        # Only claim a pin when that device is enabled, so a disabled device
+        # frees its GPIO pin for another owner (e.g. the eye blinker).
+        self.led_eye_light = LED(EYE_LIGHT_PIN) if drive_eyes else None
+        self.jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN) if drive_jaw else None
 
         # Audio parameters
         self.CHUNK = 1024       # Frames per buffer
@@ -107,12 +131,19 @@ class AudioPlayer:
             else:
                 self._below_count = 0
 
+        # Actuate only the devices this player owns. The envelope decision
+        # (self.jaw_open) is computed above regardless, but a disabled device is
+        # never constructed, so guard on both the flag and the None device.
         if self.jaw_open:
-            self.jaw_motor.on()
-            self.led_eye_light.on()
+            if self.drive_jaw and self.jaw_motor is not None:
+                self.jaw_motor.on()
+            if self.drive_eyes and self.led_eye_light is not None:
+                self.led_eye_light.on()
         else:
-            self.jaw_motor.off()
-            self.led_eye_light.off()
+            if self.drive_jaw and self.jaw_motor is not None:
+                self.jaw_motor.off()
+            if self.drive_eyes and self.led_eye_light is not None:
+                self.led_eye_light.off()
 
         state = 'OPEN' if self.jaw_open else 'closed'
         print(f"RMS: {level:.0f}; avg: {self._avg:.0f}; Jaw: {state}; below: {self._below_count}")

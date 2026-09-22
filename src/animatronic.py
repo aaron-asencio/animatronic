@@ -84,6 +84,8 @@ class Animatronic:
         'owl.wav',                 # 18
         'yawn.wav',                # 19
         'brains.wav',              # 20
+        'hypnotic.wav',            # 21
+        'snore.wav',               # 22
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -160,6 +162,73 @@ class Animatronic:
             self._safe_rest()
         finally:
             audio_thread.join(timeout=2)
+
+    @staticmethod
+    async def _blink_eyes(playback, on_time=0.25, off_time=0.25):
+        """Blink the eye LED, bound to the audio window, until audio ends.
+
+        Owns ``EYE_LIGHT_PIN`` independently of ``AudioPlayer`` so it can drive
+        the eyes on a fixed rhythm that is NOT tied to the audio envelope. Used
+        by ``hypnotic`` as the runner's ambient task while audio plays with the
+        AudioPlayer's eye/jaw drive disabled (so this blinker owns the pin
+        without a gpiozero "pin already in use" clash).
+
+        Rather than blinking for the whole performance, this blink is bound to
+        the AUDIO window via the ``playback`` controller:
+
+        1. WAIT FOR AUDIO START: before blinking, poll ``playback.has_started()``
+           with a short ``asyncio.sleep(0.02)`` loop so the first blink is delayed
+           until audio actually begins (the hypnotic gate is ~100ms). The blink
+           thus STARTS with the audio, not at t=0.
+        2. BLINK WHILE ACTIVE: loop while ``playback.is_active()`` --
+           on()/sleep(on_time)/off()/sleep(off_time) -- checking ``is_active()``
+           only between whole on/off cycles so a cycle is never cut mid-blink.
+           When audio finishes (``is_active()`` is ``False``) the blink STOPS,
+           ending WITH the audio even though the performance may still be
+           retracting/recentering.
+
+        The performance runner also cancels this task at performance end as a
+        SAFETY NET, so ``CancelledError`` is caught (this also makes the
+        wait-for-start loop safe if audio never starts -- it will simply be
+        cancelled). In a ``finally`` block the LED is turned off and closed so the
+        eyes are always left off and the pin is released. ``gpiozero.LED`` is
+        imported and constructed INSIDE this function so importing this module in
+        a non-Pi/test environment never requires the pin to exist; if the pin is
+        unavailable the blinker logs and no-ops rather than crashing the routine.
+
+        Args:
+            playback: The performance's ``PlaybackController``. Its
+                ``has_started()`` gates the first blink and its ``is_active()``
+                bounds the blink to the audio window.
+            on_time: Seconds the eyes stay lit each cycle. Defaults to 0.25.
+            off_time: Seconds the eyes stay dark each cycle. Defaults to 0.25.
+        """
+        try:
+            from gpiozero import LED
+            led = LED(constants.EYE_LIGHT_PIN)
+        except Exception as e:
+            print(f"_blink_eyes: could not acquire eye LED, blinking disabled: {e}")
+            return
+
+        try:
+            # WAIT FOR AUDIO START: hold until playback begins (~100ms gate) so
+            # the blink starts WITH the audio, not at t=0. Cancellable by the
+            # runner if audio never starts.
+            while not playback.has_started():
+                await asyncio.sleep(0.02)
+
+            # BLINK WHILE ACTIVE: check is_active() only between whole on/off
+            # cycles so a cycle is never cut mid-blink; stop when audio ends.
+            while playback.is_active():
+                led.on()
+                await asyncio.sleep(on_time)
+                led.off()
+                await asyncio.sleep(off_time)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            led.off()
+            led.close()
 
     @staticmethod
     def _safe_rest():
@@ -406,6 +475,196 @@ class Animatronic:
 
         asyncio.run(PerformanceRunner(BRAINS, mv, audio_dir).run())
 
+    def hypnotic(self):
+        """"Hypnotic" audio — arm sway + head sway, jaw OFF, eyes blink steadily.
+
+        Like ``brains``, ``hypnotic`` is driven by the Performance_Framework: it
+        declares a single-step ``PerformanceDefinition`` whose concurrent group
+        runs a PARAMETERIZED brains-style arm (channels 4-7) and a gentle limited
+        head sway (neck channels 0-1) at the same time, looping both for the
+        duration of ``hypnotic.wav``. It borrows brains' arm sway + neck scan
+        machinery but with a different arm pose (rotator 230, shoulder-tilt sway
+        within [0, 30]), a limited neck range (+/-10 from center on both axes),
+        and a 100ms audio gate. It does NOT change ``brains`` — it uses
+        parameterized ``hypnotic_arm_*`` / ``hyp_scan_*`` adapters with their own
+        pose, band, state, and bounds.
+
+        Audio behaviour, UNIQUE to hypnotic among the routines: the definition
+        sets ``player_options={"drive_jaw": False, "drive_eyes": False}`` so the
+        ``AudioPlayer`` plays the track with the jaw motor silent and does NOT
+        claim ``EYE_LIGHT_PIN``. Instead the eyes are driven by the runner's
+        AMBIENT task -- ``_blink_eyes(pb, 0.25, 0.25)`` -- which blinks them on a
+        0.25s-on / 0.25s-off cadence (twice as fast) INDEPENDENT of the audio
+        envelope, but BOUND TO THE AUDIO WINDOW: the blink STARTS when the audio
+        starts (~100ms gate) and STOPS when the audio ends, not with the whole
+        performance (which may still be retracting/recentering afterward). The
+        ambient factory receives the ``PlaybackController`` so the blinker can
+        consult ``has_started()`` / ``is_active()``. Because the AudioPlayer
+        released the eye pin, the blinker owns it cleanly. The runner also cancels
+        the ambient task when the performance ends as a safety net, and the
+        blinker turns the eyes off (and releases the pin) in its ``finally``
+        block. Every OTHER routine keeps the default player (jaw + envelope-driven
+        eyes) and no ambient task.
+
+        The two movements own disjoint channels ({4,5,6,7} vs {0,1}), so the
+        concurrent group is valid. Audio is GATED to start 100ms AFTER the routine
+        begins: the head sway supplies the gate (``gate=GateSpec("hyp_head_sway")``
+        + ``supplies_gate=True``), and its ``hyp_scan_lead_in`` sleeps 100ms
+        before completing — the framework starts audio the instant that lead-in
+        finishes, so playback begins at t≈0.1s. The arm is ungated
+        (``supplies_gate=False``), so its lead-in reaches out at t=0.
+
+        Because ``hypnotic.wav`` is SHORT (~5.05s), the arm sets
+        ``stop_loop_lead_seconds=1.5`` so it stops starting new sways once the
+        audio is within ~1.5s of ending and its last sway (~1s) plus the
+        ~40%-faster retract (~0.8s) finish before the audio does. The head sway
+        has no cutoff, so it keeps looping until the audio fully ends. Both then
+        return to rest — the arm retracts, the neck centers — with the runner
+        sweeping any residual channels home on completion or failure.
+
+        A single ``Movements`` instance backs every ``MovementSpec`` phase
+        callable so the arm and neck adapters share one ``TrunkController``. The
+        runner is a coroutine, launched with ``asyncio.run`` here at the top of
+        the call stack (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        HYPNOTIC = PerformanceDefinition(
+            name="hypnotic",
+            audio_file=self.music[21],  # hypnotic.wav — ~5.05 s
+            # Head sway supplies the gate: its lead-in sleeps 100ms before
+            # completing, so audio starts ~100ms after the routine begins.
+            gate=GateSpec(movement_name="hyp_head_sway"),
+            # Jaw silent; AudioPlayer does NOT claim the eye pin so the ambient
+            # blinker (below) can own EYE_LIGHT_PIN without a clash.
+            player_options={"drive_jaw": False, "drive_eyes": False},
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="hypnotic_arm",
+                            owned_channels=frozenset({
+                                constants.RT_SHOULDER_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_ELBOW_TILT,
+                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                            }),
+                            lead_in=mv.hypnotic_arm_lead_in,      # reach out (t=0)
+                            loop_body=mv.hypnotic_arm_loop_body,  # one sway
+                            do_return=mv.hypnotic_arm_return,     # retract
+                            supplies_gate=False,
+                            # hypnotic.wav is short (~5.05s); stop starting new
+                            # sways within 1.5s of the end so the last sway (~1s)
+                            # plus the ~40%-faster retract (~0.8s) finish in time.
+                            stop_loop_lead_seconds=1.5,
+                        ),
+                        MovementSpec(
+                            name="hyp_head_sway",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                            }),
+                            lead_in=mv.hyp_scan_lead_in,      # 100ms gate + center
+                            loop_body=mv.hyp_scan_loop_body,  # one gentle glance
+                            do_return=mv.hyp_scan_return,     # neck to center
+                            supplies_gate=True,               # opens the audio gate
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        # Ambient task: 0.25s/0.25s eye blink BOUND to the audio window -- the
+        # factory receives the PlaybackController so the blink starts when the
+        # audio starts (~100ms gate) and stops when the audio ends, not with the
+        # whole performance. The runner also cancels it at performance end as a
+        # safety net; the blinker leaves the eyes off in its finally block.
+        asyncio.run(
+            PerformanceRunner(
+                HYPNOTIC, mv, audio_dir,
+                ambient=lambda pb: self._blink_eyes(pb, 0.25, 0.25),
+            ).run()
+        )
+
+    def snore(self):
+        """"Snore" audio — jerky heavy-head drop gates the snore, then sleep.
+
+        Like ``hypnotic``, ``snore`` is driven by the Performance_Framework: it
+        declares a single-step ``PerformanceDefinition`` whose single movement
+        (``sleep_head``) owns the neck + arm channels
+        ({NECK_PAN, NECK_TILT, RT_ELBOW_ROTATOR, RT_SHOULDER_TILT,
+        RT_SHOULDER_ROTATOR}) and runs the sleep/snore choreography, looping the
+        sleep bob+rock cycle for the duration of ``snore.wav`` (~11.1 s).
+
+        The routine is GATED by the movement itself: ``sleep_snore_lead_in``
+        performs the JERKY, heavy-head drop (neck tilt sinking 90 -> 180 with
+        random pauses / jerk-ups) and, because it ``supplies_gate=True``, the
+        framework starts ``snore.wav`` the instant that lead-in finishes — so the
+        snore begins the moment the head has fully dropped "asleep". The loop
+        body then repeats a gentle head bob ([170, 180]) + shoulder rotator rock
+        ([0, 10]) until the audio ends, and the return phase wakes the figure
+        back to rest.
+
+        Audio behaviour: the definition sets
+        ``player_options={"drive_jaw": False}`` so the jaw motor is SILENCED
+        (a snoring figure's mouth stays shut), while the eyes remain
+        envelope-driven (``drive_eyes`` defaults True) — tracking the audio
+        envelope as normal. There is no ambient task.
+
+        SAFETY: the sleep pose drives NECK_TILT to 180 (above the global
+        SAFE_LIMITS ceiling of 160). That is OPERATOR bench-verified safe in this
+        heavy-head-drop pose, so the movement opens ``Movements._SLEEP_OVERRIDE``
+        ({NECK_TILT: (30, 180)}) via an AsyncExitStack held across the
+        lead-in -> loop -> return span and released in the return phase, so the
+        widened clamp never leaks past this routine. The arm holds its REST pose
+        (elbow rotator 150, elbow tilt 5, shoulder tilt 55 — all within the
+        global limits), so no arm override is needed.
+
+        A single ``Movements`` instance backs every ``MovementSpec`` phase
+        callable so all adapters share one ``TrunkController``. The runner is a
+        coroutine, launched with ``asyncio.run`` here at the top of the call
+        stack (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        SLEEP = PerformanceDefinition(
+            name="sleep",
+            audio_file=self.music[22],  # snore.wav — ~11.1 s
+            # The sleep movement supplies the gate: its lead-in performs the
+            # jerky head drop and, on completion, opens the audio gate — so the
+            # snore starts the instant the head has fully dropped "asleep".
+            gate=GateSpec(movement_name="sleep_head"),
+            # Silence the jaw motor for the snore (a snoring figure's mouth stays
+            # shut); the eyes still track the audio envelope (drive_eyes defaults True).
+            player_options={"drive_jaw": False},
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="sleep_head",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,
+                                constants.RT_ELBOW_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_SHOULDER_ROTATOR,
+                            }),
+                            lead_in=mv.sleep_snore_lead_in,     # jerky head drop
+                            loop_body=mv.sleep_snore_loop_body,  # one bob+rock
+                            do_return=mv.sleep_snore_return,     # wake to rest
+                            supplies_gate=True,                  # opens the audio gate
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(SLEEP, mv, audio_dir).run())
+
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
     # ------------------------------------------------------------------ #
@@ -485,6 +744,8 @@ def main(args):
         'yawn':           a.yawn,
         # Performance-framework routines
         'brains':         a.brains,
+        'hypnotic':       a.hypnotic,
+        'sleep':          a.snore,
     }
 
     if args.action in action_map:

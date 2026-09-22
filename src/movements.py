@@ -62,6 +62,132 @@ class Movements:
     trunkController = TrunkController("Servo TrunkController")
 
     # ================================================================== #
+    # Reusable motion primitives                                          #
+    # ================================================================== #
+
+    async def randomized_centering_move(
+        self, channel, center, half_range, jitter_pct, state_attr,
+        *, steps_range=(18, 24), delay_base=0.02, delay_jitter=0.005,
+        ease=True, companion=None,
+    ):
+        """Randomize a joint within a band, transitioning among LT/CENTER/RT.
+
+        A single joint oscillates around ``center`` within the band
+        ``[center - half_range, center + half_range]``. Three LOGICAL positions
+        live in that band:
+
+            LT     = center - half_range   (low)
+            CENTER = center
+            RT     = center + half_range   (high)
+
+        Each call classifies the joint's CURRENT logical position (read from
+        ``getattr(self, state_attr, center)``) by NEAREST of the three nominal
+        angles -- ties resolve to CENTER -- then randomly picks a DESTINATION
+        among the two OTHER positions, per the transition table:
+
+            from RT     -> {LT, CENTER}
+            from LT     -> {RT, CENTER}
+            from CENTER -> {RT, LT}
+
+        So a call never re-selects the logical position it is already at; the
+        joint always transitions. The chosen destination's nominal angle then
+        gets an ENDPOINT JITTER of ``+/- (jitter_pct * half_range)``::
+
+            jitter = round(random.uniform(-1, 1) * jitter_pct * half_range)
+            target = nominal + jitter
+
+        ``target`` is CLAMPED back into the band ``[center - half_range,
+        center + half_range]`` and rounded to an int. (``move_to`` additionally
+        clamps to SAFE_LIMITS / any active verified-pose override as a final
+        safeguard, so out-of-band physical damage cannot occur.) Example:
+        ``center=100, half_range=50, jitter_pct=0.25`` gives a jitter magnitude
+        of ``0.25 * 50 = 12.5``; an RT target of 150 lands in
+        ``[137.5, 150]`` after band-clamping, and a CENTER target of 100 lands
+        in ``[87.5, 112.5]``.
+
+        ``center``, ``half_range`` and ``jitter_pct`` are ALL per-call
+        parameters (not hardcoded), so each gesture tunes its own band and
+        jitter. Per-gesture ``state_attr`` keeps two gestures from sharing
+        transition state (e.g. ``"_mr_tilt_pos"`` vs ``"_pp_bob_pos"``); the
+        ACTUAL commanded target is stored back into ``state_attr`` so the next
+        call classifies relative to where the joint really ended.
+
+        All randomness is drawn from the shared ``random`` module and there is
+        no wall-clock or other nondeterminism, so ``random.seed(x)`` before a
+        run makes the sequence DETERMINISTIC -- required for the phased-vs-
+        standalone equivalence tests.
+
+        Args:
+            channel: The servo channel to drive (a ``constants.*`` channel).
+            center: The band center angle in degrees.
+            half_range: Half the band width; the band is
+                ``[center - half_range, center + half_range]``.
+            jitter_pct: Endpoint jitter as a fraction of ``half_range`` (0..1);
+                jitter magnitude is ``jitter_pct * half_range`` degrees.
+            state_attr: Name of the per-gesture attribute tracking this joint's
+                last commanded logical position (read via ``getattr`` defaulting
+                to ``center``, written back with the actual target).
+            steps_range: ``(lo, hi)`` inclusive range for ``random.randint`` to
+                pick the ``move_to`` step count.
+            delay_base: Base per-step delay in seconds.
+            delay_jitter: Symmetric random delay jitter; the delay is
+                ``delay_base + random.uniform(-delay_jitter, delay_jitter)``.
+            ease: Passed through to ``move_to`` (smoothstep ease when True).
+            companion: Optional zero-arg callable returning a dict of
+                ``{extra_channel: angle}`` merged into the SAME ``move_to`` so a
+                companion joint eases smoothly alongside this one (used by
+                menacing_reach's smooth rotator jitter).
+
+        Returns:
+            The commanded target angle (int).
+
+        Channels: ``channel`` (plus any channels the ``companion`` supplies).
+        """
+        # Nominal logical angles for the three positions.
+        lt = center - half_range
+        rt = center + half_range
+        nominals = {"LT": lt, "CENTER": center, "RT": rt}
+
+        # Classify the current position by NEAREST nominal; ties -> CENTER by
+        # ordering CENTER first in the min() key comparison.
+        current = getattr(self, state_attr, center)
+        order = ("CENTER", "LT", "RT")
+        current_pos = min(order, key=lambda p: abs(current - nominals[p]))
+
+        # Pick a destination among the two OTHER logical positions.
+        transitions = {
+            "RT": ("LT", "CENTER"),
+            "LT": ("RT", "CENTER"),
+            "CENTER": ("RT", "LT"),
+        }
+        dest_pos = random.choice(transitions[current_pos])
+        nominal = nominals[dest_pos]
+
+        # Endpoint jitter, then clamp back into the band and round to int.
+        jitter = round(random.uniform(-1, 1) * jitter_pct * half_range)
+        target = nominal + jitter
+        target = int(round(max(lt, min(rt, target))))
+
+        steps = random.randint(*steps_range)
+        delay = delay_base + random.uniform(-delay_jitter, delay_jitter)
+
+        targets = {channel: target}
+        if companion is not None:
+            targets.update(companion())
+
+        print(
+            f"[centering] ch={channel} {current_pos}->{dest_pos} "
+            f"target={target} steps={steps}"
+        )
+        await self.trunkController.move_to(
+            targets, steps=steps, delay=delay, ease=ease)
+
+        # Store the ACTUAL commanded target so the next call classifies from
+        # where the joint really ended.
+        setattr(self, state_attr, target)
+        return target
+
+    # ================================================================== #
     # ARM gestures  (channels: RT_SHOULDER_ROTATOR, RT_SHOULDER_TILT,    #
     #                           RT_ELBOW_TILT, RT_ELBOW_ROTATOR)          #
     # Safe to gather with any HEAD gesture.                               #
@@ -355,16 +481,17 @@ class Movements:
                   RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
 
         Hardware-measured arm-out pose: shoulder rotator=209 (rotates the
-        extended arm out toward the audience), shoulder tilt=40, elbow rotator=0,
+        extended arm out toward the audience), shoulder tilt=43, elbow rotator=0,
         elbow tilt=0 (arm straight). With the arm out, the shoulder tilt swings
-        slowly within [25, 60] eight times (the menacing reach). Each swing picks
-        one of three randomized motion patterns -- a full crossing, an
-        out-and-back via center, or a partial move -- relative to the arm's
-        current tilt, with randomized endpoints/timing and a small smooth rotator
-        jitter (see ``_menacing_reach_swing``), then the arm retracts (lowering
-        ~40% faster than the reach-out).
+        slowly within [26, 60] eight times (the menacing reach). Each swing is a
+        centering transition: from the arm's current logical tilt position
+        (LT=26 / CENTER=43 / RT=60) it moves to one of the two OTHER positions
+        (jittered +/- ~4 deg, clamped to the band) with randomized timing and a
+        small smooth rotator jitter layered into the same move_to (see
+        ``randomized_centering_move`` and ``_menacing_reach_swing``), then the
+        arm retracts (lowering ~40% faster than the reach-out).
 
-        shoulder_tilt dips to 25, below the global floor (45); this is
+        shoulder_tilt dips to 26, still above the (25, 270) override floor; this is
         operator-verified safe in this arm-out pose only, so widen just that
         channel via verified_pose_override. All keyframes validated
         collision-free against the kinematic model.
@@ -397,10 +524,14 @@ class Movements:
 
     # Rest + arm-out pose values (shared by the standalone gesture and phases).
     _MR_ROT_REST, _MR_ROT_OUT = 0, 209        # shoulder rotator extends the arm out
-    _MR_TILT_REST, _MR_TILT_CENTER = 55, 40   # shoulder tilt (40 = reach center)
+    _MR_TILT_REST, _MR_TILT_CENTER = 55, 43   # shoulder tilt (43 = reach + swing center)
     _MR_FOREARM_REST, _MR_FOREARM_OUT = 150, 0  # elbow rotator (arm extended)
     _MR_ELBOW_REST, _MR_ELBOW_OUT = 0, 0      # elbow tilt straight (arm extended)
-    _MR_TILT_LO, _MR_TILT_HI = 25, 60         # the slow menacing swing band
+    # Centering-transition swing band: center 43 +/- 17 = [26, 60], safely
+    # inside the (25, 270) override floor. jitter_pct 0.25 => +/- ~4.25 deg.
+    _MR_TILT_CENTER_ANGLE = 43
+    _MR_TILT_HALF_RANGE = 17
+    _MR_TILT_JITTER_PCT = 0.25
     # shoulder_tilt dips to 25, below the global floor; operator-verified safe
     # in the arm-out pose only, so widen just that channel.
     _MENACING_REACH_OVERRIDE = {constants.RT_SHOULDER_TILT: (25, 270)}
@@ -408,9 +539,10 @@ class Movements:
     async def _menacing_reach_reach(self):
         """REACH: rotate the extended arm out and forward together.
 
-        Also initializes the swing's tilt-tracking state to the reach center
-        (``_MR_TILT_CENTER`` = 40) so both the standalone gesture and the phased
-        composition start their menace swings from the same known tilt position.
+        Also initializes the swing's tilt-tracking state to the reach + swing
+        center (``_MR_TILT_CENTER`` = 43) so both the standalone gesture and the
+        phased composition start their menace swings from the same known tilt
+        position.
         Because both paths call this primitive first, seeding ``random`` before
         each run makes their subsequent stateful swings produce identical command
         sequences (Requirement 9.3).
@@ -433,125 +565,59 @@ class Movements:
             steps=50, delay=0.025,
         )
 
-    async def _menace_tilt_move(self, tilt):
-        """Drive one sub-move of the menace swing: tilt to ``tilt`` with a smooth
-        rotator jitter layered into the SAME move_to.
-
-        The shoulder-rotator jitter of ``_MR_ROT_OUT`` +/- up to 4 (in
-        [205, 213]) is placed in the same targets dict as the tilt so it eases
-        smoothly to its new jittered target over the same duration rather than
-        snapping -- no tiny rapid separate writes. Timing varies per sub-move
-        (steps ~[18, 30], delay ~0.03 +/- 0.006). Updates ``self._mr_tilt_pos``
-        to the commanded tilt so the next swing chooses relative to where the arm
-        actually is.
-
-        Args:
-            tilt: Target shoulder-tilt angle. Kept inside the safe swing band
-                [25, 60] by the caller; move_to clamps as a final safeguard.
-
-        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7).
-        """
-        rot = self._MR_ROT_OUT + random.randint(-4, 4)        # [205, 213]
-        steps = random.randint(18, 30)
-        delay = 0.03 + random.uniform(-0.006, 0.006)
-        await self.trunkController.move_to(
-            {
-                constants.RT_SHOULDER_TILT: tilt,
-                constants.RT_SHOULDER_ROTATOR: rot,
-            },
-            steps=steps, delay=delay,
-        )
-        # Remember where the tilt ended so the next swing is chosen relatively.
-        self._mr_tilt_pos = tilt
-
     async def _menacing_reach_swing(self):
-        """MENACE: perform ONE randomly-chosen swing pattern of the shoulder tilt.
+        """MENACE: perform ONE centering-transition swing of the shoulder tilt.
 
-        The swing tracks the arm's current tilt across invocations via
-        ``self._mr_tilt_pos`` (initialized to the reach center 40 in
-        ``_menacing_reach_reach``) so the menace never looks metronomic. Each
-        call randomly picks one of three motion patterns (via the shared
-        ``random`` module):
+        Delegates to ``randomized_centering_move`` for RT_SHOULDER_TILT over the
+        band ``center 43 +/- 17 = [26, 60]`` (``jitter_pct=0.25`` =>
+        +/- ~4.25 deg endpoint jitter, clamped to the band). Each swing reads the
+        arm's current logical tilt position from ``self._mr_tilt_pos``
+        (initialized to the swing center 43 in ``_menacing_reach_reach``) and
+        transitions to one of the two OTHER logical positions (LT / CENTER / RT)
+        per the helper's transition table -- so the menace never looks
+        metronomic and never re-picks the position it is already at. This
+        REPLACES the previous three-pattern model with the centering-transition
+        model (intended behavior change).
 
-        1. FULL CROSSING (most common): move from the current side to the
-           OPPOSITE end -- LT->RT if currently low, RT->LT if currently high. If
-           near center, a random end is picked. One sub-move.
-        2. OUT-AND-BACK to the SAME side via center: e.g. at/near LT go
-           LT -> center -> LT; at/near RT go RT -> center -> RT. Three sub-moves.
-        3. PARTIAL move to a random intermediate target within the band, for
-           finer variability. One sub-move.
+        A smooth shoulder-rotator jitter of ``_MR_ROT_OUT`` (209) +/- up to 4
+        (in [205, 213]) is preserved via a ``companion`` callable, so the rotator
+        eases to its new jittered target inside the SAME ``move_to`` as the tilt
+        (no tiny separate snap writes). Timing matches the old feel:
+        ``steps_range=(18, 30)``, ``delay_base=0.03``, ``delay_jitter=0.006``.
 
-        Endpoints are randomized WITHIN the band [25, 60]: low targets ~[25, 32],
-        high targets ~[53, 60], center ~[38, 46]. A smooth shoulder-rotator
-        jitter (209 +/- 4, in [205, 213]) is layered into the SAME move_to as
-        each tilt sub-move (see ``_menace_tilt_move``). Timing varies per
-        sub-move (steps ~[18, 30], delay ~0.03 +/- 0.006). So a single call may
-        issue 1, 2, or 3 move_to sub-moves depending on the chosen pattern.
-
-        Randomness is sourced from the shared ``random`` module and the tilt
-        state is reset in the shared ``_menacing_reach_reach`` primitive, so
-        seeding ``random.seed(x)`` before a run makes both the standalone gesture
-        and the phased composition reproduce the identical command sequence
+        Randomness is sourced from the shared ``random`` module (both the swing's
+        transition/jitter and the rotator companion), and the tilt state is reset
+        in the shared ``_menacing_reach_reach`` primitive, so seeding
+        ``random.seed(x)`` before a run makes both the standalone gesture and the
+        phased composition reproduce the identical command sequence
         (Requirement 9.3).
 
         SAFETY: elbow tilt stays at 0 (straight) throughout the swing, so with
         the rotator only in [205, 213] the hand-to-face FORBIDDEN_COMBINATIONS
         rule (elbow tilt 150-270 AND rotator 210-270 simultaneously) never
-        triggers. All tilt targets are in-band [25, 60] by construction; move_to
+        triggers. All tilt targets are in-band [26, 60] by construction; move_to
         clamps too.
 
         Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7).
         """
-        # Helpers to draw randomized in-band targets for each region.
-        def low_target():
-            return random.randint(self._MR_TILT_LO, 32)          # ~[25, 32]
+        def rotator_jitter():
+            # Smooth rotator jitter eased in the SAME move_to as the tilt.
+            return {
+                constants.RT_SHOULDER_ROTATOR: self._MR_ROT_OUT
+                + random.randint(-4, 4)  # [205, 213]
+            }
 
-        def high_target():
-            return random.randint(53, self._MR_TILT_HI)          # ~[53, 60]
-
-        def center_target():
-            return random.randint(38, 46)                        # ~[38, 46]
-
-        # Classify where the arm currently is relative to the band center (40).
-        pos = self._mr_tilt_pos
-        near_center = 34 <= pos <= 46
-        is_low = pos < 40
-
-        # Pick a pattern. Bias toward full crossings (most menacing look) but
-        # keep all three reachable: crossing ~50%, out-and-back ~30%, partial
-        # ~20%.
-        roll = random.random()
-        if roll < 0.5:
-            # Pattern 1: FULL CROSSING to the opposite end.
-            if near_center:
-                # From center, pick a random end to cross toward.
-                target = high_target() if random.random() < 0.5 else low_target()
-            elif is_low:
-                target = high_target()
-            else:
-                target = low_target()
-            await self._menace_tilt_move(target)
-        elif roll < 0.8:
-            # Pattern 2: OUT-AND-BACK to the SAME side via center.
-            if near_center:
-                # From center, drift out to a random side and back to center.
-                if random.random() < 0.5:
-                    await self._menace_tilt_move(high_target())
-                else:
-                    await self._menace_tilt_move(low_target())
-                await self._menace_tilt_move(center_target())
-            elif is_low:
-                await self._menace_tilt_move(low_target())
-                await self._menace_tilt_move(center_target())
-                await self._menace_tilt_move(low_target())
-            else:
-                await self._menace_tilt_move(high_target())
-                await self._menace_tilt_move(center_target())
-                await self._menace_tilt_move(high_target())
-        else:
-            # Pattern 3: PARTIAL move to a random intermediate target in-band.
-            await self._menace_tilt_move(
-                random.randint(self._MR_TILT_LO, self._MR_TILT_HI))
+        await self.randomized_centering_move(
+            constants.RT_SHOULDER_TILT,
+            center=self._MR_TILT_CENTER_ANGLE,
+            half_range=self._MR_TILT_HALF_RANGE,
+            jitter_pct=self._MR_TILT_JITTER_PCT,
+            state_attr="_mr_tilt_pos",
+            steps_range=(18, 30),
+            delay_base=0.03,
+            delay_jitter=0.006,
+            companion=rotator_jitter,
+        )
 
     async def _menacing_reach_retract(self):
         """RETRACT: return the arm to rest, lowering ~40% faster.
@@ -617,6 +683,450 @@ class Movements:
                 await stack.aclose()
                 self._menacing_reach_stack = None
 
+    async def hypnotic_arm(self):
+        """Hypnotic arm: hold the arm in the operator-approved reach pose, then
+        slowly sway the shoulder tilt, and finally retract to rest.
+
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
+
+        This is a PARAMETERIZED variant of ``menacing_reach``: it reuses the same
+        reach + centering-swing + retract machinery but with hypnotic's own pose
+        and band, and its OWN transition-state attribute (``_hyp_tilt_pos``) and
+        pose override, so it shares NO state with ``menacing_reach`` and cannot
+        alter its behavior.
+
+        Operator-approved hypnotic hold pose: shoulder rotator=230 (arm rotated
+        out toward the audience, a touch higher than menacing_reach's 209),
+        shoulder tilt=0, elbow rotator=0, elbow tilt=0 (arm straight). With the
+        arm out, the shoulder tilt sways slowly within the band ``center 15 +/-
+        15 = [0, 30]`` (``jitter_pct=0.25`` => +/- ~3.75 deg endpoint jitter,
+        clamped to the band). Each sway is a centering transition (LT=0 /
+        CENTER=15 / RT=30) with a small smooth rotator jitter (230 +/- 4, in
+        [226, 234]) layered into the SAME move_to. The arm then retracts to
+        REST_POSITIONS, lowering ~40% faster (reusing ``_menacing_reach_retract``).
+
+        shoulder_tilt drops to 0, below the global SAFE_LIMITS floor (45), so the
+        hypnotic-specific verified-pose override ``_HYPNOTIC_ARM_OVERRIDE``
+        ({RT_SHOULDER_TILT: (0, 270)}) is held across the whole reach/sway/retract
+        span. This pose is USER-REQUESTED and OPERATOR bench-verified.
+
+        SAFETY: elbow tilt stays at 0 (straight) throughout, and the rotator only
+        ranges over [226, 234]. The hand-to-face FORBIDDEN_COMBINATION requires
+        elbow tilt in [150, 270] AND rotator in [210, 270] SIMULTANEOUSLY. Here
+        the rotator IS within [210, 270] (226-234), BUT the elbow tilt is 0 (far
+        below the 150 floor), so the rule does NOT trigger. Every combined pose
+        is validated collision-free by tests/test_hypnotic_collision.py.
+
+        Like ``menacing_reach``, this standalone gesture delegates to the same
+        phase primitives the Performance_Framework drives (reach lead-in, one
+        sway loop body, retract return), so composing ``hypnotic_arm_lead_in`` +
+        N x ``hypnotic_arm_loop_body`` + ``hypnotic_arm_return`` reproduces the
+        exact same servo command sequence WHEN THE RNG IS SEEDED IDENTICALLY
+        before each run (the sways draw from the shared ``random`` module).
+        """
+        with TrunkController.verified_pose_override(self._HYPNOTIC_ARM_OVERRIDE):
+            await self._hypnotic_arm_reach()
+            # SWAY: swing the shoulder tilt slowly within [0, 30], eight times.
+            for _ in range(8):
+                await self._hypnotic_arm_swing()
+            await self._menacing_reach_retract()
+
+    # --- hypnotic_arm shared primitives + phase adapters ------------------ #
+    #
+    # A PARAMETERIZED brains-style reach+swing+retract. The standalone gesture
+    # above and the phase adapters below both call these primitives, so a phased
+    # composition (lead_in + loop_body x8 + return) issues the identical move_to
+    # command sequence as the standalone gesture (given the same RNG seed). No
+    # audio logic lives in any of these methods. These reuse menacing_reach's
+    # generic machinery (randomized_centering_move, _menacing_reach_retract) but
+    # with hypnotic's own pose/band/state, so brains' behavior is UNCHANGED.
+
+    # Rest + hypnotic arm-out pose values.
+    _HYP_ROT_REST, _HYP_ROT_OUT = 0, 230       # shoulder rotator extends the arm out
+    _HYP_TILT_REST = 55                         # shoulder tilt rest (from REST_POSITIONS)
+    _HYP_FOREARM_REST, _HYP_FOREARM_OUT = 150, 0  # elbow rotator (arm extended)
+    _HYP_ELBOW_REST, _HYP_ELBOW_OUT = 5, 0      # elbow tilt straight (arm extended)
+    # Centering-transition sway band: center 15 +/- 15 = [0, 30]. jitter_pct 0.25
+    # => +/- ~3.75 deg endpoint jitter, clamped to the band.
+    _HYP_TILT_CENTER = 15
+    _HYP_TILT_HALF_RANGE = 15
+    _HYP_TILT_JITTER_PCT = 0.25
+    # shoulder_tilt drops to 0, below the global floor (45); user-requested and
+    # operator bench-verified safe in this arm-out pose only, so widen just that
+    # channel. Held across the whole reach/sway/retract span.
+    _HYPNOTIC_ARM_OVERRIDE = {constants.RT_SHOULDER_TILT: (0, 270)}
+
+    async def _hypnotic_arm_reach(self):
+        """REACH: rotate the extended arm out to the hypnotic hold pose.
+
+        Also initializes the sway's tilt-tracking state to the sway center
+        (``_HYP_TILT_CENTER`` = 15) so both the standalone gesture and the phased
+        composition start their sways from the same known tilt position. Because
+        both paths call this primitive first, seeding ``random`` before each run
+        makes their subsequent stateful sways produce identical command sequences.
+
+        Uses a DISTINCT state attribute (``_hyp_tilt_pos``) from
+        ``menacing_reach``'s ``_mr_tilt_pos`` so the two gestures never collide.
+
+        Channels: RT_SHOULDER_ROTATOR (7), RT_SHOULDER_TILT (6),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5).
+        """
+        # Track where the shoulder tilt actually is between sways, reset here so
+        # the standalone and phased command streams stay in lock-step under a
+        # fixed seed. Distinct from menacing_reach's _mr_tilt_pos.
+        self._hyp_tilt_pos = self._HYP_TILT_CENTER
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._HYP_ROT_OUT,
+                constants.RT_SHOULDER_TILT: self._HYP_TILT_CENTER,
+                constants.RT_ELBOW_ROTATOR: self._HYP_FOREARM_OUT,
+                constants.RT_ELBOW_TILT: self._HYP_ELBOW_OUT,
+            },
+            steps=50, delay=0.025,
+        )
+
+    async def _hypnotic_arm_swing(self):
+        """SWAY: perform ONE centering-transition sway of the shoulder tilt.
+
+        Delegates to ``randomized_centering_move`` for RT_SHOULDER_TILT over the
+        band ``center 15 +/- 15 = [0, 30]`` (``jitter_pct=0.25`` => +/- ~3.75 deg
+        endpoint jitter, clamped to the band). Each sway reads the arm's current
+        logical tilt position from ``self._hyp_tilt_pos`` (initialized to the
+        sway center 15 in ``_hypnotic_arm_reach``) and transitions to one of the
+        two OTHER logical positions (LT=0 / CENTER=15 / RT=30).
+
+        A smooth shoulder-rotator jitter of ``_HYP_ROT_OUT`` (230) +/- up to 4
+        (in [226, 234]) is layered via a ``companion`` callable so the rotator
+        eases to its new jittered target inside the SAME ``move_to`` as the tilt.
+        Timing matches brains' swing feel: ``steps_range=(18, 30)``,
+        ``delay_base=0.03``, ``delay_jitter=0.006``.
+
+        SAFETY: elbow tilt stays at 0 (straight) throughout, so with the rotator
+        only in [226, 234] the hand-to-face FORBIDDEN_COMBINATION (elbow tilt
+        150-270 AND rotator 210-270 simultaneously) never triggers -- the rotator
+        is in-range but the elbow tilt is far below 150. All tilt targets are
+        in-band [0, 30] by construction; move_to clamps too.
+
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7).
+        """
+        def rotator_jitter():
+            # Smooth rotator jitter eased in the SAME move_to as the tilt.
+            return {
+                constants.RT_SHOULDER_ROTATOR: self._HYP_ROT_OUT
+                + random.randint(-4, 4)  # [226, 234]
+            }
+
+        await self.randomized_centering_move(
+            constants.RT_SHOULDER_TILT,
+            center=self._HYP_TILT_CENTER,
+            half_range=self._HYP_TILT_HALF_RANGE,
+            jitter_pct=self._HYP_TILT_JITTER_PCT,
+            state_attr="_hyp_tilt_pos",
+            steps_range=(18, 30),
+            delay_base=0.03,
+            delay_jitter=0.006,
+            companion=rotator_jitter,
+        )
+
+    async def hypnotic_arm_lead_in(self):
+        """Lead-in phase: reach the arm out to the hypnotic hold pose.
+
+        Owns arm channels 4-7. Opens the hypnotic verified_pose_override for the
+        sub-floor shoulder tilt (0) and holds it across the lead-in -> loop ->
+        return lifetime via a per-adapter AsyncExitStack (``_hypnotic_arm_stack``,
+        distinct from menacing_reach's ``_menacing_reach_stack``);
+        ``hypnotic_arm_return`` closes it. Contains no audio logic -- reaching the
+        arm out fully IS the (ungated) start condition, signalled by this
+        coroutine simply completing.
+        """
+        # Open the override on a per-adapter AsyncExitStack so it stays active
+        # across the loop-body sways and is released only in the return phase.
+        self._hypnotic_arm_stack = contextlib.AsyncExitStack()
+        self._hypnotic_arm_stack.enter_context(
+            TrunkController.verified_pose_override(self._HYPNOTIC_ARM_OVERRIDE))
+        await self._hypnotic_arm_reach()
+
+    async def hypnotic_arm_loop_body(self):
+        """Loop-body phase: one randomized hypnotic sway of the shoulder tilt.
+
+        Owns RT_SHOULDER_TILT (6) and RT_SHOULDER_ROTATOR (7) for the smooth
+        rotator jitter. One invocation equals one sway; eight invocations
+        reproduce the standalone gesture's eight sways (given the same RNG seed).
+        Contains no audio logic.
+        """
+        await self._hypnotic_arm_swing()
+
+    async def hypnotic_arm_return(self):
+        """Return phase: retract the arm to rest and release the pose override.
+
+        Owns arm channels 4-7. Retracts via the shared ``_menacing_reach_retract``
+        primitive (the ~40%-faster settle to REST_POSITIONS), then closes the
+        AsyncExitStack opened in ``hypnotic_arm_lead_in`` so the
+        verified_pose_override is scoped to exactly the lead-in -> loop -> return
+        span.
+        """
+        try:
+            await self._menacing_reach_retract()
+        finally:
+            stack = getattr(self, "_hypnotic_arm_stack", None)
+            if stack is not None:
+                await stack.aclose()
+                self._hypnotic_arm_stack = None
+
+    async def sleep_snore(self):
+        """Sleep/snore: drop the head as if nodding off, then bob + rock while
+        "asleep", then wake back up to rest.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_ELBOW_ROTATOR (4),
+                  RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+
+        The gesture starts from the arm's REST pose (elbow rotator at its rest
+        angle 150, shoulder tilt at rest 55, the rest of the arm at rest), then
+        performs a JERKY, heavy-head drop -- the neck tilt sinks from level (90)
+        down to fully dropped (180), descending in small eased chunks but pausing
+        or jerking back UP a few degrees at random intervals to sell a tired,
+        fighting-to-stay-awake nod. Once dropped, it repeats a gentle sleep
+        cycle: the head BOBS within [170, 180] and the shoulder rotator ROCKS
+        within [0, 10] (an occasional ~0.5s pause between rocks). Finally it
+        wakes: the shoulder rotator eases to 0 and the neck returns to level with
+        the arm settling back to REST_POSITIONS (the forearm stays at its rest
+        angle 150 throughout).
+
+        NECK_TILT reaches 180 (above the global SAFE_LIMITS ceiling of 160), so
+        the sleep-specific verified-pose override ``_SLEEP_OVERRIDE`` widens JUST
+        that one channel ({NECK_TILT: (30, 180)}) for the whole
+        drop/bob/rock/return span. RT_SHOULDER_TILT holds 55 (within the global
+        (45,270) limit) so it needs no override. The dropped-head pose is
+        OPERATOR bench-verified safe. Every commanded angle stays inside the
+        widened band and ``move_to`` clamps as a final safeguard.
+
+        Like ``hypnotic_arm``, this standalone gesture delegates to the SAME
+        phase primitives the Performance_Framework drives (drop lead-in, one
+        bob+rock loop body, wake return), so composing ``sleep_snore_lead_in`` +
+        N x ``sleep_snore_loop_body`` + ``sleep_snore_return`` reproduces the
+        exact same servo command sequence WHEN THE RNG IS SEEDED IDENTICALLY
+        before each run (the jerks, bobs, and rocks draw from the shared
+        ``random`` module). No audio logic lives in any of these methods.
+        """
+        with TrunkController.verified_pose_override(self._SLEEP_OVERRIDE):
+            await self._sleep_snore_drop()
+            # SLEEP: gently bob the head + rock the arm a fixed number of cycles.
+            for _ in range(6):
+                await self._sleep_snore_bob_rock()
+            await self._sleep_snore_wake()
+
+    # --- sleep_snore shared primitives + phase adapters ------------------- #
+    #
+    # A heavy-head-drop + sleep-bob/arm-rock + wake gesture. The standalone
+    # gesture above and the phase adapters below both call these primitives, so a
+    # phased composition (lead_in + loop_body x N + return) issues the identical
+    # move_to command sequence as the standalone gesture (given the same RNG
+    # seed). All randomness is drawn from the shared ``random`` module; there is
+    # no wall-clock nondeterminism, so ``random.seed(x)`` makes both paths
+    # deterministic. No audio logic lives in any of these methods.
+
+    # Neck tilt landmarks for the sleep drop/bob. Rest = level (90); down = fully
+    # dropped chin-to-chest (180, above the global ceiling 160 -- override held).
+    _SLEEP_TILT_REST = 90
+    _SLEEP_TILT_DOWN = 180
+    # Head-bob band while "asleep": dips up from 180 toward 170 and back.
+    _SLEEP_BOB_MIN = 170
+    _SLEEP_BOB_MAX = 180
+    # Shoulder-rotator rock band while "asleep": gentle sway near the side.
+    _SLEEP_ROCK_MIN = 0
+    _SLEEP_ROCK_MAX = 10
+    # Jerk-up magnitude during the tired head drop (degrees back toward level).
+    _SLEEP_JERK_MIN = 5
+    _SLEEP_JERK_MAX = 10
+    # Elbow rotator: parks at its rest angle (150) during sleep and stays there
+    # through wake -- the forearm never leaves rest in this routine.
+    _SLEEP_ELBOW_ROT_PARK = 150
+    # NECK_TILT hits 180 (above the global ceiling 160), operator bench-verified
+    # safe in this sleep pose, so widen just that one channel. Held across the
+    # whole span. RT_SHOULDER_TILT now holds 55 (within the global (45,270)
+    # limit), so it no longer needs an override.
+    _SLEEP_OVERRIDE = {
+        constants.NECK_TILT: (30, 180),
+    }
+
+    async def _sleep_snore_drop(self):
+        """DROP: settle into the start pose, then jerkily drop the head to sleep.
+
+        Moves all six channels to the arm's REST start pose (NECK_PAN 90,
+        NECK_TILT 90, RT_ELBOW_ROTATOR 150, RT_ELBOW_TILT 5, RT_SHOULDER_TILT 55,
+        RT_SHOULDER_ROTATOR 0) with an eased ``move_to``, then lowers NECK_TILT
+        from 90 to 180 in small eased chunks. To sell a heavy, tired head that
+        keeps nodding off and catching itself, at random intervals it either
+        PAUSES briefly (``asyncio.sleep`` ~0.2-0.5s) or JERKS the head back UP by
+        ``random(5, 10)`` degrees before resuming the descent. The drop always
+        ENDS at exactly 180.
+
+        Also initializes the bob state (``_sleep_bob_center`` = 180) so both the
+        standalone gesture and the phased composition start bobbing from the same
+        known center, keeping their command streams in lock-step under a fixed
+        seed. Every commanded neck-tilt angle stays within [90, 180]; the
+        ``_SLEEP_OVERRIDE`` (and ``move_to``'s clamp) bound it.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_ELBOW_ROTATOR (4),
+                  RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+        """
+        # Settle into the start pose (all six channels, eased/simultaneous).
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: self._SLEEP_TILT_REST,          # 90 (centered)
+                constants.NECK_TILT: self._SLEEP_TILT_REST,         # 90 (level)
+                constants.RT_ELBOW_ROTATOR: self._SLEEP_ELBOW_ROT_PARK,  # 150 (rest)
+                constants.RT_ELBOW_TILT: 5,
+                constants.RT_SHOULDER_TILT: 55,
+                constants.RT_SHOULDER_ROTATOR: 0,
+            },
+            steps=50, delay=0.025,
+        )
+
+        # JERKY HEAD DROP: descend NECK_TILT 90 -> 180 in small chunks, with
+        # random pauses / jerk-ups mid-descent. Keep every angle in [90, 180].
+        current = float(self._SLEEP_TILT_REST)
+        step_deg = 6  # small eased chunk per advance
+        while current < self._SLEEP_TILT_DOWN:
+            # Occasionally fight the drop: either jerk the head back up or pause.
+            if random.random() < 0.3:
+                if random.random() < 0.5:
+                    # Jerk UP a few degrees, then resume descending.
+                    jerk = random.randint(self._SLEEP_JERK_MIN, self._SLEEP_JERK_MAX)
+                    up = max(self._SLEEP_TILT_REST, current - jerk)
+                    print(f"[sleep] head jerk up to {up:.0f}")
+                    await self.trunkController.move_to(
+                        {constants.NECK_TILT: int(up)}, steps=6, delay=0.02,
+                    )
+                    current = up
+                else:
+                    # Brief tired pause mid-nod.
+                    await asyncio.sleep(random.uniform(0.2, 0.5))
+
+            # Advance the descent by a small eased chunk (never past 180).
+            current = min(self._SLEEP_TILT_DOWN, current + step_deg)
+            await self.trunkController.move_to(
+                {constants.NECK_TILT: int(current)}, steps=8, delay=0.02,
+            )
+
+        # Ensure we END exactly at the fully-dropped pose.
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: self._SLEEP_TILT_DOWN}, steps=6, delay=0.02,
+        )
+
+        # Initialize loop state: the head bobs around the fully-dropped center.
+        self._sleep_bob_center = self._SLEEP_TILT_DOWN
+
+    async def _sleep_snore_bob_rock(self):
+        """SLEEP CYCLE: one gentle head bob + one arm rock.
+
+        HEAD BOB: NECK_TILT dips up from 180 to ``180 - random(3, 10)`` (staying
+        within [170, 180]) and eases back toward 180 -- a slow, shallow nod. ARM
+        ROCK: RT_SHOULDER_ROTATOR eases to a random target in [0, 10], with an
+        occasional (~30%) ~0.5s pause first to vary the rhythm. Both moves are
+        slow and eased. All targets are in-band by construction and ``move_to``
+        clamps as a final safeguard. Randomness is from the shared ``random``.
+
+        Channels: NECK_TILT (1), RT_SHOULDER_ROTATOR (7).
+        """
+        # HEAD BOB: dip up a few degrees within [170, 180], then ease back to 180.
+        dip = random.randint(3, 10)
+        bob_top = max(self._SLEEP_BOB_MIN, self._SLEEP_TILT_DOWN - dip)
+        print(f"[sleep] head bob up to {bob_top:.0f} then back to {self._SLEEP_TILT_DOWN}")
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: int(bob_top)}, steps=30, delay=0.03,
+        )
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: self._SLEEP_TILT_DOWN}, steps=30, delay=0.03,
+        )
+
+        # ARM ROCK: gentle shoulder-rotator sway within [0, 10], occasionally
+        # preceded by a brief pause to vary the breathing rhythm.
+        if random.random() < 0.3:
+            await asyncio.sleep(0.5)
+        rock = random.randint(self._SLEEP_ROCK_MIN, self._SLEEP_ROCK_MAX)
+        print(f"[sleep] arm rock to {rock}")
+        await self.trunkController.move_to(
+            {constants.RT_SHOULDER_ROTATOR: rock}, steps=30, delay=0.03,
+        )
+
+    async def _sleep_snore_wake(self):
+        """WAKE/RETURN: ease the arm and head back to a clean rest pose.
+
+        Slowly eases RT_SHOULDER_ROTATOR (7) home to 0, then brings NECK_TILT
+        back to level (90) with the remaining channels to their REST_POSITIONS
+        so the figure ends clean and unloaded. The forearm already sits at its
+        rest angle (RT_ELBOW_ROTATOR 150) throughout sleep, so there is no
+        separate forearm-home move -- the final settle drives it to REST.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_ELBOW_ROTATOR (4),
+                  RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+        """
+        # Ease the shoulder rotator home first.
+        await self.trunkController.move_to(
+            {constants.RT_SHOULDER_ROTATOR: 0}, steps=40, delay=0.03,
+        )
+        # Bring the head level and settle everything to REST_POSITIONS.
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+                constants.NECK_TILT: self._SLEEP_TILT_REST,
+                constants.RT_ELBOW_ROTATOR: constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+                constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+            },
+            steps=40, delay=0.03,
+        )
+
+    async def sleep_snore_lead_in(self):
+        """Lead-in phase: settle in and jerkily drop the head to sleep.
+
+        Owns all six sleep channels. Opens the sleep verified_pose_override for
+        the out-of-range neck tilt (180) and holds it across the lead-in -> loop
+        -> return lifetime via a per-adapter
+        AsyncExitStack (``_sleep_stack``, distinct from the other gestures'
+        stacks); ``sleep_snore_return`` closes it. Contains no audio logic --
+        completing the heavy head drop IS the (gating) start condition, signalled
+        by this coroutine simply completing. This is the AUDIO GATE.
+        """
+        # Open the override on a per-adapter AsyncExitStack so it stays active
+        # across the loop-body bobs/rocks and is released only in the return.
+        self._sleep_stack = contextlib.AsyncExitStack()
+        self._sleep_stack.enter_context(
+            TrunkController.verified_pose_override(self._SLEEP_OVERRIDE))
+        await self._sleep_snore_drop()
+
+    async def sleep_snore_loop_body(self):
+        """Loop-body phase: one sleep cycle (head bob + arm rock).
+
+        Owns NECK_TILT (1) and RT_SHOULDER_ROTATOR (7). One invocation equals one
+        bob+rock cycle; N invocations reproduce the standalone gesture's N cycles
+        (given the same RNG seed). Contains no audio logic.
+        """
+        await self._sleep_snore_bob_rock()
+
+    async def sleep_snore_return(self):
+        """Return phase: wake to rest and release the pose override.
+
+        Owns all six sleep channels. Wakes via the shared ``_sleep_snore_wake``
+        primitive (forearm + shoulder home, head level, rest of arm to
+        REST_POSITIONS), then closes the AsyncExitStack opened in
+        ``sleep_snore_lead_in`` so the verified_pose_override is scoped to
+        exactly the lead-in -> loop -> return span.
+        """
+        try:
+            await self._sleep_snore_wake()
+        finally:
+            stack = getattr(self, "_sleep_stack", None)
+            if stack is not None:
+                await stack.aclose()
+                self._sleep_stack = None
+
     async def present_palm(self):
         """Present palm: raise the forearm palm-up, gently bob it, then lower.
 
@@ -626,10 +1136,12 @@ class Movements:
         Operator-approved present pose: shoulder rotator=35 (arm up ~35deg),
         shoulder tilt=55 (rest), elbow tilt=120 (forearm raised ~120deg from
         straight), elbow rotator=235 (palm up, slightly inward -- short of the
-        full 270). With the forearm up, it gently bobs a few times -- one
-        smooth up/down of the elbow tilt by an amplitude of 25 +/-10 around 120
-        (i.e. reaching within [85, 155]) with slight amplitude/timing jitter so
-        it isn't metronomic -- then the arm lowers back to rest.
+        full 270). With the forearm up, it gently bobs a few times. Each bob is
+        a centering transition of the elbow tilt within the reachable band
+        ``center 120 +/- 35 = [85, 155]``: from its current logical position
+        (LT=85 / CENTER=120 / RT=155) it moves to one of the two OTHER positions
+        (jittered +/- ~10.5 deg, clamped to the band) with slight timing jitter
+        so it isn't metronomic -- then the arm lowers back to rest.
 
         Every target is inside the global SAFE_LIMITS (elbow tilt [0,160],
         elbow rotator [0,270], shoulder rotator [0,270], shoulder tilt [45,270]),
@@ -663,9 +1175,12 @@ class Movements:
     _PP_TILT_REST = 55                       # shoulder tilt stays at rest
     _PP_ELBOW_REST, _PP_ELBOW_UP = 5, 120    # elbow tilt (120 = forearm raised)
     _PP_FOREARM_REST, _PP_FOREARM_UP = 150, 235  # elbow rotator (235 = palm up, inward)
-    _PP_BOB_AMP = 25                         # base bob amplitude (deg from center)
-    _PP_BOB_AMP_JITTER = 10                   # per-bob random variation of the amplitude
-    _PP_BOB_LO, _PP_BOB_HI = 85, 155         # overall bob span around 120: 120 +/- (25+10) = [85,155]
+    # Centering-transition bob band: center 120 +/- 35 = [85, 155], the reachable
+    # elbow-tilt span. jitter_pct 0.30 => +/- ~10.5 deg endpoint jitter.
+    _PP_BOB_CENTER = 120
+    _PP_BOB_HALF_RANGE = 35
+    _PP_BOB_JITTER_PCT = 0.30
+    _PP_BOB_LO, _PP_BOB_HI = 85, 155         # overall bob span around 120: [85, 155]
 
     async def _present_palm_raise(self):
         """RAISE: bring the arm to the palm-up present pose, all four channels
@@ -696,42 +1211,42 @@ class Movements:
         )
 
     async def _present_palm_bob(self):
-        """BOB: one smooth up/down bob of the forearm (elbow tilt).
+        """BOB: one centering-transition bob of the forearm (elbow tilt).
 
-        Moves the elbow tilt to a jittered endpoint at center 120 +/- an
-        amplitude of 25 +/- 10 (so up-bobs reach ~[135, 155] and down-bobs
-        ~[85, 105]) then back toward the raised center, via eased move_to for a
-        gentle, non-robotic bob. A little randomness in the amplitude and timing
-        (drawn from the shared ``random`` module) keeps successive bobs from
-        looking metronomic, but the motion stays subtle. Updates
-        ``self._pp_bob_pos`` so the next bob is chosen relative to where the
-        forearm actually ended.
+        Delegates to ``randomized_centering_move`` for RT_ELBOW_TILT over the
+        reachable band ``center 120 +/- 35 = [85, 155]`` (``jitter_pct=0.30`` =>
+        +/- ~10.5 deg endpoint jitter, clamped to the band, so RT lands ~[144,
+        155] and LT ~[85, 96] -- a spread comparable to the old amplitude
+        jitter). Each bob reads the forearm's current logical position from
+        ``self._pp_bob_pos`` (initialized to the raised center 120 in
+        ``_present_palm_raise``) and transitions to one of the two OTHER logical
+        positions (LT=85 / CENTER=120 / RT=155) per the helper's transition
+        table.
+
+        This REPLACES the old target-then-settle-back-to-center bob (which was
+        two sub-moves per call) with ONE move per call, and the motion character
+        now includes center transitions rather than only up/down around center
+        (intended behavior change). Over the loop of many bobs the forearm still
+        rocks within [85, 155]. Timing preserves today's doubled bob speed:
+        ``steps_range=(18, 24)``, ``delay_base=0.015``, ``delay_jitter=0.005``.
+
+        Randomness is sourced from the shared ``random`` module and the bob state
+        is reset in the shared ``_present_palm_raise`` primitive, so seeding
+        ``random.seed(x)`` before a run makes both the standalone gesture and the
+        phased composition reproduce the identical command sequence.
 
         Channels: RT_ELBOW_TILT (5).
         """
-        # Bob to the opposite side of center from where we are, so the forearm
-        # visibly rocks up/down rather than drifting. Draw a per-bob amplitude
-        # (base +/- jitter, i.e. [15, 35]) and offset from the raised center so
-        # the motion feels natural and non-metronomic.
-        going_up = self._pp_bob_pos <= self._PP_ELBOW_UP
-        amp = self._PP_BOB_AMP + random.randint(
-            -self._PP_BOB_AMP_JITTER, self._PP_BOB_AMP_JITTER
-        )  # amplitude in [15, 35]
-        if going_up:
-            target = self._PP_ELBOW_UP + amp  # up-bob => [135, 155]
-        else:
-            target = self._PP_ELBOW_UP - amp  # down-bob => [85, 105]
-
-        steps = random.randint(18, 24)
-        delay = 0.015 + random.uniform(-0.005, 0.005)
-        await self.trunkController.move_to(
-            {constants.RT_ELBOW_TILT: target}, steps=steps, delay=delay,
+        await self.randomized_centering_move(
+            constants.RT_ELBOW_TILT,
+            center=self._PP_BOB_CENTER,
+            half_range=self._PP_BOB_HALF_RANGE,
+            jitter_pct=self._PP_BOB_JITTER_PCT,
+            state_attr="_pp_bob_pos",
+            steps_range=(18, 24),
+            delay_base=0.015,
+            delay_jitter=0.005,
         )
-        # Settle back toward the raised center so the bob reads as up-then-back.
-        await self.trunkController.move_to(
-            {constants.RT_ELBOW_TILT: self._PP_ELBOW_UP}, steps=steps, delay=delay,
-        )
-        self._pp_bob_pos = self._PP_ELBOW_UP
 
     async def _present_palm_lower(self):
         """LOWER: return the arm to its rest positions, eased.
@@ -1146,6 +1661,94 @@ class Movements:
         """
         await self._look_scan_center()
         self._look_scan_last_pan = constants.NECK_CENTER
+
+    # --- hypnotic head sway: parameterized limited scan (+/-10 from center) - #
+    #
+    # A PARAMETERIZED variant of look_scan bounded to +/-10 from center on BOTH
+    # axes for a gentle "hypnotic" sway. It uses its OWN glance primitive and
+    # bounds constants (and its own last-pan state attr), leaving brains'
+    # ``_LOOK_*`` constants and ``_look_scan_glance`` RNG draw order UNCHANGED.
+
+    # Hypnotic scan bounds: +/-10 from center 90 on both axes (narrow sway).
+    _HYP_PAN_MIN, _HYP_PAN_MAX = 80, 100         # 90 +/- 10
+    _HYP_TILT_MIN, _HYP_TILT_MAX = 80, 100       # 90 +/- 10
+    # Narrow range, so a small min-delta so glances still visibly move.
+    _HYP_MIN_PAN_DELTA = 3
+    # Gate delay: the hypnotic neck supplies the audio gate, so its lead-in
+    # sleeps this long before completing, delaying audio start by 100ms.
+    _HYP_GATE_DELAY = 0.1
+
+    async def _hyp_scan_glance(self, last_pan):
+        """Perform ONE gentle hypnotic glance + dwell, then report the chosen pan.
+
+        Channels: NECK_PAN (0), NECK_TILT (1).
+
+        A parameterized copy of ``_look_scan_glance`` bounded to the narrow
+        hypnotic range: pan in [80, 100], tilt in [80, 100] (center 90 +/- 10). A
+        target so close to the current pan that it wouldn't visibly move (within
+        ``_HYP_MIN_PAN_DELTA`` = 3) is rejected. The existing look-scan dwell
+        (``asyncio.sleep(random.uniform(1.2, 3.6))``) is kept -- a slow sway with
+        a gaze pause suits the hypnotic feel. This uses its own bounds so brains'
+        ``_look_scan_glance`` is untouched.
+
+        Args:
+            last_pan: The pan angle of the previous glance, used to reject a new
+                target that is too close to move visibly.
+
+        Returns:
+            The pan angle chosen for this glance (the caller's next ``last_pan``).
+        """
+        pan = random.randint(self._HYP_PAN_MIN, self._HYP_PAN_MAX)
+        while abs(pan - last_pan) < self._HYP_MIN_PAN_DELTA:
+            pan = random.randint(self._HYP_PAN_MIN, self._HYP_PAN_MAX)
+        tilt = random.randint(self._HYP_TILT_MIN, self._HYP_TILT_MAX)
+
+        # Vary the travel time a little so the sway looks organic.
+        steps = random.randint(22, 34)
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: pan, constants.NECK_TILT: tilt},
+            steps=steps, delay=0.04,
+        )
+        # Random settle/gaze pause before the next glance.
+        await asyncio.sleep(random.uniform(1.2, 3.6))
+        return pan
+
+    async def hyp_scan_lead_in(self):
+        """Lead-in phase: wait 100ms (audio gate), then center the head.
+
+        Owns NECK_PAN (0) and NECK_TILT (1). This movement SUPPLIES the audio
+        gate for the ``hypnotic`` performance: the framework starts audio the
+        instant this coroutine completes, so the initial ``asyncio.sleep(0.1)``
+        yields exactly a 100ms audio delay after the routine begins (mirrors
+        blah's ``shake_no_lead_in`` 250ms gate). The standalone hypnotic scan
+        never calls this adapter, so the 100ms gate lives ONLY here. Then centers
+        the head and seeds the per-glance ``last_pan`` state. Contains no other
+        audio logic.
+        """
+        # 100ms gate delay: audio starts when this lead-in completes.
+        await asyncio.sleep(self._HYP_GATE_DELAY)
+        await self._look_scan_center()
+        self._hyp_scan_last_pan = constants.NECK_CENTER
+
+    async def hyp_scan_loop_body(self):
+        """Loop-body phase: ONE gentle hypnotic glance + dwell.
+
+        Owns NECK_PAN (0) and NECK_TILT (1). One invocation equals one glance,
+        using the narrow hypnotic bounds (pan in [80, 100], tilt in [80, 100]).
+        Contains no audio logic.
+        """
+        last_pan = getattr(self, "_hyp_scan_last_pan", constants.NECK_CENTER)
+        self._hyp_scan_last_pan = await self._hyp_scan_glance(last_pan)
+
+    async def hyp_scan_return(self):
+        """Return phase: recenter the neck to the resting pose.
+
+        Owns NECK_PAN (0) and NECK_TILT (1). Recenters via the shared
+        ``_look_scan_center`` primitive so the head ends at its neutral rest.
+        Contains no audio logic.
+        """
+        await self._look_scan_center()
+        self._hyp_scan_last_pan = constants.NECK_CENTER
 
     async def look_around_small(self):
         """Subtle look-around: tighter tilt range, repeated twice.

@@ -42,19 +42,18 @@ _MODEL = CollisionModel(urdf_path=_URDF_PATH, calibration_path=_CALIBRATION_PATH
 # --- Arm (menacing_reach) extreme poses --------------------------------------
 #
 # The reach pose holds elbow_tilt=0, elbow_rotator=0 while the menace swing
-# drives RT_SHOULDER_TILT across its band extremes {25, 42, 60} (25/60 = swing
-# endpoints, 42 = band center sampled by the out-and-back / partial patterns)
+# drives RT_SHOULDER_TILT across its centering-transition band extremes
+# {26, 43, 60} (LT=26 / CENTER=43 / RT=60, the three logical swing positions)
 # AND layers a smooth shoulder-rotator jitter of _MR_ROT_OUT (209) +/- up to 4,
-# i.e. rotator extremes {205, 209, 213}. The new swing patterns also move
-# through center (~38-46), but that region is interior to the [25, 60] band
-# already bounded by the {25, 60} endpoints, so the extreme set still bounds
-# every reachable pose; 42 is added for completeness. Every combination of a
-# tilt extreme with a rotator extreme is physically realizable during a swing,
-# so both axes are enumerated. See src/movements.py
-# _MR_ROT_OUT / _MR_TILT_* / _MR_FOREARM_OUT / _MR_ELBOW_OUT.
+# i.e. rotator extremes {205, 209, 213}. Endpoint jitter (+/- ~4 deg) is clamped
+# back into the [26, 60] band, so the extreme set still bounds every reachable
+# pose. Every combination of a tilt extreme with a rotator extreme is physically
+# realizable during a swing, so both axes are enumerated. See src/movements.py
+# _MR_ROT_OUT / _MR_TILT_CENTER_ANGLE / _MR_TILT_HALF_RANGE /
+# _MR_FOREARM_OUT / _MR_ELBOW_OUT.
 _MR_FOREARM_OUT = 0
 _MR_ELBOW_OUT = 0
-_ARM_TILT_EXTREMES = (25, 42, 60)
+_ARM_TILT_EXTREMES = (26, 43, 60)
 _ARM_ROT_EXTREMES = (205, 209, 213)
 
 _ARM_POSES = [

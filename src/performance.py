@@ -179,12 +179,20 @@ class PerformanceDefinition:
         steps: The ordered performance steps, run one after another.
         gate: Which movement supplies the audio gate, or ``None`` to start audio
             at time zero. Defaults to ``None``.
+        player_options: Optional kwargs forwarded to the ``AudioPlayer`` (e.g.
+            disable the jaw or envelope-driven eyes: ``{"drive_jaw": False,
+            "drive_eyes": False}``). ``None`` (default) => default player
+            (jaw + envelope-driven eyes). Kept as the LAST field so existing
+            positional construction is unaffected. The dict is mutable, so the
+            default is ``None`` (never a mutable default) and it is copied where
+            it is consumed (``PlaybackController``).
     """
 
     name: str
     audio_file: str
     steps: tuple[PerformanceStep, ...]
     gate: GateSpec | None = None
+    player_options: dict | None = None
 
 
 class PlaybackController:
@@ -204,10 +212,17 @@ class PlaybackController:
 
     Args:
         audio_path: Absolute path to the dialog ``.wav`` track to play.
+        player_options: Optional kwargs forwarded to the ``AudioPlayer``
+            constructor in ``start()`` (e.g. ``{"drive_jaw": False,
+            "drive_eyes": False}`` to silence the jaw and free the eye pin for a
+            separate blinker). ``None`` (default) => a default ``AudioPlayer``
+            (jaw + envelope-driven eyes). Copied on construction so a caller's
+            dict is never mutated.
     """
 
-    def __init__(self, audio_path: str) -> None:
+    def __init__(self, audio_path: str, player_options: dict | None = None) -> None:
         self.audio_path = audio_path
+        self.player_options = dict(player_options or {})
         self._thread: threading.Thread | None = None
         self._start_monotonic: float | None = None
 
@@ -247,7 +262,7 @@ class PlaybackController:
         # hardware/audio stack.
         from audio_player import AudioPlayer
 
-        player = AudioPlayer()
+        player = AudioPlayer(**self.player_options)
         self._thread = threading.Thread(
             target=player.play_audio_file,
             args=(self.audio_path,),
@@ -393,6 +408,20 @@ class PerformanceRunner:
         audio_dir: Directory containing the performance's audio track.
             ``definition.audio_file`` is resolved against it (via
             ``os.path.join``) to build the single ``PlaybackController``.
+        ambient: Optional callable taking the ``PlaybackController`` and
+            returning an awaitable/coroutine, or ``None``. When provided,
+            ``run()`` launches it as a concurrent task alongside the performance
+            steps (created right after playback is set up), passing it the
+            performance's ``PlaybackController`` so the ambient coroutine can
+            bind itself to the audio window (e.g. start/stop with the audio).
+            Once the steps finish -- on BOTH the normal-completion and exception
+            paths -- ``run()`` cancels it if still running and awaits it,
+            swallowing ``CancelledError``, as a SAFETY NET. The task never
+            prevents ``run()`` from returning. The runner treats the coroutine as
+            opaque (it knows nothing about LEDs or what the ambient does); it just
+            hands it the playback handle. ``hypnotic`` uses it to blink the eyes
+            bound to the audio window, leaving the LED off when the performance
+            ends.
     """
 
     def __init__(
@@ -400,10 +429,12 @@ class PerformanceRunner:
         definition: PerformanceDefinition,
         movements: "Movements",
         audio_dir: str,
+        ambient: Callable[[PlaybackController], Awaitable[None]] | None = None,
     ) -> None:
         self.definition = definition
         self.movements = movements
         self.audio_dir = audio_dir
+        self.ambient = ambient
 
     def _validate_channel_ownership(self) -> None:
         """Re-check every group's Channel_Ownership before any motion is issued.
@@ -435,7 +466,9 @@ class PerformanceRunner:
             The controller for this performance's dialog track.
         """
         audio_path = os.path.join(self.audio_dir, self.definition.audio_file)
-        return PlaybackController(audio_path)
+        return PlaybackController(
+            audio_path, player_options=self.definition.player_options
+        )
 
     async def _run_movement(
         self,
@@ -624,6 +657,33 @@ class PerformanceRunner:
         await gate.wait()
         playback.start()
 
+    async def _stop_ambient(self, ambient_task: "asyncio.Task[None] | None") -> None:
+        """Cancel and await the optional ambient task, swallowing cancellation.
+
+        Mirrors the defensive gate-task lifecycle: called after the steps on
+        both the normal-completion and exception paths. If the ambient task is
+        still running it is cancelled; the task is then awaited so its own
+        cleanup (e.g. an eye blinker turning its LED off and closing it in a
+        ``finally`` block) completes before ``run()`` returns. ``CancelledError``
+        from the cancellation, and any error the ambient itself raised, are
+        swallowed so the ambient never leaks and never masks the performance's
+        own result. A ``None`` task (no ambient configured) is a no-op.
+
+        Args:
+            ambient_task: The concurrent ambient task, or ``None`` when the
+                performance declared no ambient coroutine.
+        """
+        if ambient_task is None:
+            return
+        if not ambient_task.done():
+            ambient_task.cancel()
+        try:
+            await ambient_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as error:  # noqa: BLE001 - ambient must never mask result
+            print(f"[performance] ambient task error (ignored): {error}")
+
     async def run(self) -> None:
         """Execute the performance: validate, gate audio, run each step in order.
 
@@ -649,6 +709,17 @@ class PerformanceRunner:
         iterations so a started iteration always completes -- and stops issuing
         new iterations once playback ends; an unflagged step runs each body
         exactly once.
+
+        Ambient task lifecycle: when the runner was constructed with an
+        ``ambient`` callable, ``run()`` launches it as a concurrent task right
+        after playback is set up (before the steps), passing it the
+        ``PlaybackController`` so the ambient can bind itself to the audio window,
+        so it runs alongside the steps. Once the steps finish -- on BOTH the
+        normal and exception paths -- the task is cancelled if still running and
+        awaited (swallowing ``CancelledError``) via ``_stop_ambient`` as a SAFETY
+        NET, so it never leaks and its own cleanup (e.g. an eye blinker's LED-off
+        ``finally``) always runs before ``run()`` returns. The runner treats the
+        coroutine as opaque; it just hands it the playback handle.
 
         Return-to-rest / safe-rest recovery (Requirements 8.1, 8.3, 8.4, 10.4):
         each movement's own ``do_return`` runs inside ``_run_movement``; between
@@ -679,6 +750,19 @@ class PerformanceRunner:
                 self._start_audio_when_gated(playback, gate)
             )
 
+        # Optional ambient coroutine: runs CONCURRENTLY with the steps (e.g.
+        # hypnotic's eye blink bound to the audio window). Created here -- before
+        # the steps, mirroring the gate task's lifecycle -- so it is already
+        # running alongside the very first step. It receives the
+        # PlaybackController so it can bind itself to the audio window
+        # (has_started()/is_active()). It is cancelled and awaited after the
+        # steps on BOTH the normal and exception paths (see the finally-style
+        # handling below) as a SAFETY NET, so it never leaks and its finally
+        # block (LED off) always runs. run() knows nothing about what it does.
+        ambient_task: asyncio.Task[None] | None = None
+        if self.ambient is not None:
+            ambient_task = asyncio.create_task(self.ambient(playback))
+
         # Run the steps in order. The whole body is wrapped so that ANY failure
         # in a phase (lead_in, loop_body, do_return) drives every servo to safe
         # rest before the error propagates -- a stalled servo must never be left
@@ -698,15 +782,21 @@ class PerformanceRunner:
                     await self._return_to_rest(f"inter-step rest after step {index + 1}")
         except Exception as error:
             # A phase raised. Drive all servos to safe rest, log the offending
-            # phase, then re-raise so callers still see the failure (Req 8.4).
+            # phase, cancel any ambient task, then re-raise so callers still see
+            # the failure (Req 8.4). The ambient task is stopped here too so its
+            # cleanup (e.g. LED off) runs even when the performance fails.
             print(f"[performance] error during '{self.definition.name}': {error}")
             await self._return_to_rest("exception recovery")
+            await self._stop_ambient(ambient_task)
             raise
         else:
             # Normal completion: after each movement's own do_return has run,
             # sweep any residual channels home so every channel ends at its rest
             # position (Requirements 8.1, 8.3, 10.4).
             await self._return_to_rest("final cleanup")
+            # Stop the ambient task so it never outlives the performance and its
+            # finally block (LED off) runs before run() returns.
+            await self._stop_ambient(ambient_task)
 
         # Ensure the gate task is resolved before returning. Under normal flow
         # the gate has been set by its supplying movement; awaiting here simply
