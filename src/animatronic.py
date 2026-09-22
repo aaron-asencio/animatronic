@@ -85,6 +85,7 @@ class Animatronic:
         'yawn.wav',                # 19
         'brains.wav',              # 20
         'hypnotic.wav',            # 21
+        'snore.wav',               # 22
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -587,6 +588,83 @@ class Animatronic:
             ).run()
         )
 
+    def snore(self):
+        """"Snore" audio — jerky heavy-head drop gates the snore, then sleep.
+
+        Like ``hypnotic``, ``snore`` is driven by the Performance_Framework: it
+        declares a single-step ``PerformanceDefinition`` whose single movement
+        (``sleep_head``) owns the neck + arm channels
+        ({NECK_PAN, NECK_TILT, RT_ELBOW_ROTATOR, RT_SHOULDER_TILT,
+        RT_SHOULDER_ROTATOR}) and runs the sleep/snore choreography, looping the
+        sleep bob+rock cycle for the duration of ``snore.wav`` (~11.1 s).
+
+        The routine is GATED by the movement itself: ``sleep_snore_lead_in``
+        performs the JERKY, heavy-head drop (neck tilt sinking 90 -> 180 with
+        random pauses / jerk-ups) and, because it ``supplies_gate=True``, the
+        framework starts ``snore.wav`` the instant that lead-in finishes — so the
+        snore begins the moment the head has fully dropped "asleep". The loop
+        body then repeats a gentle head bob ([170, 180]) + shoulder rotator rock
+        ([0, 10]) until the audio ends, and the return phase wakes the figure
+        back to rest.
+
+        Audio behaviour: the definition sets
+        ``player_options={"drive_jaw": False}`` so the jaw motor is SILENCED
+        (a snoring figure's mouth stays shut), while the eyes remain
+        envelope-driven (``drive_eyes`` defaults True) — tracking the audio
+        envelope as normal. There is no ambient task.
+
+        SAFETY: the sleep pose drives NECK_TILT to 180 (above the global
+        SAFE_LIMITS ceiling of 160). That is OPERATOR bench-verified safe in this
+        heavy-head-drop pose, so the movement opens ``Movements._SLEEP_OVERRIDE``
+        ({NECK_TILT: (30, 180)}) via an AsyncExitStack held across the
+        lead-in -> loop -> return span and released in the return phase, so the
+        widened clamp never leaks past this routine. The arm holds its REST pose
+        (elbow rotator 150, elbow tilt 5, shoulder tilt 55 — all within the
+        global limits), so no arm override is needed.
+
+        A single ``Movements`` instance backs every ``MovementSpec`` phase
+        callable so all adapters share one ``TrunkController``. The runner is a
+        coroutine, launched with ``asyncio.run`` here at the top of the call
+        stack (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        SLEEP = PerformanceDefinition(
+            name="sleep",
+            audio_file=self.music[22],  # snore.wav — ~11.1 s
+            # The sleep movement supplies the gate: its lead-in performs the
+            # jerky head drop and, on completion, opens the audio gate — so the
+            # snore starts the instant the head has fully dropped "asleep".
+            gate=GateSpec(movement_name="sleep_head"),
+            # Silence the jaw motor for the snore (a snoring figure's mouth stays
+            # shut); the eyes still track the audio envelope (drive_eyes defaults True).
+            player_options={"drive_jaw": False},
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="sleep_head",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,
+                                constants.RT_ELBOW_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_SHOULDER_ROTATOR,
+                            }),
+                            lead_in=mv.sleep_snore_lead_in,     # jerky head drop
+                            loop_body=mv.sleep_snore_loop_body,  # one bob+rock
+                            do_return=mv.sleep_snore_return,     # wake to rest
+                            supplies_gate=True,                  # opens the audio gate
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(SLEEP, mv, audio_dir).run())
+
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
     # ------------------------------------------------------------------ #
@@ -667,6 +745,7 @@ def main(args):
         # Performance-framework routines
         'brains':         a.brains,
         'hypnotic':       a.hypnotic,
+        'sleep':          a.snore,
     }
 
     if args.action in action_map:

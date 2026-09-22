@@ -874,6 +874,259 @@ class Movements:
                 await stack.aclose()
                 self._hypnotic_arm_stack = None
 
+    async def sleep_snore(self):
+        """Sleep/snore: drop the head as if nodding off, then bob + rock while
+        "asleep", then wake back up to rest.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_ELBOW_ROTATOR (4),
+                  RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+
+        The gesture starts from the arm's REST pose (elbow rotator at its rest
+        angle 150, shoulder tilt at rest 55, the rest of the arm at rest), then
+        performs a JERKY, heavy-head drop -- the neck tilt sinks from level (90)
+        down to fully dropped (180), descending in small eased chunks but pausing
+        or jerking back UP a few degrees at random intervals to sell a tired,
+        fighting-to-stay-awake nod. Once dropped, it repeats a gentle sleep
+        cycle: the head BOBS within [170, 180] and the shoulder rotator ROCKS
+        within [0, 10] (an occasional ~0.5s pause between rocks). Finally it
+        wakes: the shoulder rotator eases to 0 and the neck returns to level with
+        the arm settling back to REST_POSITIONS (the forearm stays at its rest
+        angle 150 throughout).
+
+        NECK_TILT reaches 180 (above the global SAFE_LIMITS ceiling of 160), so
+        the sleep-specific verified-pose override ``_SLEEP_OVERRIDE`` widens JUST
+        that one channel ({NECK_TILT: (30, 180)}) for the whole
+        drop/bob/rock/return span. RT_SHOULDER_TILT holds 55 (within the global
+        (45,270) limit) so it needs no override. The dropped-head pose is
+        OPERATOR bench-verified safe. Every commanded angle stays inside the
+        widened band and ``move_to`` clamps as a final safeguard.
+
+        Like ``hypnotic_arm``, this standalone gesture delegates to the SAME
+        phase primitives the Performance_Framework drives (drop lead-in, one
+        bob+rock loop body, wake return), so composing ``sleep_snore_lead_in`` +
+        N x ``sleep_snore_loop_body`` + ``sleep_snore_return`` reproduces the
+        exact same servo command sequence WHEN THE RNG IS SEEDED IDENTICALLY
+        before each run (the jerks, bobs, and rocks draw from the shared
+        ``random`` module). No audio logic lives in any of these methods.
+        """
+        with TrunkController.verified_pose_override(self._SLEEP_OVERRIDE):
+            await self._sleep_snore_drop()
+            # SLEEP: gently bob the head + rock the arm a fixed number of cycles.
+            for _ in range(6):
+                await self._sleep_snore_bob_rock()
+            await self._sleep_snore_wake()
+
+    # --- sleep_snore shared primitives + phase adapters ------------------- #
+    #
+    # A heavy-head-drop + sleep-bob/arm-rock + wake gesture. The standalone
+    # gesture above and the phase adapters below both call these primitives, so a
+    # phased composition (lead_in + loop_body x N + return) issues the identical
+    # move_to command sequence as the standalone gesture (given the same RNG
+    # seed). All randomness is drawn from the shared ``random`` module; there is
+    # no wall-clock nondeterminism, so ``random.seed(x)`` makes both paths
+    # deterministic. No audio logic lives in any of these methods.
+
+    # Neck tilt landmarks for the sleep drop/bob. Rest = level (90); down = fully
+    # dropped chin-to-chest (180, above the global ceiling 160 -- override held).
+    _SLEEP_TILT_REST = 90
+    _SLEEP_TILT_DOWN = 180
+    # Head-bob band while "asleep": dips up from 180 toward 170 and back.
+    _SLEEP_BOB_MIN = 170
+    _SLEEP_BOB_MAX = 180
+    # Shoulder-rotator rock band while "asleep": gentle sway near the side.
+    _SLEEP_ROCK_MIN = 0
+    _SLEEP_ROCK_MAX = 10
+    # Jerk-up magnitude during the tired head drop (degrees back toward level).
+    _SLEEP_JERK_MIN = 5
+    _SLEEP_JERK_MAX = 10
+    # Elbow rotator: parks at its rest angle (150) during sleep and stays there
+    # through wake -- the forearm never leaves rest in this routine.
+    _SLEEP_ELBOW_ROT_PARK = 150
+    # NECK_TILT hits 180 (above the global ceiling 160), operator bench-verified
+    # safe in this sleep pose, so widen just that one channel. Held across the
+    # whole span. RT_SHOULDER_TILT now holds 55 (within the global (45,270)
+    # limit), so it no longer needs an override.
+    _SLEEP_OVERRIDE = {
+        constants.NECK_TILT: (30, 180),
+    }
+
+    async def _sleep_snore_drop(self):
+        """DROP: settle into the start pose, then jerkily drop the head to sleep.
+
+        Moves all six channels to the arm's REST start pose (NECK_PAN 90,
+        NECK_TILT 90, RT_ELBOW_ROTATOR 150, RT_ELBOW_TILT 5, RT_SHOULDER_TILT 55,
+        RT_SHOULDER_ROTATOR 0) with an eased ``move_to``, then lowers NECK_TILT
+        from 90 to 180 in small eased chunks. To sell a heavy, tired head that
+        keeps nodding off and catching itself, at random intervals it either
+        PAUSES briefly (``asyncio.sleep`` ~0.2-0.5s) or JERKS the head back UP by
+        ``random(5, 10)`` degrees before resuming the descent. The drop always
+        ENDS at exactly 180.
+
+        Also initializes the bob state (``_sleep_bob_center`` = 180) so both the
+        standalone gesture and the phased composition start bobbing from the same
+        known center, keeping their command streams in lock-step under a fixed
+        seed. Every commanded neck-tilt angle stays within [90, 180]; the
+        ``_SLEEP_OVERRIDE`` (and ``move_to``'s clamp) bound it.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_ELBOW_ROTATOR (4),
+                  RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+        """
+        # Settle into the start pose (all six channels, eased/simultaneous).
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: self._SLEEP_TILT_REST,          # 90 (centered)
+                constants.NECK_TILT: self._SLEEP_TILT_REST,         # 90 (level)
+                constants.RT_ELBOW_ROTATOR: self._SLEEP_ELBOW_ROT_PARK,  # 150 (rest)
+                constants.RT_ELBOW_TILT: 5,
+                constants.RT_SHOULDER_TILT: 55,
+                constants.RT_SHOULDER_ROTATOR: 0,
+            },
+            steps=50, delay=0.025,
+        )
+
+        # JERKY HEAD DROP: descend NECK_TILT 90 -> 180 in small chunks, with
+        # random pauses / jerk-ups mid-descent. Keep every angle in [90, 180].
+        current = float(self._SLEEP_TILT_REST)
+        step_deg = 6  # small eased chunk per advance
+        while current < self._SLEEP_TILT_DOWN:
+            # Occasionally fight the drop: either jerk the head back up or pause.
+            if random.random() < 0.3:
+                if random.random() < 0.5:
+                    # Jerk UP a few degrees, then resume descending.
+                    jerk = random.randint(self._SLEEP_JERK_MIN, self._SLEEP_JERK_MAX)
+                    up = max(self._SLEEP_TILT_REST, current - jerk)
+                    print(f"[sleep] head jerk up to {up:.0f}")
+                    await self.trunkController.move_to(
+                        {constants.NECK_TILT: int(up)}, steps=6, delay=0.02,
+                    )
+                    current = up
+                else:
+                    # Brief tired pause mid-nod.
+                    await asyncio.sleep(random.uniform(0.2, 0.5))
+
+            # Advance the descent by a small eased chunk (never past 180).
+            current = min(self._SLEEP_TILT_DOWN, current + step_deg)
+            await self.trunkController.move_to(
+                {constants.NECK_TILT: int(current)}, steps=8, delay=0.02,
+            )
+
+        # Ensure we END exactly at the fully-dropped pose.
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: self._SLEEP_TILT_DOWN}, steps=6, delay=0.02,
+        )
+
+        # Initialize loop state: the head bobs around the fully-dropped center.
+        self._sleep_bob_center = self._SLEEP_TILT_DOWN
+
+    async def _sleep_snore_bob_rock(self):
+        """SLEEP CYCLE: one gentle head bob + one arm rock.
+
+        HEAD BOB: NECK_TILT dips up from 180 to ``180 - random(3, 10)`` (staying
+        within [170, 180]) and eases back toward 180 -- a slow, shallow nod. ARM
+        ROCK: RT_SHOULDER_ROTATOR eases to a random target in [0, 10], with an
+        occasional (~30%) ~0.5s pause first to vary the rhythm. Both moves are
+        slow and eased. All targets are in-band by construction and ``move_to``
+        clamps as a final safeguard. Randomness is from the shared ``random``.
+
+        Channels: NECK_TILT (1), RT_SHOULDER_ROTATOR (7).
+        """
+        # HEAD BOB: dip up a few degrees within [170, 180], then ease back to 180.
+        dip = random.randint(3, 10)
+        bob_top = max(self._SLEEP_BOB_MIN, self._SLEEP_TILT_DOWN - dip)
+        print(f"[sleep] head bob up to {bob_top:.0f} then back to {self._SLEEP_TILT_DOWN}")
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: int(bob_top)}, steps=30, delay=0.03,
+        )
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: self._SLEEP_TILT_DOWN}, steps=30, delay=0.03,
+        )
+
+        # ARM ROCK: gentle shoulder-rotator sway within [0, 10], occasionally
+        # preceded by a brief pause to vary the breathing rhythm.
+        if random.random() < 0.3:
+            await asyncio.sleep(0.5)
+        rock = random.randint(self._SLEEP_ROCK_MIN, self._SLEEP_ROCK_MAX)
+        print(f"[sleep] arm rock to {rock}")
+        await self.trunkController.move_to(
+            {constants.RT_SHOULDER_ROTATOR: rock}, steps=30, delay=0.03,
+        )
+
+    async def _sleep_snore_wake(self):
+        """WAKE/RETURN: ease the arm and head back to a clean rest pose.
+
+        Slowly eases RT_SHOULDER_ROTATOR (7) home to 0, then brings NECK_TILT
+        back to level (90) with the remaining channels to their REST_POSITIONS
+        so the figure ends clean and unloaded. The forearm already sits at its
+        rest angle (RT_ELBOW_ROTATOR 150) throughout sleep, so there is no
+        separate forearm-home move -- the final settle drives it to REST.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_ELBOW_ROTATOR (4),
+                  RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+        """
+        # Ease the shoulder rotator home first.
+        await self.trunkController.move_to(
+            {constants.RT_SHOULDER_ROTATOR: 0}, steps=40, delay=0.03,
+        )
+        # Bring the head level and settle everything to REST_POSITIONS.
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+                constants.NECK_TILT: self._SLEEP_TILT_REST,
+                constants.RT_ELBOW_ROTATOR: constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+                constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+            },
+            steps=40, delay=0.03,
+        )
+
+    async def sleep_snore_lead_in(self):
+        """Lead-in phase: settle in and jerkily drop the head to sleep.
+
+        Owns all six sleep channels. Opens the sleep verified_pose_override for
+        the out-of-range neck tilt (180) and holds it across the lead-in -> loop
+        -> return lifetime via a per-adapter
+        AsyncExitStack (``_sleep_stack``, distinct from the other gestures'
+        stacks); ``sleep_snore_return`` closes it. Contains no audio logic --
+        completing the heavy head drop IS the (gating) start condition, signalled
+        by this coroutine simply completing. This is the AUDIO GATE.
+        """
+        # Open the override on a per-adapter AsyncExitStack so it stays active
+        # across the loop-body bobs/rocks and is released only in the return.
+        self._sleep_stack = contextlib.AsyncExitStack()
+        self._sleep_stack.enter_context(
+            TrunkController.verified_pose_override(self._SLEEP_OVERRIDE))
+        await self._sleep_snore_drop()
+
+    async def sleep_snore_loop_body(self):
+        """Loop-body phase: one sleep cycle (head bob + arm rock).
+
+        Owns NECK_TILT (1) and RT_SHOULDER_ROTATOR (7). One invocation equals one
+        bob+rock cycle; N invocations reproduce the standalone gesture's N cycles
+        (given the same RNG seed). Contains no audio logic.
+        """
+        await self._sleep_snore_bob_rock()
+
+    async def sleep_snore_return(self):
+        """Return phase: wake to rest and release the pose override.
+
+        Owns all six sleep channels. Wakes via the shared ``_sleep_snore_wake``
+        primitive (forearm + shoulder home, head level, rest of arm to
+        REST_POSITIONS), then closes the AsyncExitStack opened in
+        ``sleep_snore_lead_in`` so the verified_pose_override is scoped to
+        exactly the lead-in -> loop -> return span.
+        """
+        try:
+            await self._sleep_snore_wake()
+        finally:
+            stack = getattr(self, "_sleep_stack", None)
+            if stack is not None:
+                await stack.aclose()
+                self._sleep_stack = None
+
     async def present_palm(self):
         """Present palm: raise the forearm palm-up, gently bob it, then lower.
 
