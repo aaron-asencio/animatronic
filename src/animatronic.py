@@ -84,6 +84,7 @@ class Animatronic:
         'owl.wav',                 # 18
         'yawn.wav',                # 19
         'brains.wav',              # 20
+        'hypnotic.wav',            # 21
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -406,6 +407,89 @@ class Animatronic:
 
         asyncio.run(PerformanceRunner(BRAINS, mv, audio_dir).run())
 
+    def hypnotic(self):
+        """"Hypnotic" audio — concurrent brains-style arm sway + gentle head sway.
+
+        Like ``brains``, ``hypnotic`` is driven by the Performance_Framework: it
+        declares a single-step ``PerformanceDefinition`` whose concurrent group
+        runs a PARAMETERIZED brains-style arm (channels 4-7) and a gentle limited
+        head sway (neck channels 0-1) at the same time, looping both for the
+        duration of ``hypnotic.wav``. It borrows brains' arm sway + neck scan
+        machinery but with a different arm pose (rotator 230, shoulder-tilt sway
+        within [0, 30]), a limited neck range (+/-10 from center on both axes),
+        and a 100ms audio gate. It does NOT change ``brains`` — it uses
+        parameterized ``hypnotic_arm_*`` / ``hyp_scan_*`` adapters with their own
+        pose, band, state, and bounds.
+
+        The two movements own disjoint channels ({4,5,6,7} vs {0,1}), so the
+        concurrent group is valid. Audio is GATED to start 100ms AFTER the routine
+        begins: the head sway supplies the gate (``gate=GateSpec("hyp_head_sway")``
+        + ``supplies_gate=True``), and its ``hyp_scan_lead_in`` sleeps 100ms
+        before completing — the framework starts audio the instant that lead-in
+        finishes, so playback begins at t≈0.1s. The arm is ungated
+        (``supplies_gate=False``), so its lead-in reaches out at t=0.
+
+        Because ``hypnotic.wav`` is SHORT (~5.05s), the arm sets
+        ``stop_loop_lead_seconds=1.5`` so it stops starting new sways once the
+        audio is within ~1.5s of ending and its last sway (~1s) plus the
+        ~40%-faster retract (~0.8s) finish before the audio does. The head sway
+        has no cutoff, so it keeps looping until the audio fully ends. Both then
+        return to rest — the arm retracts, the neck centers — with the runner
+        sweeping any residual channels home on completion or failure.
+
+        A single ``Movements`` instance backs every ``MovementSpec`` phase
+        callable so the arm and neck adapters share one ``TrunkController``. The
+        runner is a coroutine, launched with ``asyncio.run`` here at the top of
+        the call stack (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        HYPNOTIC = PerformanceDefinition(
+            name="hypnotic",
+            audio_file=self.music[21],  # hypnotic.wav — ~5.05 s
+            # Head sway supplies the gate: its lead-in sleeps 100ms before
+            # completing, so audio starts ~100ms after the routine begins.
+            gate=GateSpec(movement_name="hyp_head_sway"),
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="hypnotic_arm",
+                            owned_channels=frozenset({
+                                constants.RT_SHOULDER_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_ELBOW_TILT,
+                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                            }),
+                            lead_in=mv.hypnotic_arm_lead_in,      # reach out (t=0)
+                            loop_body=mv.hypnotic_arm_loop_body,  # one sway
+                            do_return=mv.hypnotic_arm_return,     # retract
+                            supplies_gate=False,
+                            # hypnotic.wav is short (~5.05s); stop starting new
+                            # sways within 1.5s of the end so the last sway (~1s)
+                            # plus the ~40%-faster retract (~0.8s) finish in time.
+                            stop_loop_lead_seconds=1.5,
+                        ),
+                        MovementSpec(
+                            name="hyp_head_sway",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                            }),
+                            lead_in=mv.hyp_scan_lead_in,      # 100ms gate + center
+                            loop_body=mv.hyp_scan_loop_body,  # one gentle glance
+                            do_return=mv.hyp_scan_return,     # neck to center
+                            supplies_gate=True,               # opens the audio gate
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(HYPNOTIC, mv, audio_dir).run())
+
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
     # ------------------------------------------------------------------ #
@@ -485,6 +569,7 @@ def main(args):
         'yawn':           a.yawn,
         # Performance-framework routines
         'brains':         a.brains,
+        'hypnotic':       a.hypnotic,
     }
 
     if args.action in action_map:
