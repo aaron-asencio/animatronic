@@ -163,6 +163,73 @@ class Animatronic:
             audio_thread.join(timeout=2)
 
     @staticmethod
+    async def _blink_eyes(playback, on_time=0.25, off_time=0.25):
+        """Blink the eye LED, bound to the audio window, until audio ends.
+
+        Owns ``EYE_LIGHT_PIN`` independently of ``AudioPlayer`` so it can drive
+        the eyes on a fixed rhythm that is NOT tied to the audio envelope. Used
+        by ``hypnotic`` as the runner's ambient task while audio plays with the
+        AudioPlayer's eye/jaw drive disabled (so this blinker owns the pin
+        without a gpiozero "pin already in use" clash).
+
+        Rather than blinking for the whole performance, this blink is bound to
+        the AUDIO window via the ``playback`` controller:
+
+        1. WAIT FOR AUDIO START: before blinking, poll ``playback.has_started()``
+           with a short ``asyncio.sleep(0.02)`` loop so the first blink is delayed
+           until audio actually begins (the hypnotic gate is ~100ms). The blink
+           thus STARTS with the audio, not at t=0.
+        2. BLINK WHILE ACTIVE: loop while ``playback.is_active()`` --
+           on()/sleep(on_time)/off()/sleep(off_time) -- checking ``is_active()``
+           only between whole on/off cycles so a cycle is never cut mid-blink.
+           When audio finishes (``is_active()`` is ``False``) the blink STOPS,
+           ending WITH the audio even though the performance may still be
+           retracting/recentering.
+
+        The performance runner also cancels this task at performance end as a
+        SAFETY NET, so ``CancelledError`` is caught (this also makes the
+        wait-for-start loop safe if audio never starts -- it will simply be
+        cancelled). In a ``finally`` block the LED is turned off and closed so the
+        eyes are always left off and the pin is released. ``gpiozero.LED`` is
+        imported and constructed INSIDE this function so importing this module in
+        a non-Pi/test environment never requires the pin to exist; if the pin is
+        unavailable the blinker logs and no-ops rather than crashing the routine.
+
+        Args:
+            playback: The performance's ``PlaybackController``. Its
+                ``has_started()`` gates the first blink and its ``is_active()``
+                bounds the blink to the audio window.
+            on_time: Seconds the eyes stay lit each cycle. Defaults to 0.25.
+            off_time: Seconds the eyes stay dark each cycle. Defaults to 0.25.
+        """
+        try:
+            from gpiozero import LED
+            led = LED(constants.EYE_LIGHT_PIN)
+        except Exception as e:
+            print(f"_blink_eyes: could not acquire eye LED, blinking disabled: {e}")
+            return
+
+        try:
+            # WAIT FOR AUDIO START: hold until playback begins (~100ms gate) so
+            # the blink starts WITH the audio, not at t=0. Cancellable by the
+            # runner if audio never starts.
+            while not playback.has_started():
+                await asyncio.sleep(0.02)
+
+            # BLINK WHILE ACTIVE: check is_active() only between whole on/off
+            # cycles so a cycle is never cut mid-blink; stop when audio ends.
+            while playback.is_active():
+                led.on()
+                await asyncio.sleep(on_time)
+                led.off()
+                await asyncio.sleep(off_time)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            led.off()
+            led.close()
+
+    @staticmethod
     def _safe_rest():
         """Best-effort: return all servos to safe rest after a failed gesture.
 
@@ -408,7 +475,7 @@ class Animatronic:
         asyncio.run(PerformanceRunner(BRAINS, mv, audio_dir).run())
 
     def hypnotic(self):
-        """"Hypnotic" audio — concurrent brains-style arm sway + gentle head sway.
+        """"Hypnotic" audio — arm sway + head sway, jaw OFF, eyes blink steadily.
 
         Like ``brains``, ``hypnotic`` is driven by the Performance_Framework: it
         declares a single-step ``PerformanceDefinition`` whose concurrent group
@@ -420,6 +487,23 @@ class Animatronic:
         and a 100ms audio gate. It does NOT change ``brains`` — it uses
         parameterized ``hypnotic_arm_*`` / ``hyp_scan_*`` adapters with their own
         pose, band, state, and bounds.
+
+        Audio behaviour, UNIQUE to hypnotic among the routines: the definition
+        sets ``player_options={"drive_jaw": False, "drive_eyes": False}`` so the
+        ``AudioPlayer`` plays the track with the jaw motor silent and does NOT
+        claim ``EYE_LIGHT_PIN``. Instead the eyes are driven by the runner's
+        AMBIENT task -- ``_blink_eyes(pb, 0.25, 0.25)`` -- which blinks them on a
+        0.25s-on / 0.25s-off cadence (twice as fast) INDEPENDENT of the audio
+        envelope, but BOUND TO THE AUDIO WINDOW: the blink STARTS when the audio
+        starts (~100ms gate) and STOPS when the audio ends, not with the whole
+        performance (which may still be retracting/recentering afterward). The
+        ambient factory receives the ``PlaybackController`` so the blinker can
+        consult ``has_started()`` / ``is_active()``. Because the AudioPlayer
+        released the eye pin, the blinker owns it cleanly. The runner also cancels
+        the ambient task when the performance ends as a safety net, and the
+        blinker turns the eyes off (and releases the pin) in its ``finally``
+        block. Every OTHER routine keeps the default player (jaw + envelope-driven
+        eyes) and no ambient task.
 
         The two movements own disjoint channels ({4,5,6,7} vs {0,1}), so the
         concurrent group is valid. Audio is GATED to start 100ms AFTER the routine
@@ -451,6 +535,9 @@ class Animatronic:
             # Head sway supplies the gate: its lead-in sleeps 100ms before
             # completing, so audio starts ~100ms after the routine begins.
             gate=GateSpec(movement_name="hyp_head_sway"),
+            # Jaw silent; AudioPlayer does NOT claim the eye pin so the ambient
+            # blinker (below) can own EYE_LIGHT_PIN without a clash.
+            player_options={"drive_jaw": False, "drive_eyes": False},
             steps=(
                 PerformanceStep(
                     loop_for_audio=True,
@@ -488,7 +575,17 @@ class Animatronic:
             ),
         )
 
-        asyncio.run(PerformanceRunner(HYPNOTIC, mv, audio_dir).run())
+        # Ambient task: 0.25s/0.25s eye blink BOUND to the audio window -- the
+        # factory receives the PlaybackController so the blink starts when the
+        # audio starts (~100ms gate) and stops when the audio ends, not with the
+        # whole performance. The runner also cancels it at performance end as a
+        # safety net; the blinker leaves the eyes off in its finally block.
+        asyncio.run(
+            PerformanceRunner(
+                HYPNOTIC, mv, audio_dir,
+                ambient=lambda pb: self._blink_eyes(pb, 0.25, 0.25),
+            ).run()
+        )
 
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #

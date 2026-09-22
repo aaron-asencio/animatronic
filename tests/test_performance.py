@@ -38,8 +38,11 @@ from hypothesis import given, settings, strategies as st
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from performance import (  # noqa: E402
+    ConcurrentGroup,
     MovementSpec,
+    PerformanceDefinition,
     PerformanceRunner,
+    PerformanceStep,
 )
 
 
@@ -1327,3 +1330,151 @@ def test_randomized_centering_move_invariants(
     # Exactly one move per call, only the driven channel commanded (no companion).
     assert len(harness.trunkController.moves) == num_calls
     assert all(set(move.keys()) == {0} for move in harness.trunkController.moves)
+
+
+# ---------------------------------------------------------------------------
+# Ambient task lifecycle (PerformanceRunner ambient=...)
+# ---------------------------------------------------------------------------
+
+
+def test_ambient_task_runs_and_is_cleaned_up_by_the_time_run_returns():
+    # Feature: audio-synced-concurrent-gestures, ambient task lifecycle
+    """Feature: audio-synced-concurrent-gestures, ambient task lifecycle.
+
+    A ``PerformanceRunner`` constructed with an ``ambient`` callable launches it
+    as a concurrent task alongside the steps, and cleans it up (cancelled or
+    completed) by the time ``run()`` returns -- while ``run()`` still completes
+    normally. Here the ambient is a hardware-free async coroutine that flips a
+    "started" flag as soon as it runs, then blocks forever; a trivial single
+    ungated step and an ``InactivePlayback`` (via ``_build_playback``) let the
+    step finish immediately, so the runner must cancel the still-blocked ambient
+    and await it. The coroutine's ``finally`` flips a "finished" flag, proving
+    its cleanup ran before ``run()`` returned. This mirrors how ``hypnotic``'s
+    eye blinker is stopped (LED off in its finally) when the performance ends.
+    """
+    state = {"started": False, "finished": False, "cancelled": False,
+             "playback": None}
+
+    async def ambient(playback):
+        # The runner now hands the ambient factory the PlaybackController; a
+        # simple flag-setting coroutine can accept and ignore it (it does not
+        # need to consult has_started()/is_active()). We record it to prove the
+        # runner passed the built controller through (CHANGE 1).
+        state["started"] = True
+        state["playback"] = playback
+        try:
+            # Block until the runner cancels us after the steps finish.
+            while True:
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            state["cancelled"] = True
+            raise
+        finally:
+            state["finished"] = True
+
+    # A single ungated step with one trivial movement whose phases are no-ops.
+    owned = frozenset({0})
+    recorder = RestingMovementRecorder(owned, set())
+    movement = MovementSpec(
+        name="trivial",
+        owned_channels=owned,
+        lead_in=recorder.lead_in,
+        loop_body=recorder.loop_body,
+        do_return=recorder.do_return,
+        supplies_gate=False,
+    )
+    definition = PerformanceDefinition(
+        name="ambient_perf",
+        audio_file="dummy.wav",
+        steps=(PerformanceStep(group=ConcurrentGroup(movements=(movement,)),
+                               loop_for_audio=False),),
+        gate=None,
+    )
+
+    trunk = FakeTrunkController(all_channels=owned)
+    movements = FakeMovements(trunk)
+    runner = PerformanceRunner(
+        definition=definition,
+        movements=movements,
+        audio_dir="",
+        ambient=ambient,
+    )
+    # No real AudioPlayer thread: InactivePlayback finishes the step at once.
+    # Build it once and hand back the SAME instance so we can assert the runner
+    # passed that exact controller to the ambient factory (CHANGE 1).
+    built_playback = InactivePlayback()
+    runner._build_playback = lambda: built_playback  # type: ignore[method-assign]
+
+    # run() must complete normally without hanging on the blocked ambient.
+    asyncio.run(runner.run())
+
+    # The ambient task genuinely RAN ...
+    assert state["started"], "ambient task never started"
+    # ... and received the PlaybackController the runner built (CHANGE 1).
+    assert state["playback"] is built_playback, (
+        "ambient factory did not receive the runner's PlaybackController"
+    )
+    # ... and was cleaned up (cancelled + its finally ran) before run() returned.
+    assert state["cancelled"], "ambient task was not cancelled at teardown"
+    assert state["finished"], "ambient task's finally cleanup never ran"
+
+
+def test_ambient_task_cleaned_up_on_exception_path():
+    # Feature: audio-synced-concurrent-gestures, ambient task lifecycle
+    """Feature: audio-synced-concurrent-gestures, ambient task lifecycle.
+
+    When a phase raises during ``run()``, the runner still cancels and awaits
+    the ambient task before the error propagates -- so the ambient's cleanup
+    (e.g. LED off) runs on the failure path too, and the originating error is
+    NOT masked by the ambient teardown.
+    """
+    import pytest
+
+    state = {"started": False, "finished": False}
+
+    async def ambient(playback):
+        # Accept and ignore the PlaybackController the runner now passes in.
+        state["started"] = True
+        try:
+            while True:
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            state["finished"] = True
+
+    owned = frozenset({0})
+    failing = RestingMovementRecorder(owned, set(), raise_on="lead_in")
+    movement = MovementSpec(
+        name="boom",
+        owned_channels=owned,
+        lead_in=failing.lead_in,
+        loop_body=failing.loop_body,
+        do_return=failing.do_return,
+        supplies_gate=False,
+    )
+    definition = PerformanceDefinition(
+        name="ambient_fail_perf",
+        audio_file="dummy.wav",
+        steps=(PerformanceStep(group=ConcurrentGroup(movements=(movement,)),
+                               loop_for_audio=False),),
+        gate=None,
+    )
+
+    trunk = FakeTrunkController(all_channels=owned)
+    movements = FakeMovements(trunk)
+    runner = PerformanceRunner(
+        definition=definition,
+        movements=movements,
+        audio_dir="",
+        ambient=ambient,
+    )
+    runner._build_playback = lambda: InactivePlayback()  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="lead_in boom"):
+        asyncio.run(runner.run())
+
+    assert state["started"], "ambient task never started on the failure path"
+    assert state["finished"], "ambient cleanup did not run on the failure path"
+    # Safe rest was still commanded before the error escaped.
+    assert trunk.rest_calls >= 1
