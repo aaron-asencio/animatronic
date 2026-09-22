@@ -1164,3 +1164,166 @@ def test_present_palm_phased_composition_reproduces_standalone(start_angles):
         f"{next((i for i, (a, b) in enumerate(zip(phased_commands, standalone_commands)) if a != b), 'n/a')}"
     )
     assert len(standalone_commands) > 0
+
+
+# ---------------------------------------------------------------------------
+# randomized_centering_move: reusable centering primitive invariants
+# ---------------------------------------------------------------------------
+
+
+class _RecordingTrunk:
+    """Minimal async ``move_to`` recorder for driving ``randomized_centering_move``.
+
+    ``randomized_centering_move`` computes and returns its own clamped target and
+    only uses ``trunkController.move_to`` to command the sweep; the returned
+    target is independent of any physical interpolation. This stub records the
+    ordered ``targets`` dicts it is asked to move to so a test can inspect the
+    commanded channels, and issues no real motion (no hardware, no sleeps).
+
+    Attributes:
+        moves: Ordered list of the ``targets`` dicts passed to ``move_to``.
+    """
+
+    def __init__(self) -> None:
+        self.moves: list[dict] = []
+
+    async def move_to(self, targets, steps=60, delay=0.02, start_fractions=None,
+                      ease=True):
+        """Record one commanded move and return without driving hardware."""
+        self.moves.append(dict(targets))
+
+
+class _CenteringHarness:
+    """A ``Movements``-shaped host exposing ``randomized_centering_move`` only.
+
+    Binds the real ``Movements.randomized_centering_move`` to a lightweight
+    instance whose ``trunkController`` is a ``_RecordingTrunk``, so the primitive
+    can be exercised in isolation without the hardware/movements stack. Per-call
+    ``state_attr`` transition state lives on this instance just as it would on a
+    real ``Movements``.
+    """
+
+    randomized_centering_move = Movements.randomized_centering_move
+
+    def __init__(self) -> None:
+        self.trunkController = _RecordingTrunk()
+
+
+def _classify(angle, center, half_range):
+    """Classify ``angle`` as the nearest logical position; ties -> CENTER.
+
+    Mirrors the classification inside ``randomized_centering_move`` so the test
+    can reason about logical transitions at the same granularity the primitive
+    does.
+
+    Args:
+        angle: The angle to classify.
+        center: Band center.
+        half_range: Band half-width.
+
+    Returns:
+        One of ``"LT"``, ``"CENTER"``, ``"RT"``.
+    """
+    nominals = {"LT": center - half_range, "CENTER": center, "RT": center + half_range}
+    return min(("CENTER", "LT", "RT"), key=lambda p: abs(angle - nominals[p]))
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    center=st.integers(min_value=40, max_value=200),
+    half_range=st.integers(min_value=5, max_value=60),
+    jitter_pct=st.floats(min_value=0.0, max_value=0.30),
+    start=st.integers(min_value=0, max_value=270),
+    num_calls=st.integers(min_value=1, max_value=25),
+    seed=st.integers(min_value=0, max_value=2**31 - 1),
+)
+def test_randomized_centering_move_invariants(
+    center, half_range, jitter_pct, start, num_calls, seed
+):
+    # Feature: reusable centering primitive — randomized_centering_move invariants
+    """Feature: reusable centering primitive — randomized_centering_move invariants.
+
+    For a random band (``center``, ``half_range``), a random ``jitter_pct`` in
+    [0, 0.30], a random starting logical position, and many successive calls, the
+    primitive upholds two invariants:
+
+      (a) IN-BAND: every commanded target stays within the band
+          ``[center - half_range, center + half_range]`` (endpoint jitter is
+          clamped back into the band).
+      (b) ALWAYS TRANSITIONS: each call moves to one of the two OTHER logical
+          positions relative to where the joint currently is -- it never
+          re-selects the logical position it is already at. This is checked at
+          the logical level by classifying the previous commanded target and the
+          new target and asserting they differ (the primitive classifies its
+          current position from the last commanded target, so consecutive
+          commanded targets must never share a logical position).
+
+    ``jitter_pct`` is bounded at 0.30 for invariant (b). The classification
+    boundary between adjacent logical positions sits ``half_range / 2`` from each
+    nominal, so a *continuous* jitter magnitude of ``jitter_pct * half_range``
+    would stay on the chosen nominal's side while ``jitter_pct < 0.5``. But the
+    primitive ROUNDS the jittered target to an int, which can push it up to
+    ``0.5`` further from the nominal, and ``_classify`` re-classifies that
+    rounded integer. At tiny bands this rounding can make a genuine transition
+    (e.g. CENTER->RT) land exactly halfway between its nominal and CENTER, where
+    ``_classify`` ties to CENTER and the transition appears to vanish. To keep
+    the rounded target unambiguously on the chosen nominal's side we require::
+
+        jitter_pct * half_range + 0.5 < half_range / 2
+
+    For the smallest generated band (``half_range = 5``), ``jitter_pct = 0.30``
+    gives ``0.30 * 5 + 0.5 = 2.0 < 2.5`` ✓, and the margin only grows as
+    ``half_range`` increases, so ``0.30`` is safe across the whole generated
+    domain. Both refactored gestures use ``jitter_pct`` within this bound
+    (menacing 0.25, present 0.30). Invariant (a) holds for any ``jitter_pct`` in
+    [0, 1] because the target is clamped to the band regardless.
+
+    ``random`` is seeded for determinism. The channel is arbitrary (0); no
+    ``companion`` is used so only the driven channel is commanded.
+
+    Validates: reusable centering primitive
+    """
+    lo = center - half_range
+    hi = center + half_range
+
+    harness = _CenteringHarness()
+    # Seed the tracking state to a known starting angle so the first call's
+    # classification is well-defined.
+    harness._test_state = start
+
+    random.seed(seed)
+
+    prev_pos = _classify(start, center, half_range)
+    for _ in range(num_calls):
+        target = asyncio.run(
+            harness.randomized_centering_move(
+                0,
+                center=center,
+                half_range=half_range,
+                jitter_pct=jitter_pct,
+                state_attr="_test_state",
+                steps_range=(18, 24),
+                delay_base=0.0,
+                delay_jitter=0.0,
+            )
+        )
+
+        # (a) IN-BAND: the commanded target never escapes the band.
+        assert lo <= target <= hi, (
+            f"target {target} outside band [{lo}, {hi}] "
+            f"(center={center}, half_range={half_range}, jitter_pct={jitter_pct})"
+        )
+
+        # (b) ALWAYS TRANSITIONS: the new logical position differs from the
+        # previous one -- the primitive never picks the position it was at.
+        new_pos = _classify(target, center, half_range)
+        assert new_pos != prev_pos, (
+            f"stayed at logical position {prev_pos} (target {target}); the "
+            f"primitive must transition to one of the two OTHER positions "
+            f"(center={center}, half_range={half_range})"
+        )
+        prev_pos = new_pos
+
+    # Exactly one move per call, only the driven channel commanded (no companion).
+    assert len(harness.trunkController.moves) == num_calls
+    assert all(set(move.keys()) == {0} for move in harness.trunkController.moves)
