@@ -29,6 +29,7 @@ from audio_streamer import AudioStreamer
 from servo_lock import servo_lock, ServoBusyError, BUSY_EXIT_CODE
 from performance import (
     ConcurrentGroup,
+    GateSpec,
     MovementSpec,
     PerformanceDefinition,
     PerformanceRunner,
@@ -237,8 +238,74 @@ class Animatronic:
     # --- Reaction routines ---
 
     def blah(self):
-        """Blah audio — emphatic head-shake no."""
-        self.run_action_and_audio("_do_shake_no", self.music[1])
+        """"Blah" audio — concurrent randomized head shake + palm-present arm.
+
+        Like ``brains``, ``blah`` is driven by the Performance_Framework rather
+        than ``run_action_and_audio``: it declares a single-step
+        ``PerformanceDefinition`` whose concurrent group runs the randomized head
+        shake (neck channels 0-1) and the palm-present forearm bob (arm channels
+        4-7) at the same time, and loops both for the duration of ``blah.wav``.
+
+        The two movements own disjoint channels ({0,1} vs {4,5,6,7}), so the
+        group is valid. Audio is GATED to start 250ms AFTER the routine begins:
+        the head shake supplies the gate (``gate=GateSpec("head_shake")`` +
+        ``supplies_gate=True``), and its ``shake_no_lead_in`` sleeps 250ms before
+        completing — the framework starts audio the instant that lead-in
+        finishes, so playback begins at t≈0.25s. The palm-present arm is ungated
+        (``supplies_gate=False``), so its lead-in raises the arm at t=0. Both
+        loop bodies repeat while playback is active — the head keeps sweeping and
+        the forearm keeps bobbing — then both return to rest (neck recenters, arm
+        lowers), with the runner sweeping any residual channels home on
+        completion or failure.
+
+        A single ``Movements`` instance backs every ``MovementSpec`` phase
+        callable so the neck and arm adapters share one ``TrunkController``. The
+        runner is a coroutine, launched with ``asyncio.run`` here at the top of
+        the call stack (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        BLAH = PerformanceDefinition(
+            name="blah",
+            audio_file=self.music[1],            # blah.wav
+            # Head shake supplies the gate: its lead-in sleeps 250ms before
+            # completing, so audio starts ~250ms after the routine begins.
+            gate=GateSpec(movement_name="head_shake"),
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="head_shake",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                            }),
+                            lead_in=mv.shake_no_lead_in,      # 250ms gate + center
+                            loop_body=mv.shake_no_loop_body,  # one randomized sweep
+                            do_return=mv.shake_no_return,     # neck to center
+                            supplies_gate=True,               # opens the audio gate
+                        ),
+                        MovementSpec(
+                            name="present_palm",
+                            owned_channels=frozenset({
+                                constants.RT_SHOULDER_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_ELBOW_TILT,
+                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                            }),
+                            lead_in=mv.present_palm_lead_in,      # raise arm (t=0)
+                            loop_body=mv.present_palm_loop_body,  # one gentle bob
+                            do_return=mv.present_palm_return,     # lower arm
+                            supplies_gate=False,
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(BLAH, mv, audio_dir).run())
 
     def yoda_fear(self):
         """Yoda fear audio — beckon + look around."""

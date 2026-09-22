@@ -1050,3 +1050,117 @@ def test_property10_phased_composition_reproduces_standalone(start_angles):
     # Sanity: the gesture actually issues a substantial command stream (the
     # move_to steps ensure this), so an empty-equals-empty pass can't sneak by.
     assert len(standalone_commands) > 0
+
+
+# ---------------------------------------------------------------------------
+# present_palm: phased composition reproduces standalone behavior
+# ---------------------------------------------------------------------------
+
+# The arm channels present_palm owns (4-7). See src/constants.py.
+_PRESENT_PALM_CHANNELS = (
+    constants.RT_ELBOW_ROTATOR,     # 4
+    constants.RT_ELBOW_TILT,        # 5
+    constants.RT_SHOULDER_TILT,     # 6
+    constants.RT_SHOULDER_ROTATOR,  # 7
+)
+
+
+def _record_present_palm(run_gesture, start_angles):
+    """Run a present_palm coroutine factory and capture its servo commands.
+
+    Mirrors ``_record_menacing_reach`` for the ``present_palm`` gesture: drives
+    ``run_gesture()`` under the SERVO_SIM fake kit, wrapping
+    ``TrunkController.set_angle`` to record ``(channel, post-clamp angle)`` for
+    each write in order. The owned arm channels (4-7) are reset to
+    ``start_angles`` on the shared fake kit BEFORE the run, and ``random`` is
+    seeded to a FIXED value so the standalone and phased paths draw the identical
+    bob endpoints/timing and therefore issue identical commands.
+
+    Args:
+        run_gesture: Zero-arg async callable (taking the Movements instance).
+        start_angles: Mapping channel -> starting angle for channels 4-7.
+
+    Returns:
+        The ordered list of ``(channel, angle)`` commands issued during the run.
+    """
+    movements = Movements("present_palm_test")
+    trunk = movements.trunkController
+
+    random.seed(4321)
+
+    for channel, angle in start_angles.items():
+        trunk.kit.servo[channel].angle = angle
+
+    commands: list[tuple[int, int]] = []
+    original_set_angle = trunk.set_angle
+
+    def recording_set_angle(servo_num, angle):
+        safe = original_set_angle(servo_num, angle)
+        commands.append((servo_num, safe))
+        return safe
+
+    real_sleep = asyncio.sleep
+
+    async def _no_delay(_seconds, *args, **kwargs):
+        return await real_sleep(0)
+
+    trunk.set_angle = recording_set_angle
+    asyncio.sleep = _no_delay
+    try:
+        asyncio.run(run_gesture(movements))
+    finally:
+        asyncio.sleep = real_sleep
+        trunk.set_angle = original_set_angle
+
+    return commands
+
+
+async def _run_present_palm_standalone(movements):
+    """Run the standalone present_palm gesture (raise + bob x4 + lower)."""
+    await movements.present_palm()
+
+
+async def _run_present_palm_phased(movements):
+    """Run the phased composition: lead_in + loop_body x4 + return.
+
+    The standalone gesture performs four bobs, so the phased path runs
+    ``present_palm_loop_body`` four times to reproduce the identical command
+    sequence (given the same RNG seed).
+    """
+    await movements.present_palm_lead_in()
+    for _ in range(4):
+        await movements.present_palm_loop_body()
+    await movements.present_palm_return()
+
+
+@settings(max_examples=25, deadline=None)
+@given(
+    start_angles=st.fixed_dictionaries(
+        {
+            channel: st.integers(min_value=0, max_value=270)
+            for channel in _PRESENT_PALM_CHANNELS
+        }
+    )
+)
+def test_present_palm_phased_composition_reproduces_standalone(start_angles):
+    # Feature: blah refinement — present_palm phased composition reproduces standalone
+    """Feature: blah refinement — present_palm phased composition reproduces standalone.
+
+    For any starting pose of the owned arm channels (4-7), running the phase
+    composition ``present_palm_lead_in()`` + ``present_palm_loop_body()`` x4 +
+    ``present_palm_return()`` issues the IDENTICAL ordered sequence of
+    ``(channel, post-clamp angle)`` servo commands as the standalone
+    ``present_palm()`` gesture (raise, bob four times, lower). Both paths are
+    driven from the same reset starting pose under the same fixed RNG seed,
+    capturing every write at the ``TrunkController.set_angle`` choke point.
+    """
+    standalone_commands = _record_present_palm(_run_present_palm_standalone, start_angles)
+    phased_commands = _record_present_palm(_run_present_palm_phased, start_angles)
+
+    assert phased_commands == standalone_commands, (
+        "phased composition diverged from standalone present_palm: "
+        f"{len(phased_commands)} phased vs {len(standalone_commands)} standalone "
+        f"commands; first mismatch at "
+        f"{next((i for i, (a, b) in enumerate(zip(phased_commands, standalone_commands)) if a != b), 'n/a')}"
+    )
+    assert len(standalone_commands) > 0

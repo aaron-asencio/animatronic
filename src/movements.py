@@ -617,6 +617,164 @@ class Movements:
                 await stack.aclose()
                 self._menacing_reach_stack = None
 
+    async def present_palm(self):
+        """Present palm: raise the forearm palm-up, gently bob it, then lower.
+
+        Channels: RT_SHOULDER_ROTATOR (7), RT_SHOULDER_TILT (6),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+
+        Operator-approved present pose: shoulder rotator=35 (arm up ~35deg),
+        shoulder tilt=55 (rest), elbow tilt=120 (forearm raised ~120deg from
+        straight), elbow rotator=235 (palm up, slightly inward -- short of the
+        full 270). With the forearm up, it gently bobs a few times -- one
+        smooth up/down of the elbow tilt by an amplitude of 25 +/-10 around 120
+        (i.e. reaching within [85, 155]) with slight amplitude/timing jitter so
+        it isn't metronomic -- then the arm lowers back to rest.
+
+        Every target is inside the global SAFE_LIMITS (elbow tilt [0,160],
+        elbow rotator [0,270], shoulder rotator [0,270], shoulder tilt [45,270]),
+        so no verified_pose_override is needed. The up-bob reaches up to ~155
+        elbow tilt (within SAFE_LIMITS 0-160), which is above the 150 mark, but
+        the hand-to-face FORBIDDEN_COMBINATION also requires shoulder rotator
+        210-270 and the rotator here stays at 35, so it never triggers.
+
+        This standalone gesture delegates to the same phase primitives the
+        Performance_Framework drives (raise lead-in, one bob loop body, lower
+        return), so composing ``present_palm_lead_in`` + N x
+        ``present_palm_loop_body`` + ``present_palm_return`` reproduces the exact
+        same servo command sequence WHEN THE RNG IS SEEDED IDENTICALLY before
+        each run (the bob draws from the shared ``random`` module).
+        """
+        await self._present_palm_raise()
+        # BOB: a fixed small number of gentle up/down bobs of the forearm.
+        for _ in range(4):
+            await self._present_palm_bob()
+        await self._present_palm_lower()
+
+    # --- present_palm shared primitives + phase adapters ------------------ #
+    #
+    # The standalone gesture above and the phase adapters below both call these
+    # primitives, so a phased composition (lead_in + loop_body x N + return)
+    # issues the identical move_to command sequence as the standalone gesture
+    # (given the same RNG seed). No audio logic lives in any of these methods.
+
+    # Present-pose values (shared by the standalone gesture and phases).
+    _PP_ROT_REST, _PP_ROT_UP = 0, 35         # shoulder rotator (35 = arm up ~35deg)
+    _PP_TILT_REST = 55                       # shoulder tilt stays at rest
+    _PP_ELBOW_REST, _PP_ELBOW_UP = 5, 120    # elbow tilt (120 = forearm raised)
+    _PP_FOREARM_REST, _PP_FOREARM_UP = 150, 235  # elbow rotator (235 = palm up, inward)
+    _PP_BOB_AMP = 25                         # base bob amplitude (deg from center)
+    _PP_BOB_AMP_JITTER = 10                   # per-bob random variation of the amplitude
+    _PP_BOB_LO, _PP_BOB_HI = 85, 155         # overall bob span around 120: 120 +/- (25+10) = [85,155]
+
+    async def _present_palm_raise(self):
+        """RAISE: bring the arm to the palm-up present pose, all four channels
+        together, eased.
+
+        Also initializes the bob-tracking state (``_pp_bob_pos`` = the raised
+        elbow-tilt center 120) so both the standalone gesture and the phased
+        composition start bobbing from the same known position. Because both
+        paths call this primitive first, seeding ``random`` before each run makes
+        their subsequent stateful bobs produce identical command sequences.
+
+        Channels: RT_SHOULDER_ROTATOR (7), RT_SHOULDER_TILT (6),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
+        """
+        # Track where the elbow tilt actually is between bobs so each bob can
+        # jitter relative to the raised center. Reset here (shared by both paths)
+        # to keep the standalone and phased command streams in lock-step under a
+        # fixed seed.
+        self._pp_bob_pos = self._PP_ELBOW_UP
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._PP_ROT_UP,
+                constants.RT_SHOULDER_TILT: self._PP_TILT_REST,
+                constants.RT_ELBOW_TILT: self._PP_ELBOW_UP,
+                constants.RT_ELBOW_ROTATOR: self._PP_FOREARM_UP,
+            },
+            steps=45, delay=0.02,
+        )
+
+    async def _present_palm_bob(self):
+        """BOB: one smooth up/down bob of the forearm (elbow tilt).
+
+        Moves the elbow tilt to a jittered endpoint at center 120 +/- an
+        amplitude of 25 +/- 10 (so up-bobs reach ~[135, 155] and down-bobs
+        ~[85, 105]) then back toward the raised center, via eased move_to for a
+        gentle, non-robotic bob. A little randomness in the amplitude and timing
+        (drawn from the shared ``random`` module) keeps successive bobs from
+        looking metronomic, but the motion stays subtle. Updates
+        ``self._pp_bob_pos`` so the next bob is chosen relative to where the
+        forearm actually ended.
+
+        Channels: RT_ELBOW_TILT (5).
+        """
+        # Bob to the opposite side of center from where we are, so the forearm
+        # visibly rocks up/down rather than drifting. Draw a per-bob amplitude
+        # (base +/- jitter, i.e. [15, 35]) and offset from the raised center so
+        # the motion feels natural and non-metronomic.
+        going_up = self._pp_bob_pos <= self._PP_ELBOW_UP
+        amp = self._PP_BOB_AMP + random.randint(
+            -self._PP_BOB_AMP_JITTER, self._PP_BOB_AMP_JITTER
+        )  # amplitude in [15, 35]
+        if going_up:
+            target = self._PP_ELBOW_UP + amp  # up-bob => [135, 155]
+        else:
+            target = self._PP_ELBOW_UP - amp  # down-bob => [85, 105]
+
+        steps = random.randint(18, 24)
+        delay = 0.015 + random.uniform(-0.005, 0.005)
+        await self.trunkController.move_to(
+            {constants.RT_ELBOW_TILT: target}, steps=steps, delay=delay,
+        )
+        # Settle back toward the raised center so the bob reads as up-then-back.
+        await self.trunkController.move_to(
+            {constants.RT_ELBOW_TILT: self._PP_ELBOW_UP}, steps=steps, delay=delay,
+        )
+        self._pp_bob_pos = self._PP_ELBOW_UP
+
+    async def _present_palm_lower(self):
+        """LOWER: return the arm to its rest positions, eased.
+
+        Channels: RT_SHOULDER_ROTATOR (7), RT_SHOULDER_TILT (6),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
+        """
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._PP_ROT_REST,
+                constants.RT_SHOULDER_TILT: self._PP_TILT_REST,
+                constants.RT_ELBOW_TILT: self._PP_ELBOW_REST,
+                constants.RT_ELBOW_ROTATOR: self._PP_FOREARM_REST,
+            },
+            steps=45, delay=0.02,
+        )
+
+    async def present_palm_lead_in(self):
+        """Lead-in phase: raise the arm to the palm-up present pose.
+
+        Owns arm channels 4-7. Establishes the raised pose and initializes the
+        bob-tracking state via the shared ``_present_palm_raise`` primitive.
+        Contains no audio logic.
+        """
+        await self._present_palm_raise()
+
+    async def present_palm_loop_body(self):
+        """Loop-body phase: one gentle forearm bob.
+
+        Owns RT_ELBOW_TILT (5). One invocation equals one bob; N invocations
+        reproduce N standalone bobs (given the same RNG seed). Contains no audio
+        logic.
+        """
+        await self._present_palm_bob()
+
+    async def present_palm_return(self):
+        """Return phase: lower the arm back to rest.
+
+        Owns arm channels 4-7. Lowers via the shared primitive. Contains no
+        audio logic.
+        """
+        await self._present_palm_lower()
+
     async def come_here(self):
         """Come here: wave someone toward you -- sweep the arm from rest to a
         pulled-in "come toward me" pose, twice.
@@ -1078,27 +1236,106 @@ class Movements:
             steps=18, delay=0.02)
 
     async def shake_no(self, reps=2):
-        """Emphatic "no" shake: wide pan arc (30–150°).
+        """Emphatic "no" shake: wide, smoothed, randomized pan arc (~25–155°).
 
-        Channels: NECK_PAN (0)
+        Channels: NECK_PAN (0), NECK_TILT (1)
+
+        Centers the head (pan + tilt to 90), performs ``reps`` randomized pan
+        sweeps, then recenters. Each sweep swings to a randomized "right" extreme
+        (~[25, 35]) then a randomized "left" extreme (~[145, 155]) via eased
+        move_to, with slight per-sweep timing jitter, so the shake keeps its wide
+        emphatic feel without looking metronomic.
+
+        This standalone gesture delegates to the same ``_shake_no_sweep``
+        primitive the Performance_Framework loop body drives, so a phased
+        composition reuses the identical randomized sweep behavior (given the
+        same RNG seed). The standalone path does NOT include the 250ms audio-gate
+        delay -- that lives only in ``shake_no_lead_in`` (used solely by the
+        performance), which the standalone gesture never calls.
 
         Args:
             reps: Number of pan sweeps (default 2).
         """
-        CENTER = constants.NECK_CENTER   # 90
-        NECK_PAN_MIN = 30
-        NECK_PAN_MAX = 150
-        await self.trunkController.move_to(
-            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
-            steps=18, delay=0.02)
+        await self._shake_no_center()
         for _ in range(reps):
-            await self.trunkController.move_to(
-                {constants.NECK_PAN: NECK_PAN_MAX}, steps=18, delay=0.02)
-            await self.trunkController.move_to(
-                {constants.NECK_PAN: NECK_PAN_MIN}, steps=18, delay=0.02)
+            await self._shake_no_sweep()
+        await self._shake_no_center()
+
+    # --- shake_no shared primitives + phase adapters ---------------------- #
+    #
+    # The standalone gesture above and the phase adapters below both call the
+    # shared sweep/center primitives, so the loop-body phase reuses the identical
+    # randomized pan sweep as the standalone shake (given the same RNG seed). No
+    # audio logic lives in the shared primitives; the ONLY audio-coupled piece is
+    # the 250ms gate delay at the top of ``shake_no_lead_in`` (performance-only).
+
+    # Randomized sweep bounds (kept within NECK_PAN SAFE_LIMITS (5, 175)).
+    _SN_RIGHT_LO, _SN_RIGHT_HI = 25, 35      # randomized "right" extreme
+    _SN_LEFT_LO, _SN_LEFT_HI = 145, 155      # randomized "left" extreme
+    # 250ms audio-gate delay: shake_no supplies the gate in the blah performance,
+    # so its lead-in sleeps this long before completing, delaying audio start.
+    _SN_GATE_DELAY = 0.25
+
+    async def _shake_no_center(self):
+        """Center the head at the neutral pan/tilt pose (pan=90, tilt=90).
+
+        Channels: NECK_PAN (0), NECK_TILT (1).
+        """
         await self.trunkController.move_to(
-            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
-            steps=18, delay=0.02)
+            {constants.NECK_PAN: constants.NECK_CENTER,
+             constants.NECK_TILT: constants.NECK_CENTER},
+            steps=18, delay=0.04)
+
+    async def _shake_no_sweep(self):
+        """Perform ONE randomized pan sweep: to a right extreme then a left one.
+
+        Channels: NECK_PAN (0).
+
+        Draws a randomized right extreme (~[25, 35]) and left extreme
+        (~[145, 155]) plus slightly jittered timing (steps ~[16, 22], ~0.04 base
+        delay jitter for half-speed motion) from the shared ``random`` module,
+        and swings the pan there via eased move_to. Both extremes stay within
+        the NECK_PAN SAFE_LIMITS (5, 175); move_to clamps as a final safeguard.
+        """
+        right = random.randint(self._SN_RIGHT_LO, self._SN_RIGHT_HI)
+        left = random.randint(self._SN_LEFT_LO, self._SN_LEFT_HI)
+        steps = random.randint(16, 22)
+        delay = 0.04 + random.uniform(-0.004, 0.004)
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: right}, steps=steps, delay=delay)
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: left}, steps=steps, delay=delay)
+
+    async def shake_no_lead_in(self):
+        """Lead-in phase: wait 250ms (audio gate), then center the head.
+
+        Owns NECK_PAN (0) and NECK_TILT (1). This movement supplies the audio
+        gate for the ``blah`` performance: the framework starts audio the instant
+        this coroutine completes, so the initial ``asyncio.sleep(0.25)`` yields
+        exactly a 250ms audio delay after the routine begins. The standalone
+        ``shake_no`` gesture does NOT call this adapter, so it never incurs the
+        gate delay. Contains no other audio logic.
+        """
+        # 250ms gate delay: audio starts when this lead-in completes.
+        await asyncio.sleep(self._SN_GATE_DELAY)
+        await self._shake_no_center()
+
+    async def shake_no_loop_body(self):
+        """Loop-body phase: ONE randomized pan sweep.
+
+        Owns NECK_PAN (0). One invocation equals one sweep, reusing the same
+        randomized right/left extremes and jittered timing as the standalone
+        shake (given the same RNG seed). Contains no audio logic.
+        """
+        await self._shake_no_sweep()
+
+    async def shake_no_return(self):
+        """Return phase: recenter the neck to the resting pose.
+
+        Owns NECK_PAN (0) and NECK_TILT (1). Recenters via the shared primitive
+        so the head ends at its neutral rest. Contains no audio logic.
+        """
+        await self._shake_no_center()
 
     async def small_shake_no(self, reps=2):
         """Subtle "no" shake: narrow pan arc (70–110°).
