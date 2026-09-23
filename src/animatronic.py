@@ -86,6 +86,7 @@ class Animatronic:
         'brains.wav',              # 20
         'hypnotic.wav',            # 21
         'snore.wav',               # 22
+        'more_candy.wav',          # 23
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -475,6 +476,92 @@ class Animatronic:
 
         asyncio.run(PerformanceRunner(BRAINS, mv, audio_dir).run())
 
+    def more_candy(self):
+        """"More candy" audio — jittery sugar-rush shakes, audio-synced.
+
+        Driven by the Performance_Framework: a single-step
+        ``PerformanceDefinition`` whose concurrent group runs FOUR independent
+        single-joint randomized-centering shakes at a quick, jittery tempo so
+        the character reads as over-sugared / trembling:
+
+            - elbow tilt (ch5) oscillating in [160, 190] (peak 175)
+            - shoulder rotator (ch7) in [35, 45] (peak 40)
+            - neck tilt (ch1) in [80, 100] (peak 90)
+            - neck pan (ch0) in [85, 95] (peak 90)
+
+        The four movements own disjoint channels — the elbow movement also owns
+        the static elbow rotator (ch4), and the shoulder movement the static
+        shoulder tilt (ch6), so every arm channel is covered: {4,5} / {6,7} /
+        {1} / {0}. All bodies loop for the duration of ``more_candy.wav``, then
+        each returns its channels to rest.
+
+        The elbow-tilt band (160-190) sits ABOVE the global RT_ELBOW_TILT ceiling
+        (160); it is operator bench-verified safe in this upright-forearm pose,
+        so the elbow movement widens just that channel via verified_pose_override
+        held across its lead-in -> loop -> return span.
+
+        Audio is gated 250ms: the elbow movement ``supplies_gate`` and its
+        lead-in sleeps 250ms before completing, so ``more_candy.wav`` starts
+        ~250ms after the routine begins (the other three shakes begin at t=0).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        MORE_CANDY = PerformanceDefinition(
+            name="more_candy",
+            audio_file=self.music[23],  # more_candy.wav
+            # Elbow shake supplies the gate: its lead-in sleeps 250ms before
+            # completing, so audio starts ~250ms after the routine begins.
+            gate=GateSpec(movement_name="candy_elbow"),
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="candy_elbow",
+                            owned_channels=frozenset({
+                                constants.RT_ELBOW_ROTATOR,
+                                constants.RT_ELBOW_TILT,      # 4,5
+                            }),
+                            lead_in=mv.more_candy_elbow_lead_in,      # 250ms gate + start
+                            loop_body=mv.more_candy_elbow_loop_body,  # one quick shake
+                            do_return=mv.more_candy_elbow_return,     # lower + release override
+                            supplies_gate=True,                       # opens the audio gate
+                        ),
+                        MovementSpec(
+                            name="candy_shoulder",
+                            owned_channels=frozenset({
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_SHOULDER_ROTATOR,  # 6,7
+                            }),
+                            lead_in=mv.more_candy_shoulder_lead_in,      # start (t=0)
+                            loop_body=mv.more_candy_shoulder_loop_body,  # one quick shake
+                            do_return=mv.more_candy_shoulder_return,     # lower arm
+                            supplies_gate=False,
+                        ),
+                        MovementSpec(
+                            name="candy_neck_tilt",
+                            owned_channels=frozenset({constants.NECK_TILT}),  # 1
+                            lead_in=mv.more_candy_neck_tilt_lead_in,      # start (t=0)
+                            loop_body=mv.more_candy_neck_tilt_loop_body,  # one quick shake
+                            do_return=mv.more_candy_neck_tilt_return,     # tilt to level
+                            supplies_gate=False,
+                        ),
+                        MovementSpec(
+                            name="candy_neck_pan",
+                            owned_channels=frozenset({constants.NECK_PAN}),  # 0
+                            lead_in=mv.more_candy_neck_pan_lead_in,      # start (t=0)
+                            loop_body=mv.more_candy_neck_pan_loop_body,  # one quick shake
+                            do_return=mv.more_candy_neck_pan_return,     # pan to center
+                            supplies_gate=False,
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(MORE_CANDY, mv, audio_dir).run())
+
     def hypnotic(self):
         """"Hypnotic" audio — arm sway + head sway, jaw OFF, eyes blink steadily.
 
@@ -746,6 +833,7 @@ def main(args):
         'brains':         a.brains,
         'hypnotic':       a.hypnotic,
         'sleep':          a.snore,
+        'moreCandy':      a.more_candy,
     }
 
     if args.action in action_map:
