@@ -46,18 +46,18 @@ import os
 class Animatronic:
     """Pairs named audio tracks with matching servo gesture routines."""
 
-    # Audio directory — resolves to the invoking user's ~/Music so it works for
-    # 'pi', 'aaron', etc. Under sudo, HOME/expanduser may resolve to /root, so
-    # prefer the SUDO_USER's home. Override with ANIMATRONIC_AUDIO_DIR.
+    # Audio directory — resolves to the repo's own ``audio/`` directory (the
+    # source of truth, version-controlled), computed relative to this module so
+    # it is identical regardless of the invoking user (sudo/pi/aaron). This
+    # removes the old ~/Music deploy step. Override with ANIMATRONIC_AUDIO_DIR.
     @staticmethod
     def _resolve_audio_dir():
         override = os.environ.get('ANIMATRONIC_AUDIO_DIR')
         if override:
             return override
-        sudo_user = os.environ.get('SUDO_USER')
-        if sudo_user:
-            return os.path.join('/home', sudo_user, 'Music')
-        return os.path.join(os.path.expanduser('~'), 'Music')
+        # <repo>/audio, where this module lives at <repo>/src/animatronic.py.
+        return os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), '..', 'audio')
 
 
 
@@ -67,7 +67,7 @@ class Animatronic:
         'blah.wav',                # 1
         'krusty-laugh.wav',        # 2
         'sb_party_switch.wav',     # 3
-        'spongebob-torture.mp3',   # 4
+        'spongebob-torture.wav',   # 4
         'vader-beaten.wav',        # 5
         'vader-father.wav',        # 6
         'were-waiting.wav',        # 7
