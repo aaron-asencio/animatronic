@@ -15,5 +15,100 @@
       "ema_alpha": 0.15,
       "close_hold_frames": 2
     }
+  },
+  "voice_styles": {
+    "possessed": {
+      "pitch": {
+        "enabled": true,
+        "amount": 0.6
+      },
+      "distortion": {
+        "enabled": true,
+        "amount": 0.5
+      },
+      "echo": {
+        "enabled": false,
+        "amount": 0.7
+      },
+      "reverb": {
+        "enabled": true,
+        "amount": 0.05
+      },
+      "tremolo": {
+        "enabled": true,
+        "amount": 0.45
+      },
+      "bitcrush": {
+        "enabled": false,
+        "amount": 0.2
+      },
+      "ring_mod": {
+        "enabled": false,
+        "amount": 0.0
+      }
+    },
+    "ghost": {
+      "pitch": {
+        "enabled": true,
+        "amount": 0.8
+      },
+      "distortion": {
+        "enabled": true,
+        "amount": 0.05
+      },
+      "echo": {
+        "enabled": true,
+        "amount": 0.4
+      },
+      "reverb": {
+        "enabled": true,
+        "amount": 0.2
+      },
+      "tremolo": {
+        "enabled": true,
+        "amount": 0.9
+      },
+      "bitcrush": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "ring_mod": {
+        "enabled": false,
+        "amount": 0.0
+      }
+    }
+  },
+  "voice_styles_previous": {
+    "style": "ghost",
+    "effects": {
+      "pitch": {
+        "enabled": true,
+        "amount": 0.7
+      },
+      "distortion": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "echo": {
+        "enabled": true,
+        "amount": 0.3
+      },
+      "reverb": {
+        "enabled": true,
+        "amount": 0.25
+      },
+      "tremolo": {
+        "enabled": true,
+        "amount": 0.95
+      },
+      "bitcrush": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "ring_mod": {
+        "enabled": false,
+        "amount": 0.0
+      }
+    }
   }
 }

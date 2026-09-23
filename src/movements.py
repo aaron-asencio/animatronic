@@ -400,8 +400,8 @@ class Movements:
                   RT_SHOULDER_ROTATOR (7), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
 
         Hardware-measured hand-at-face pose:
-            NECK_PAN=90, NECK_TILT=140 (head down), elbow_rot=150, elbow_tilt=145,
-            shoulder_tilt=40, shoulder_rotator=260.
+            NECK_PAN=90, NECK_TILT=140 (head down), elbow_rot=200, elbow_tilt=145,
+            shoulder_tilt=40, shoulder_rotator=200.
 
         The arm folds up to the face while the head drops to meet it; then, with
         the hand covering the face, the head shakes side to side 3x (pan +/-15
@@ -2009,6 +2009,246 @@ class Movements:
         await self.neck_ellipse()
         await asyncio.sleep(1)
         await self.look_around_small()
+
+    # ================================================================== #
+    # more_candy — "too much candy" sugar-rush shakes                     #
+    #                                                                     #
+    # Four INDEPENDENT single-joint randomized-centering shakes run       #
+    # concurrently at a QUICK tempo so the character looks jittery /      #
+    # over-sugared: elbow tilt (5), shoulder rotator (7), neck tilt (1),  #
+    # neck pan (0). Each owns disjoint channels and delegates to the      #
+    # shared randomized_centering_move helper with a fast steps/delay.    #
+    #                                                                     #
+    # The elbow-tilt shake centers on 175 within [160, 190], ABOVE the    #
+    # global RT_ELBOW_TILT SAFE_LIMITS ceiling (160). This band is        #
+    # operator bench-verified safe in this upright-forearm pose only, so  #
+    # the elbow movement widens JUST that channel via verified_pose_      #
+    # override, held across its lead-in -> loop -> return span (mirroring #
+    # menacing_reach). All other channels use the normal global limits.   #
+    # These are HEAD (0,1) + ARM (5,7) shakes; move_to clamps every       #
+    # target to the (possibly overridden) safe range as a final guard.    #
+    # ================================================================== #
+
+    # Start-pose values (the destination the routine holds/oscillates around).
+    _MC_ELBOW_ROT_START = 270    # ch4 elbow rotator — static during the shake
+    _MC_ELBOW_TILT_START = 190   # ch5 elbow tilt — start; oscillates in [160,190]
+    _MC_SHOULDER_TILT_START = 55  # ch6 shoulder tilt — static during the shake
+    _MC_SHOULDER_ROT_START = 45  # ch7 shoulder rotator — start; osc in [35,45]
+    _MC_NECK_PAN_START = 90      # ch0 — start; oscillates in [85,95]
+    _MC_NECK_TILT_START = 90     # ch1 — start; oscillates in [80,100]
+
+    # Rest values the return phases drive back to (from constants.REST_POSITIONS).
+    _MC_ELBOW_ROT_REST = 150
+    _MC_ELBOW_TILT_REST = 5
+    _MC_SHOULDER_TILT_REST = 55
+    _MC_SHOULDER_ROT_REST = 0
+
+    # Centering bands: center = peak, half_range spans the requested window.
+    _MC_ELBOW_TILT_CENTER, _MC_ELBOW_TILT_HALF = 175, 15   # [160, 190]
+    _MC_SHOULDER_ROT_CENTER, _MC_SHOULDER_ROT_HALF = 40, 5  # [35, 45]
+    _MC_NECK_TILT_CENTER, _MC_NECK_TILT_HALF = 90, 10       # [80, 100]
+    _MC_NECK_PAN_CENTER, _MC_NECK_PAN_HALF = 90, 5          # [85, 95]
+    _MC_JITTER_PCT = 0.30    # endpoint jitter as a fraction of half_range
+
+    # Quick, jittery tempo shared by every sugar-rush shake.
+    _MC_STEPS_RANGE = (8, 14)
+    _MC_DELAY_BASE = 0.012
+    _MC_DELAY_JITTER = 0.004
+
+    # Elbow tilt (160-190) exceeds the global ceiling (160); operator-verified
+    # safe in this pose only, so widen just that channel for the routine.
+    _MORE_CANDY_OVERRIDE = {constants.RT_ELBOW_TILT: (0, 190)}
+
+    # 250ms audio-gate delay: the elbow movement supplies the gate, so its
+    # lead-in sleeps this long before completing, delaying audio start.
+    _MC_GATE_DELAY = 0.25
+
+    # --- Elbow-tilt shake (ch4 + ch5); supplies the gate + owns the override -- #
+
+    async def more_candy_elbow_lead_in(self):
+        """Lead-in: open the elbow override, wait 250ms (audio gate), set start.
+
+        Owns RT_ELBOW_ROTATOR (4) and RT_ELBOW_TILT (5). Opens the
+        verified_pose_override for the sub-ceiling elbow-tilt band on a
+        per-adapter AsyncExitStack held across the lead-in -> loop -> return
+        span (``more_candy_elbow_return`` closes it). This movement supplies the
+        audio gate: the framework starts audio the instant this coroutine
+        completes, so the ``asyncio.sleep(0.25)`` yields a 250ms audio delay
+        after the routine begins. Drives the forearm to its upright start pose
+        (elbow rotator 270, elbow tilt at the shake center 175) and seeds the
+        centering state so the first swing transitions from a known position.
+        """
+        self._more_candy_elbow_stack = contextlib.AsyncExitStack()
+        self._more_candy_elbow_stack.enter_context(
+            TrunkController.verified_pose_override(self._MORE_CANDY_OVERRIDE))
+        # 250ms gate delay: audio starts when this lead-in completes.
+        await asyncio.sleep(self._MC_GATE_DELAY)
+        # Seed the centering tracker to the shake center so the first transition
+        # is well-defined, then move to the upright start pose.
+        self._mc_elbow_pos = self._MC_ELBOW_TILT_CENTER
+        await self.trunkController.move_to(
+            {
+                constants.RT_ELBOW_ROTATOR: self._MC_ELBOW_ROT_START,
+                constants.RT_ELBOW_TILT: self._MC_ELBOW_TILT_START,
+            },
+            steps=22, delay=0.02,
+        )
+
+    async def more_candy_elbow_loop_body(self):
+        """Loop body: one quick centering shake of the elbow tilt in [160, 190].
+
+        Owns RT_ELBOW_TILT (5). Delegates to ``randomized_centering_move`` at the
+        quick sugar-rush tempo; move_to clamps to the active elbow override.
+        """
+        await self.randomized_centering_move(
+            constants.RT_ELBOW_TILT,
+            center=self._MC_ELBOW_TILT_CENTER,
+            half_range=self._MC_ELBOW_TILT_HALF,
+            jitter_pct=self._MC_JITTER_PCT,
+            state_attr="_mc_elbow_pos",
+            steps_range=self._MC_STEPS_RANGE,
+            delay_base=self._MC_DELAY_BASE,
+            delay_jitter=self._MC_DELAY_JITTER,
+        )
+
+    async def more_candy_elbow_return(self):
+        """Return: lower the forearm to rest, then release the elbow override.
+
+        Owns RT_ELBOW_ROTATOR (4) and RT_ELBOW_TILT (5). Drives both back to
+        their rest positions, then closes the AsyncExitStack opened in
+        ``more_candy_elbow_lead_in`` so the verified_pose_override is scoped to
+        exactly the lead-in -> loop -> return span.
+        """
+        try:
+            await self.trunkController.move_to(
+                {
+                    constants.RT_ELBOW_TILT: self._MC_ELBOW_TILT_REST,
+                    constants.RT_ELBOW_ROTATOR: self._MC_ELBOW_ROT_REST,
+                },
+                steps=30, delay=0.02,
+            )
+        finally:
+            stack = getattr(self, "_more_candy_elbow_stack", None)
+            if stack is not None:
+                await stack.aclose()
+                self._more_candy_elbow_stack = None
+
+    # --- Shoulder-rotator shake (ch6 + ch7) -------------------------------- #
+
+    async def more_candy_shoulder_lead_in(self):
+        """Lead-in (t=0): move the shoulder to its start pose.
+
+        Owns RT_SHOULDER_TILT (6) and RT_SHOULDER_ROTATOR (7). No gate: begins at
+        time zero. Seeds the rotator centering state and sets the static shoulder
+        tilt (55) plus the rotator shake center (40).
+        """
+        self._mc_shoulder_pos = self._MC_SHOULDER_ROT_CENTER
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_TILT: self._MC_SHOULDER_TILT_START,
+                constants.RT_SHOULDER_ROTATOR: self._MC_SHOULDER_ROT_START,
+            },
+            steps=22, delay=0.02,
+        )
+
+    async def more_candy_shoulder_loop_body(self):
+        """Loop body: one quick centering shake of the shoulder rotator [35, 45].
+
+        Owns RT_SHOULDER_ROTATOR (7).
+        """
+        await self.randomized_centering_move(
+            constants.RT_SHOULDER_ROTATOR,
+            center=self._MC_SHOULDER_ROT_CENTER,
+            half_range=self._MC_SHOULDER_ROT_HALF,
+            jitter_pct=self._MC_JITTER_PCT,
+            state_attr="_mc_shoulder_pos",
+            steps_range=self._MC_STEPS_RANGE,
+            delay_base=self._MC_DELAY_BASE,
+            delay_jitter=self._MC_DELAY_JITTER,
+        )
+
+    async def more_candy_shoulder_return(self):
+        """Return: lower the shoulder to rest.
+
+        Owns RT_SHOULDER_TILT (6) and RT_SHOULDER_ROTATOR (7).
+        """
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._MC_SHOULDER_ROT_REST,
+                constants.RT_SHOULDER_TILT: self._MC_SHOULDER_TILT_REST,
+            },
+            steps=30, delay=0.02,
+        )
+
+    # --- Neck-tilt shake (ch1) --------------------------------------------- #
+
+    async def more_candy_neck_tilt_lead_in(self):
+        """Lead-in (t=0): center the neck tilt at its start (90).
+
+        Owns NECK_TILT (1). No gate.
+        """
+        self._mc_neck_tilt_pos = self._MC_NECK_TILT_CENTER
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: self._MC_NECK_TILT_START}, steps=18, delay=0.02)
+
+    async def more_candy_neck_tilt_loop_body(self):
+        """Loop body: one quick centering shake of the neck tilt in [80, 100].
+
+        Owns NECK_TILT (1).
+        """
+        await self.randomized_centering_move(
+            constants.NECK_TILT,
+            center=self._MC_NECK_TILT_CENTER,
+            half_range=self._MC_NECK_TILT_HALF,
+            jitter_pct=self._MC_JITTER_PCT,
+            state_attr="_mc_neck_tilt_pos",
+            steps_range=self._MC_STEPS_RANGE,
+            delay_base=self._MC_DELAY_BASE,
+            delay_jitter=self._MC_DELAY_JITTER,
+        )
+
+    async def more_candy_neck_tilt_return(self):
+        """Return: neck tilt back to level rest (90).
+
+        Owns NECK_TILT (1).
+        """
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: constants.NECK_CENTER}, steps=20, delay=0.02)
+
+    # --- Neck-pan shake (ch0) ---------------------------------------------- #
+
+    async def more_candy_neck_pan_lead_in(self):
+        """Lead-in (t=0): center the neck pan at its start (90).
+
+        Owns NECK_PAN (0). No gate.
+        """
+        self._mc_neck_pan_pos = self._MC_NECK_PAN_CENTER
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: self._MC_NECK_PAN_START}, steps=18, delay=0.02)
+
+    async def more_candy_neck_pan_loop_body(self):
+        """Loop body: one quick centering shake of the neck pan in [85, 95].
+
+        Owns NECK_PAN (0).
+        """
+        await self.randomized_centering_move(
+            constants.NECK_PAN,
+            center=self._MC_NECK_PAN_CENTER,
+            half_range=self._MC_NECK_PAN_HALF,
+            jitter_pct=self._MC_JITTER_PCT,
+            state_attr="_mc_neck_pan_pos",
+            steps_range=self._MC_STEPS_RANGE,
+            delay_base=self._MC_DELAY_BASE,
+            delay_jitter=self._MC_DELAY_JITTER,
+        )
+
+    async def more_candy_neck_pan_return(self):
+        """Return: neck pan back to center rest (90).
+
+        Owns NECK_PAN (0).
+        """
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: constants.NECK_CENTER}, steps=20, delay=0.02)
 
 
 if __name__ == '__main__':

@@ -197,15 +197,24 @@
     </select>
 
     <div class="section-title" style="margin-top:16px;">Individual effects</div>
+    {% set fx_descriptions = {
+      'pitch': 'Shifts the voice up or down. Below 1.0 is deeper/lower; above 1.0 is higher. 0.85 gives a slightly menacing drop.',
+      'distortion': 'Overdrives and hard-clips the signal for a gritty, harsh, growly edge. Higher = more aggressive.',
+      'echo': 'Repeats the voice as decaying copies, like calling out in a large room. Higher = louder, longer-lasting repeats.',
+      'reverb': 'Adds a wash of reflections for an eerie, spacious, otherworldly feel. Higher = wetter, more cavernous.',
+      'tremolo': 'Pulses the volume up and down for a wavering, unsettling, trembling tone. Higher = deeper wobble.',
+      'bitcrush': 'Reduces audio resolution for a broken, lo-fi, digital/robotic texture. Higher = more crushed and degraded.',
+      'ring_mod': 'Multiplies the voice by a tone for a metallic, clangy, robot-like sound. Higher = more robotic, less natural.'
+    } %}
     <div id="fx-list">
       {% for fx in effects %}
       <div class="fx-row">
-        <span>{{ fx.replace('_',' ')|title }}</span>
-        <label class="switch">
+        <span title="{{ fx_descriptions.get(fx, '') }}">{{ fx.replace('_',' ')|title }}</span>
+        <label class="switch" title="{{ fx_descriptions.get(fx, '') }}">
           <input type="checkbox" data-fx="{{ fx }}" onchange="toggleEffect('{{ fx }}', this.checked)">
           <span class="slider-sw"></span>
         </label>
-        <input type="range" data-fx-amt="{{ fx }}"
+        <input type="range" data-fx-amt="{{ fx }}" title="{{ fx_descriptions.get(fx, '') }}"
                min="{{ '0.4' if fx == 'pitch' else '0' }}"
                max="{{ '1.6' if fx == 'pitch' else '1' }}"
                step="0.05" value="{{ '0.85' if fx == 'pitch' else '0.5' }}"
@@ -215,8 +224,23 @@
       </div>
       {% endfor %}
     </div>
-    <p class="hint">Try <strong>possessed</strong> or <strong>demon</strong> for a scary voice.
-       For harsher, load <strong>demon</strong> then push Distortion above 0.8 and drop Pitch toward 0.6.</p>
+
+    <div class="fx-actions" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+      <button class="action" id="fx-save-btn" onclick="saveEffects()" disabled
+              title="Save the current effect settings as your tuned version of the selected style. Re-selecting that style will load these values.">
+        💾 Save style
+      </button>
+      <button class="action" id="fx-revert-btn" onclick="revertEffects()" disabled
+              title="Undo the last save (single level): restore the previous saved values for that style.">
+        ↩ Revert
+      </button>
+      <span class="val" id="fx-save-hint" style="color:var(--muted);"></span>
+    </div>
+
+    <p class="hint">Tune a style, then <strong>Save</strong> to make it your version — selecting that
+       style again loads your saved settings. <strong>Revert</strong> undoes the last save.
+       Try <strong>possessed</strong> or <strong>demon</strong> for a scary voice; for harsher,
+       load <strong>demon</strong> then push Distortion above 0.8 and drop Pitch toward 0.6.</p>
   </div>
 
   <!-- JAW TUNING -->
@@ -442,12 +466,108 @@
     }
 
     // ── Voice FX ─────────────────────────────────────────────────────────────
-    function setStyle(style) {
-      post('/effects', null, {style}).then(() => syncStyleToControls(style));
-      toast('Style: ' + style);
+    // The style whose effects are currently loaded — a Save targets this style.
+    let selectedStyle = null;
+    // Populate the FX sliders from /status only once (first successful poll),
+    // so later polls don't fight the operator actively tuning.
+    let _fxPopulated = false;
+
+    async function setStyle(style) {
+      // The server returns the chain it actually loaded (a SAVED tuned override
+      // if one exists, else the factory preset), so sync controls from that
+      // rather than the local PRESETS map — otherwise a tuned style would show
+      // factory values.
+      const res = await fetch('/effects', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({style}),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      selectedStyle = style;
+      if (data && data.effects) syncStyleFromEffects(data.effects);
+      else syncStyleToControls(style);
+      const save = document.getElementById('fx-save-btn');
+      if (save) save.disabled = false;
+      toast('Style: ' + style + (data && data.tuned ? ' (tuned)' : ''));
     }
     function toggleEffect(fx, enabled) { post('/effects', null, {effect: fx, enabled}); }
     function setEffectAmount(fx, amount) { post('/effects', null, {effect: fx, amount}); }
+
+    // Reflect a server-provided effect chain ({fx: {enabled, amount}}) in the
+    // toggle + slider controls. Skips any slider the user is actively dragging.
+    function syncStyleFromEffects(effects) {
+      for (const [fx, cfg] of Object.entries(effects)) {
+        if (!cfg) continue;
+        const sw = document.querySelector(`[data-fx="${fx}"]`);
+        const amt = document.querySelector(`[data-fx-amt="${fx}"]`);
+        if (sw) sw.checked = !!cfg.enabled;
+        if (amt && amt !== document.activeElement) {
+          amt.value = cfg.amount;
+          if (amt.nextElementSibling) amt.nextElementSibling.textContent = (+cfg.amount).toFixed(2);
+        }
+      }
+    }
+
+    // Save the current effect settings as the tuned override for the selected
+    // style, then reflect the new revert availability.
+    async function saveEffects() {
+      if (!selectedStyle) { toast('Pick a style first'); return; }
+      const res = await fetch('/effects/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({style: selectedStyle}),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (res.ok && data.status === 'success') {
+        toast('Saved ' + selectedStyle);
+        applyRevertState(data.can_revert, selectedStyle);
+      } else {
+        toast('Save failed: ' + (data.message || res.status));
+      }
+    }
+
+    // Revert the last saved style to its previous saved values (single level).
+    async function revertEffects() {
+      const res = await fetch('/effects/revert', {method: 'POST'});
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (res.ok && data.status === 'success') {
+        selectedStyle = data.style;
+        if (data.effects) syncStyleFromEffects(data.effects);
+        toast('Reverted ' + data.style);
+        applyRevertState(data.can_revert, data.style);
+      } else if (res.status === 409) {
+        toast('Nothing to revert');
+        applyRevertState(false, null);
+      } else {
+        toast('Revert failed: ' + (data.message || res.status));
+      }
+    }
+
+    // Enable/disable the Revert button and show which style it would affect.
+    function applyRevertState(canRevert, style) {
+      const btn = document.getElementById('fx-revert-btn');
+      const hint = document.getElementById('fx-save-hint');
+      if (btn) btn.disabled = !canRevert;
+      if (hint) hint.textContent = canRevert && style ? ('revert → ' + style) : '';
+    }
+
+    // Populate the FX controls + revert state from /status (on page load and
+    // poll), so a refresh reflects the persisted live config, not defaults.
+    function populateEffects(mic) {
+      if (!mic) return;
+      if (mic.effects) syncStyleFromEffects(mic.effects);
+      if (mic.current_style) {
+        selectedStyle = mic.current_style;
+        const sel = document.getElementById('style-select');
+        if (sel && sel.value !== mic.current_style) sel.value = mic.current_style;
+        const save = document.getElementById('fx-save-btn');
+        if (save) save.disabled = false;
+      }
+      applyRevertState(!!mic.can_revert, mic.current_style);
+    }
 
     // When a style preset loads, reflect its enabled/amount in the controls.
     const PRESETS = {
@@ -455,7 +575,6 @@
       demon:     {pitch:[true,0.70],distortion:[true,0.55],echo:[true,0.35],reverb:[true,0.25],tremolo:[false,0],bitcrush:[false,0],ring_mod:[false,0]},
       ghost:     {pitch:[true,0.92],distortion:[false,0],echo:[true,0.65],reverb:[true,0.55],tremolo:[true,0.35],bitcrush:[false,0],ring_mod:[false,0]},
       robot:     {pitch:[false,1.0],distortion:[true,0.30],echo:[false,0],reverb:[false,0],tremolo:[false,0],bitcrush:[true,0.50],ring_mod:[true,0.70]},
-      chipmunk:  {pitch:[true,1.45],distortion:[false,0],echo:[false,0],reverb:[false,0],tremolo:[false,0],bitcrush:[false,0],ring_mod:[false,0]},
       possessed: {pitch:[true,0.60],distortion:[true,0.75],echo:[true,0.70],reverb:[true,0.50],tremolo:[true,0.45],bitcrush:[false,0],ring_mod:[false,0]},
     };
     function syncStyleToControls(style) {
@@ -530,6 +649,13 @@
         }
         // Reflect persisted jaw tuning (both profiles) in the sliders.
         if (data.mic && data.mic.profiles) populateJaw(data.mic.profiles);
+        // Keep the Revert button state fresh, but DON'T repopulate the FX
+        // sliders on every poll (that would fight active tuning). Populate the
+        // sliders ONCE, on the first successful poll after load.
+        if (data.mic) {
+          if (!_fxPopulated) { populateEffects(data.mic); _fxPopulated = true; }
+          else applyRevertState(!!data.mic.can_revert, data.mic.current_style);
+        }
         // Poll faster while busy so buttons re-enable promptly when it ends.
         schedulePoll(data.servos_busy ? 1200 : 3000);
       } catch (e) {

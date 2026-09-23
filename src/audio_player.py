@@ -2,6 +2,7 @@ import numpy as np
 import pyaudio as pa
 import wave
 import time
+import os
 from gpiozero import PWMLED
 from gpiozero import LED
 from gpiozero import DigitalOutputDevice
@@ -188,7 +189,9 @@ if __name__ == "__main__":
              'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav',
              'yoda-fear.wav','hello-everyone.wav','happy-halloween.wav','walk.wav','how-yall.wav','cant-hear.wav']
     p = AudioPlayer()
-    path = "/home/aaron/Music/"
+    # Repo audio/ directory (source of truth), relative to this module.
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "audio") + os.sep
     audio_file_name =  "krusty-laugh.wav"
     arg1 = sys.argv[1]
     split = arg1.split("=")

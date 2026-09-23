@@ -11,7 +11,7 @@ routines fail). Use it to verify jaw movement and eye flashing track the audio.
 Runs on the Raspberry Pi with GPIO + audio access; may need root:
 
     sudo ../.venv/bin/python3 audioplaytest.py --file krusty-laugh.wav
-    sudo ../.venv/bin/python3 audioplaytest.py --file blah.wav --dir /home/aaron/Music
+    sudo ../.venv/bin/python3 audioplaytest.py --file blah.wav --dir /some/other/dir
 """
 
 import argparse
@@ -52,9 +52,11 @@ if __name__ == '__main__':
     )
     parser.add_argument('--file', required=True,
                         help='Audio file name (or absolute path) to play.')
-    parser.add_argument('--dir', default='/home/aaron/Music',
-                        help='Directory to resolve --file against when not absolute '
-                             '(default: /home/aaron/Music).')
+    parser.add_argument(
+        '--dir',
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'audio'),
+        help="Directory to resolve --file against when not absolute "
+             "(default: the repo's audio/ directory).")
     parser.add_argument('--output-device', dest='output_device', type=int, default=2,
                         help='PyAudio output device index (default: 2).')
     args = parser.parse_args()

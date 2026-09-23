@@ -153,3 +153,64 @@ FORBIDDEN_COMBINATIONS = [
         },
     },
 ]
+
+
+# --------------------------------------------------------------------------- #
+# ARM DESTINATION POSES — peak/hold arm pose each gesture reaches before        #
+# retracting to REST_POSITIONS. Reference for authoring new arm gestures.       #
+# --------------------------------------------------------------------------- #
+#
+# Values are calibrated 0-270 servo degrees, hardware-measured from the targets
+# in src/movements.py. Keys are the camelCase action names (as in action_map).
+# Only the four right-arm channels (4-7) are listed; head channels and any
+# per-gesture head motion are NOT captured here.
+#
+# WARNING: several of these dip below the global SAFE_LIMITS shoulder-tilt floor
+# (45) or above the elbow ceiling, and are only collision-safe in THIS specific
+# pose. The gesture that owns the pose widens the clamp with
+# TrunkController.verified_pose_override(...) — see the "override" column below.
+# If you reuse a pose in a new gesture, carry the SAME override and re-verify on
+# the physical robot before trusting it.
+#
+#   Action          override (channel -> widened range)
+#   ------------     ---------------------------------------------
+#   facePalm         RT_SHOULDER_TILT: (40, 270)      (also NECK_TILT=140)
+#   menacingReach    RT_SHOULDER_TILT: (25, 270)
+#   beckon           none
+#   comeHere         RT_SHOULDER_TILT: (14, 270)
+#   yawnCover        RT_SHOULDER_TILT: (35, 270), RT_ELBOW_TILT: (0, 170)
+#                                                    (also NECK_PAN=90, NECK_TILT=90)
+#
+# Format: action_name -> {channel: destination_angle_deg}
+ARM_DESTINATION_POSES = {
+    "facePalm": {
+        RT_SHOULDER_ROTATOR: 200,
+        RT_SHOULDER_TILT:    40,
+        RT_ELBOW_TILT:       145,
+        RT_ELBOW_ROTATOR:    200,
+    },
+    "menacingReach": {
+        RT_SHOULDER_ROTATOR: 209,
+        RT_SHOULDER_TILT:    43,   # center/reach value; swing oscillates tilt in [26, 60]
+        RT_ELBOW_TILT:       0,
+        RT_ELBOW_ROTATOR:    0,
+    },
+    "beckon": {
+        RT_SHOULDER_ROTATOR: 90,
+        RT_SHOULDER_TILT:    55,
+        RT_ELBOW_TILT:       105,  # curl arc swings 105<->135
+        RT_ELBOW_ROTATOR:    270,
+    },
+    "comeHere": {
+        RT_SHOULDER_ROTATOR: 129,
+        RT_SHOULDER_TILT:    14,
+        RT_ELBOW_TILT:       140,
+        RT_ELBOW_ROTATOR:    189,
+    },
+    "yawnCover": {
+        RT_SHOULDER_ROTATOR: 200,
+        RT_SHOULDER_TILT:    35,
+        RT_ELBOW_TILT:       165,
+        RT_ELBOW_ROTATOR:    185,
+    },
+}
