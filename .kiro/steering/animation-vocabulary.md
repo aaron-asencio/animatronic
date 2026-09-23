@@ -153,6 +153,8 @@ Continuously runs the live mic passthrough (see Stream).
 Continuously runs a resting/idle behavior until a sensor interrupts it.
 
 - **Interrupted by**: a sensor (**sensor TBD**).
+- Sleep mode can also be configured with a **timeout**. When set, the timeout
+  elapsing is itself the interruption signal — no sensor is required.
 - An interruption **can trigger a response**, e.g.:
   - **snoring → startle response**
   - **inactive → look around / wave response**
