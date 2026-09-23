@@ -37,6 +37,7 @@ import urllib.request
 import urllib.error
 
 from servo_lock import is_locked
+import nap_signal
 
 app = Flask(__name__)
 
@@ -113,6 +114,23 @@ def run_movement(action):
     """Launch controller.py --action=<action> (gesture only)."""
     cmd = [VENV_PYTHON, CONTROLLER, f'--action={action}']
     print(f"[movement] {' '.join(cmd)}")
+    return subprocess.Popen(cmd, cwd=PROJECT_DIR)
+
+
+def run_napping(timeout_seconds):
+    """Launch animatronic.py --action=napping (the napping MODE).
+
+    A Mode runs until interrupted; it holds the servo lock for its whole run.
+    Popen (non-blocking) so the HTTP response returns immediately.
+
+    Args:
+        timeout_seconds: Seconds before the nap's timeout wake fires.
+    """
+    cmd = [VENV_PYTHON, ANIMATRONIC, '--action=napping',
+           f'--nap-timeout={int(timeout_seconds)}']
+    print(f"[napping] {' '.join(cmd)}")
+    # Fresh run: clear any stale stop request so the mode doesn't exit at once.
+    nap_signal.clear_stop()
     return subprocess.Popen(cmd, cwd=PROJECT_DIR)
 
 
@@ -229,6 +247,52 @@ def _stop_mic():
     return not _mic_is_streaming()
 
 
+def _preempt_napping_if_running(wait_seconds=15):
+    """If the napping MODE is running, ask it to stop and wait for it to finish.
+
+    A Mode (napping) runs continuously and holds the servo lock, so a normal
+    routine/movement request would be refused as "busy". Instead, when the
+    active tracked process is the napping mode, we set the cross-process stop
+    signal (nap_signal) so the mode winds down cleanly (wakes the head, releases
+    the servo lock, exits), then wait — bounded — for the servo lock to actually
+    free before returning. This lets a web-requested action preempt a nap: the
+    action waits for the mode to finish and release the lock, then runs.
+
+    Must be called while holding ``_launch_lock``.
+
+    Args:
+        wait_seconds: Max seconds to wait for the mode to exit and free the lock.
+
+    Returns:
+        True if no nap was running, or the nap stopped and the lock is now free.
+        False if a nap was running but did not release the lock within the
+        timeout (caller should treat this as still-busy).
+    """
+    label = _active_proc['label']
+    proc = _active_proc['proc']
+    is_nap = bool(label) and label.startswith('napping')
+    if not is_nap or proc is None or proc.poll() is not None:
+        return True  # no napping mode active
+
+    print("[launch] preempting napping mode — requesting stop and waiting")
+    nap_signal.request_stop()
+
+    # Wait for the mode process to exit AND the servo lock to free, so the new
+    # action can take the lock cleanly.
+    deadline = time.time() + wait_seconds
+    while time.time() < deadline:
+        if proc.poll() is not None and not is_locked():
+            _active_proc['proc'] = None
+            _active_proc['label'] = None
+            nap_signal.clear_stop()
+            print("[launch] napping mode stopped; servo lock free")
+            return True
+        time.sleep(0.2)
+
+    print("[launch] napping mode did not stop within timeout")
+    return False
+
+
 def launch_gesture(kind, action, launcher):
     """Serialised launch of a gesture subprocess.
 
@@ -241,6 +305,10 @@ def launch_gesture(kind, action, launcher):
         (ok: bool, message: str). ok=False means the servos are busy.
     """
     with _launch_lock:
+        # If the napping MODE is running, ask it to wind down and wait for it to
+        # release the servo lock, then proceed (a requested action preempts a nap).
+        if not _preempt_napping_if_running():
+            return False, 'Napping mode is stopping — try again in a moment.'
         if _gesture_busy():
             active = _active_proc['label'] or 'another process'
             return False, f'Servos busy — {active} is still running.'
@@ -376,6 +444,63 @@ def stop():
     message = stop_active_gesture(reason='force stop from UI')
     print(f"[stop] {message} (automation disabled)")
     return jsonify({'status': 'success', 'message': message, 'automation': automation})
+
+
+# ── Route: napping mode ──────────────────────────────────────────────────────
+def launch_napping(timeout_seconds):
+    """Serialised launch of the napping MODE subprocess.
+
+    Mirrors ``launch_gesture``'s check-and-spawn under ``_launch_lock`` and
+    tracks the process in ``_active_proc`` (label ``napping``) so the busy
+    check, preemption, and force-stop all see it. Refuses if the servos are
+    already busy. No watchdog is attached: unlike a routine, a Mode is meant to
+    run open-endedly (until timeout/sensor/stop), so the GESTURE_TIMEOUT
+    backstop would wrongly kill it.
+
+    Returns:
+        (ok, message). ok=False means the servos were busy.
+    """
+    with _launch_lock:
+        # Auto-stop the mic (a Mode owns the jaw/audio path, like a routine).
+        if _mic_is_streaming():
+            if not _stop_mic():
+                return False, ('Mic streaming is on and could not be stopped; '
+                               'turn off the mic and retry.')
+        if _gesture_busy():
+            active = _active_proc['label'] or 'another process'
+            return False, f'Servos busy — {active} is still running.'
+        proc = run_napping(timeout_seconds)
+        _active_proc['proc'] = proc
+        _active_proc['label'] = 'napping'
+        _last_action['value'] = 'napping'
+        return True, f'napping started (timeout {int(timeout_seconds)}s)'
+
+
+@app.route('/nap/<state>', methods=['POST'])
+def nap(state):
+    """Start or stop the napping MODE.
+
+    - ``start``: launch napping (optional JSON ``{"timeout": <seconds>}``,
+      default 60). A Mode runs until interrupted.
+    - ``stop``: ask a running nap to wind down via the cross-process stop
+      signal; it wakes the head, releases the servo lock, and exits.
+    """
+    if state == 'start':
+        data = request.json or {}
+        try:
+            timeout_seconds = int(data.get('timeout', 60))
+        except (TypeError, ValueError):
+            return jsonify({'status': 'error', 'message': 'timeout must be an integer'}), 400
+        timeout_seconds = max(5, timeout_seconds)
+        ok, message = launch_napping(timeout_seconds)
+        if not ok:
+            return jsonify({'status': 'busy', 'message': message}), 409
+        return jsonify({'status': 'success', 'message': message})
+    if state == 'stop':
+        # Signal the mode to wind down; it releases the lock and exits itself.
+        nap_signal.request_stop()
+        return jsonify({'status': 'success', 'message': 'nap stop requested'})
+    return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
 
 
 # ── Routes: mic stream (proxied) ─────────────────────────────────────────────

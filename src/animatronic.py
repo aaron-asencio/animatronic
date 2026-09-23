@@ -35,12 +35,15 @@ from performance import (
     PerformanceRunner,
     PerformanceStep,
 )
+import nap_signal
 import constants
 import asyncio
 import threading
 import argparse
+import random
 import sys
 import os
+import time
 
 
 class Animatronic:
@@ -726,6 +729,219 @@ class Animatronic:
         asyncio.run(PerformanceRunner(SLEEP, mv, audio_dir).run())
 
     # ------------------------------------------------------------------ #
+    # Napping — a MODE (continuous background behaviour until interrupted) #
+    # ------------------------------------------------------------------ #
+
+    # Interruption reasons returned by the nap loop.
+    NAP_INTERRUPT_TIMEOUT = "timeout"
+    NAP_INTERRUPT_SENSOR = "sensor"
+    NAP_INTERRUPT_STOP = "stop"       # external stop request (e.g. web app)
+
+    # Snore tracks the nap randomly alternates between, one per sleep segment.
+    _NAP_SNORE_TRACKS = ("snore.wav", "sb_snore.wav")
+
+    def _poll_nap_sensor(self):
+        """Placeholder: poll the wake sensor (ultrasonic / IR). TBD.
+
+        A Mode's Sleep/Nap behaviour is meant to be interrupted by a proximity
+        sensor. The hardware (ultrasonic or IR) and its wiring are not yet
+        decided, so this is a stub that always reports "no detection". When the
+        sensor lands, implement the read here and return True on trigger.
+
+        Returns:
+            True when the sensor detects a wake condition, else False. Always
+            False for now (no sensor wired).
+        """
+        # TODO(sensor): read the ultrasonic / IR sensor and return True on a
+        # proximity trigger. Placeholder returns False (never sensor-interrupts).
+        return False
+
+    def napping(self, timeout_seconds=60):
+        """NAPPING mode: yawn, then snore with the head lowered until interrupted.
+
+        A Mode (per the animation vocabulary) is a continuous background
+        behaviour that runs until interrupted. Napping:
+
+        1. Plays the ``yawn`` routine once (cover-mouth gesture + yawn.wav).
+        2. Lowers the head "asleep" and loops the sleep bob/rock choreography
+           (reusing the ``sleep`` routine's movement primitives) while audio
+           plays. Unlike ``sleep`` — which plays snore.wav once — napping keeps
+           going and RANDOMLY ALTERNATES the snore track between ``snore.wav``
+           and ``sb_snore.wav`` each sleep segment, repeating until interrupted.
+
+        Interruption signals (checked between whole sleep cycles):
+
+        - **Timeout** (``timeout_seconds``, default 60, configurable): the nap
+          ends and the head is RAISED exactly as at the end of the ``sleep``
+          routine (``sleep_snore_return``).
+        - **Sensor** (ultrasonic / IR — TBD, see ``_poll_nap_sensor``): runs the
+          ``_startle`` response (TBD placeholder) instead of the calm wake.
+        - **External stop** (``nap_signal`` — e.g. the web app wants to run
+          another action): the nap winds down like the timeout case (calm wake),
+          then exits so the servo lock frees for the requested action.
+
+        This is NOT built on the Performance_Framework: that framework plays
+        exactly one audio track per performance, whereas napping alternates two
+        tracks across an open-ended number of segments. So the mode drives the
+        audio directly (an ``AudioPlayer`` per segment, jaw silenced) around the
+        shared ``sleep_snore_*`` movement primitives.
+
+        Args:
+            timeout_seconds: How long to nap before the timeout interruption
+                raises the head. Default 60s; configurable via the CLI.
+        """
+        # Clear any stale stop request from a previous run so we start clean.
+        nap_signal.clear_stop()
+
+        # 1. Yawn first (gesture + yawn.wav), reusing the standard runner.
+        print("[nap] yawning before the nap...")
+        self.run_action_and_audio("_do_yawn", self.music[19])  # yawn.wav
+
+        # 2. Head-lowered snore loop until an interruption signal.
+        try:
+            reason = asyncio.run(self._run_nap_loop(timeout_seconds))
+        except Exception as e:
+            print(f"[nap] error during nap loop: {e}")
+            self._safe_rest()
+            nap_signal.clear_stop()
+            return
+
+        # 3. React to how the nap ended.
+        if reason == self.NAP_INTERRUPT_SENSOR:
+            print("[nap] sensor interrupt -> startle response")
+            self._startle()
+        else:
+            # Timeout or external stop: calm wake, head raised like sleep's end.
+            print(f"[nap] {reason} interrupt -> calm wake (head raised)")
+
+        # Always clear the stop signal on exit so the next Mode starts clean and
+        # the requesting web-app action can proceed once the lock frees.
+        nap_signal.clear_stop()
+
+    async def _run_nap_loop(self, timeout_seconds):
+        """Drive the head-lowered snore loop until interrupted; return the reason.
+
+        Lowers the head "asleep" (``sleep_snore_lead_in``, which also opens the
+        neck-tilt verified_pose_override for the whole span), then repeats sleep
+        bob/rock cycles while a randomly-chosen snore track plays, starting a
+        fresh randomly-alternated track whenever the previous one finishes.
+        Between whole cycles it checks the three interruption signals. On any
+        interruption it performs the calm wake (``sleep_snore_return``, which
+        also releases the override) UNLESS the reason is a sensor trigger, in
+        which case the caller runs the startle response instead (and this method
+        still releases the override so the widened clamp never leaks).
+
+        Args:
+            timeout_seconds: Seconds after which the timeout interruption fires.
+
+        Returns:
+            One of NAP_INTERRUPT_TIMEOUT / NAP_INTERRUPT_SENSOR /
+            NAP_INTERRUPT_STOP.
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+        deadline = time.monotonic() + max(1, timeout_seconds)
+
+        # Head drops asleep and the neck-tilt override opens (held until wake).
+        await mv.sleep_snore_lead_in()
+
+        # Build ONE AudioPlayer for the whole nap and reuse it for every snore
+        # segment. play_audio_file opens/closes its own PyAudio stream per call,
+        # so a single player can play many clips sequentially. Constructing a
+        # NEW AudioPlayer per segment would re-claim the eye LED GPIO pin while
+        # the previous player still held it -> lgpio 'GPIO busy' on the 2nd clip,
+        # which previously killed the nap after ~2 snores regardless of timeout.
+        # Jaw silenced (a snoring figure's mouth stays shut); eyes still track
+        # the envelope (drive_eyes defaults True).
+        player = AudioPlayer(drive_jaw=False)
+
+        reason = None
+        audio_thread = None
+        try:
+            while True:
+                # Check interruptions BETWEEN whole cycles so a bob/rock is
+                # never cut mid-move (matches the framework's loop semantics).
+                if nap_signal.stop_requested():
+                    reason = self.NAP_INTERRUPT_STOP
+                    break
+                if self._poll_nap_sensor():
+                    reason = self.NAP_INTERRUPT_SENSOR
+                    break
+                if time.monotonic() >= deadline:
+                    reason = self.NAP_INTERRUPT_TIMEOUT
+                    break
+
+                # Start a fresh randomly-alternated snore track whenever none is
+                # playing (first cycle, or the previous clip has finished),
+                # reusing the single shared player above.
+                if audio_thread is None or not audio_thread.is_alive():
+                    track = random.choice(self._NAP_SNORE_TRACKS)
+                    audio_path = os.path.join(audio_dir, track)
+                    audio_thread = threading.Thread(
+                        target=player.play_audio_file,
+                        args=(audio_path,),
+                        daemon=True,
+                    )
+                    audio_thread.start()
+                    print(f"[nap] snoring: {track}")
+
+                # One sleep cycle (head bob + arm rock).
+                await mv.sleep_snore_loop_body()
+        finally:
+            # Wake the head to rest and release the neck-tilt override. On a
+            # sensor interrupt the startle response follows in the caller, but
+            # we STILL wake+release here so the override never leaks and the
+            # figure is at a known rest pose before startle runs.
+            await mv.sleep_snore_return()
+            # Let the in-flight snore clip's audio thread finish before releasing
+            # the eye pin, so closing the LED can't race with the thread still
+            # driving it from the envelope. The wake above already took a couple
+            # seconds; bound the extra wait so a long clip can't stall the exit.
+            if audio_thread is not None:
+                audio_thread.join(timeout=3)
+            # Release the eye LED pin the shared player claimed, so a following
+            # routine/startle can drive the eyes without a 'GPIO busy' clash.
+            self._release_player(player)
+
+        return reason
+
+    @staticmethod
+    def _release_player(player):
+        """Best-effort release of an AudioPlayer's GPIO pins (eye LED / jaw).
+
+        gpiozero devices hold their pin until closed; releasing them lets a
+        following owner (another routine, or the startle response) claim the
+        same pins without an lgpio 'GPIO busy' error. Never raises.
+
+        Args:
+            player: The AudioPlayer whose devices to close (may hold None pins).
+        """
+        for attr in ("led_eye_light", "jaw_motor"):
+            device = getattr(player, attr, None)
+            if device is not None:
+                try:
+                    device.off()
+                    device.close()
+                except Exception as e:
+                    print(f"[nap] could not release {attr}: {e}")
+
+    def _startle(self):
+        """STARTLE response to a sensor wake. TBD placeholder.
+
+        When the (TBD) proximity sensor interrupts the nap, the figure should
+        react with a startled "who's there?!" — a quick head snap up, maybe a
+        gasp audio clip and an arm recoil. That choreography is not designed
+        yet, so this is a placeholder: the head is already raised to rest by the
+        nap loop's wake, and this simply logs that a startle would play here.
+
+        Replace this with the real startle Routine when it is authored.
+        """
+        # TODO(startle): author the startle Routine (head snap + gasp audio +
+        # recoil) and run it here. Placeholder: head is already at rest from the
+        # nap loop's calm wake; nothing else to do yet.
+        print("[nap] STARTLE response is TBD — placeholder no-op (head already raised)")
+
+    # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
     # ------------------------------------------------------------------ #
 
@@ -813,6 +1029,17 @@ def main(args):
         except ServoBusyError:
             print("Servos busy — another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
+    elif args.action == 'napping':
+        # Napping is a MODE: it drives servos (head drop/bob + arm rock), so it
+        # holds the servo lock for its whole run just like a routine. It runs
+        # until interrupted (timeout, sensor-TBD, or an external stop request
+        # from the web app). Fail fast if the servos are already in use.
+        try:
+            with servo_lock():
+                a.napping(timeout_seconds=args.nap_timeout)
+        except ServoBusyError:
+            print("Servos busy — another routine is already running. Aborting.")
+            sys.exit(BUSY_EXIT_CODE)
     elif args.action == 'mic':
         # Mic mode is audio-only and does not move servos, so it does NOT take
         # the servo lock (that would needlessly block gesture routines).
@@ -830,7 +1057,10 @@ if __name__ == '__main__':
         description="Animatronic controller — run a named gesture + audio routine."
     )
     parser.add_argument('--action', default=None,
-                        help='Action to perform (e.g. startParty, waiting, blah).')
+                        help='Action to perform (e.g. startParty, waiting, blah, napping).')
+    parser.add_argument('--nap-timeout', dest='nap_timeout', type=int, default=60,
+                        help='Napping mode: seconds before the timeout wake '
+                             '(default: 60). Only used with --action=napping.')
     args = parser.parse_args()
     print(args.action)
     main(args)

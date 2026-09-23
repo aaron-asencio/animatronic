@@ -150,6 +150,7 @@
     <button class="tab-btn" data-tab="voicefx">Voice FX</button>
     <button class="tab-btn" data-tab="jaw">Jaw Tuning</button>
     <button class="tab-btn" data-tab="automation">Automation</button>
+    <button class="tab-btn" data-tab="napping">Napping</button>
   </div>
 
   <!-- Persistent live-mic toggle: available from every tab -->
@@ -359,6 +360,29 @@
         <input type="checkbox" data-auto="movement_enabled" onchange="setAuto('movement_enabled', this.checked)">
         <span class="slider-sw"></span>
       </label>
+    </div>
+  </div>
+
+  <!-- NAPPING -->
+  <div class="panel" id="napping">
+    <div class="section-title">Napping mode</div>
+    <p class="hint" style="margin-top:0;">Yawns, then snores with the head lowered
+       (audio alternates between snore clips) until the timeout elapses or you stop it.
+       A running routine or movement will also interrupt the nap.</p>
+    <div class="row">
+      <label>Nap timeout<br><small style="color:var(--muted)">seconds before the head raises</small></label>
+      <input type="range" id="nap-timeout" min="5" max="600" step="5" value="60"
+             oninput="document.getElementById('v-nap-timeout').textContent = this.value">
+      <span class="val" id="v-nap-timeout">60</span>
+    </div>
+    <div class="fx-actions" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+      <button class="action" id="nap-start-btn" onclick="startNap()"
+              title="Start napping mode with the timeout above.">😴 Start nap</button>
+      <button class="action" id="nap-stop-btn" onclick="stopNap()" disabled
+              title="Wake the figure: the nap winds down, raises the head, and releases the servos.">
+        ⏹ Stop nap
+      </button>
+      <span class="val" id="nap-status" style="color:var(--muted);"></span>
     </div>
   </div>
 
@@ -624,6 +648,38 @@
       toast(key.replace('_', ' ') + ': ' + (value ? 'ON' : 'OFF'));
     }
 
+    // ── Napping mode ─────────────────────────────────────────────────────────
+    async function startNap() {
+      const timeout = +document.getElementById('nap-timeout').value;
+      const res = await fetch('/nap/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({timeout}),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (res.ok && data.status === 'success') {
+        toast('Napping (' + timeout + 's)');
+        setNapActive(true);
+      } else {
+        toast(data.message || 'Could not start nap', true);
+      }
+    }
+    async function stopNap() {
+      await fetch('/nap/stop', {method: 'POST'});
+      toast('Waking…');
+      // The mode winds down on its own; the status poll flips the buttons back.
+    }
+    // Reflect nap active/idle state in the Start/Stop buttons + label.
+    function setNapActive(active) {
+      const startBtn = document.getElementById('nap-start-btn');
+      const stopBtn = document.getElementById('nap-stop-btn');
+      const status = document.getElementById('nap-status');
+      if (startBtn) startBtn.disabled = active;
+      if (stopBtn) stopBtn.disabled = !active;
+      if (status) status.textContent = active ? 'napping…' : '';
+    }
+
     // ── Status poll ────────────────────────────────────────────────────────
     async function pollStatus() {
       try {
@@ -647,6 +703,9 @@
             if (typeof data.automation[key] === 'boolean') cb.checked = data.automation[key];
           });
         }
+        // Reflect nap active/idle: the mode is running when it's the active
+        // action and the servos are busy. Enables Stop / disables Start.
+        setNapActive(data.last_action === 'napping' && !!data.servos_busy);
         // Reflect persisted jaw tuning (both profiles) in the sliders.
         if (data.mic && data.mic.profiles) populateJaw(data.mic.profiles);
         // Keep the Revert button state fresh, but DON'T repopulate the FX

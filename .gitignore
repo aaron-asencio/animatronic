@@ -113,6 +113,10 @@ app.log
 # Servo mutual-exclusion lockfile (runtime, machine-local)
 .servo.lock
 
+# Napping-mode stop-request sentinel (runtime, machine-local)
+.nap_stop
+src/.nap_stop
+
 # Kinematic collision model: calibration backups (timestamped, machine-local)
 src/config/calibration.json.*.bak
 # Collision-model preview renders and probe disagreement logs
