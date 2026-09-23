@@ -72,21 +72,22 @@ class Animatronic:
         'vader-father.wav',        # 6
         'were-waiting.wav',        # 7
         'yoda-900.wav',            # 8
-        'yoda-agent-evil.wav',     # 9
+        None,                      # 9  (removed: yoda / yoda-agent-evil.wav)
         'yoda-fear.wav',           # 10
-        'hello-everyone.wav',      # 11
-        'happy-halloween.wav',     # 12
-        'walk.wav',                # 13
-        'how-yall.wav',            # 14
-        'cant-hear.wav',           # 15
+        None,                      # 11 (removed: hello / hello-everyone.wav)
+        None,                      # 12 (removed: happyHalloween / happy-halloween.wav)
+        None,                      # 13 (removed: niceDay / walk.wav)
+        None,                      # 14 (removed: howYallDoin / how-yall.wav)
+        None,                      # 15 (removed: cantHear / cant-hear.wav)
         'evil-laugh.wav',          # 16
         'vincent-price-laugh.wav', # 17
-        'owl.wav',                 # 18
+        None,                      # 18 (removed: owl / owl.wav)
         'yawn.wav',                # 19
         'brains.wav',              # 20
         'hypnotic.wav',            # 21
         'snore.wav',               # 22
         'more_candy.wav',          # 23
+        'sb_snore.wav',            # 24
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -249,26 +250,6 @@ class Animatronic:
 
     # --- Wave routines ---
 
-    def hello(self):
-        """Hello audio — wave."""
-        self.run_action_and_audio("_do_wave", self.music[11])
-
-    def happy_halloween(self):
-        """Happy Halloween audio — wave."""
-        self.run_action_and_audio("_do_wave", self.music[12])
-
-    def nice_day(self):
-        """Walk/nice day audio — wave."""
-        self.run_action_and_audio("_do_wave", self.music[13])
-
-    def how_yall_doin(self):
-        """How y'all doing audio — wave."""
-        self.run_action_and_audio("_do_wave", self.music[14])
-
-    def cant_hear(self):
-        """Can't hear audio — wave."""
-        self.run_action_and_audio("_do_wave", self.music[15])
-
     def start_party(self):
         """Party switch audio — wave + swivel head."""
         self.run_action_and_audio("_do_wave_and_swivel", self.music[3])
@@ -300,10 +281,6 @@ class Animatronic:
     def vader_beaten(self):
         """Vader beaten audio — patrol (ellipse + small look)."""
         self.run_action_and_audio("_do_patrol", self.music[5])
-
-    def yoda900(self):
-        """Yoda 900 years audio — patrol."""
-        self.run_action_and_audio("_do_patrol", self.music[9])
 
     # --- Reaction routines ---
 
@@ -390,10 +367,6 @@ class Animatronic:
     def vincent_price(self):
         """Vincent Price laugh audio — reach out + look around."""
         self.run_action_and_audio("_do_reach_and_look", self.music[17])
-
-    def owl(self):
-        """Owl audio — swivel head (head-only)."""
-        self.run_action_and_audio("_do_swivel_head", self.music[18])
 
     def yawn(self):
         """Yawn audio + cover-mouth gesture (jaw syncs to the yawn.wav)."""
@@ -806,11 +779,6 @@ def main(args):
 
     action_map = {
         # Wave routines
-        'hello':          a.hello,
-        'happyHalloween': a.happy_halloween,
-        'niceDay':        a.nice_day,
-        'howYallDoin':    a.how_yall_doin,
-        'cantHear':       a.cant_hear,
         'startParty':     a.start_party,
         # Beckon routines
         'waiting':        a.waiting,
@@ -821,13 +789,11 @@ def main(args):
         # Patrol / ambient
         'krusty':         a.krusty,
         'vaderBeaten':    a.vader_beaten,
-        'yoda':           a.yoda900,
         # Reaction
         'blah':           a.blah,
         # New routines
         'evilLaugh':      a.evil_laugh,
         'vincentPrice':   a.vincent_price,
-        'owl':            a.owl,
         'yawn':           a.yawn,
         # Performance-framework routines
         'brains':         a.brains,

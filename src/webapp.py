@@ -60,10 +60,9 @@ MIC_CONTROLLER_URL = 'http://localhost:5000'
 # nothing from the request is ever interpolated into a shell — we pass a fixed
 # script path plus a validated --action value as separate argv entries.
 ROUTINE_ACTIONS = {
-    'startParty', 'hello', 'happyHalloween', 'howYallDoin', 'cantHear',
-    'niceDay', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
-    'torture', 'vaderBeaten', 'yoda', 'yodaFear', 'evilLaugh', 'vincentPrice',
-    'owl', 'moreCandy',
+    'startParty', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
+    'torture', 'vaderBeaten', 'yodaFear', 'evilLaugh', 'vincentPrice',
+    'moreCandy',
 }
 
 MOVEMENT_ACTIONS = {

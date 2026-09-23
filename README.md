@@ -137,19 +137,13 @@ Available actions:
 | Action | Gesture | Audio |
 |--------|---------|-------|
 | `startParty` | Wave + swivel head | `sb_party_switch.wav` |
-| `hello` | Wave | `hello-everyone.wav` |
-| `happyHalloween` | Wave | `happy-halloween.wav` |
-| `howYallDoin` | Wave | `how-yall.wav` |
-| `cantHear` | Wave | `cant-hear.wav` |
-| `niceDay` | Wave | `walk.wav` |
 | `blah` | Head-shake no | `blah.wav` |
 | `krusty` | Neck ellipse | `krusty-laugh.wav` |
 | `waiting` | Come + look around | `were-waiting.wav` |
 | `exorcist` | Come + look around | `beetel-exorcist.wav` |
 | `vaderFather` | Come + look around | `vader-father.wav` |
-| `torture` | Come + look around | `spongebob-torture.mp3` |
+| `torture` | Come + look around | `spongebob-torture.wav` |
 | `vaderBeaten` | Patrol | `vader-beaten.wav` |
-| `yoda` | Patrol | `yoda-agent-evil.wav` |
 | `mic` | — | Live microphone passthrough (AudioStreamer) |
 
 ### Test an individual gesture (no audio)

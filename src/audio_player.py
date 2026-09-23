@@ -185,9 +185,8 @@ class AudioPlayer:
         p.terminate()
    
 if __name__ == "__main__":        
-    music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav','spongebob-torture.mp3',
-             'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-900.wav', 'yoda-agent-evil.wav',
-             'yoda-fear.wav','hello-everyone.wav','happy-halloween.wav','walk.wav','how-yall.wav','cant-hear.wav']
+    music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav',
+             'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-fear.wav']
     p = AudioPlayer()
     # Repo audio/ directory (source of truth), relative to this module.
     path = os.path.join(
@@ -217,10 +216,6 @@ if __name__ == "__main__":
                 audio_file_name = "vader-father.wav"
             case "waiting":
                 audio_file_name = "were-waiting.wav"
-            case "yoda-900":
-                audio_file_name = "yoda-900.wav"
-            case "yoda-agent-evil":
-                audio_file_name = "yoda-agent-evil.wav"
             case "yoda-fear":
                 audio_file_name = "yoda-fear.wav"
           
