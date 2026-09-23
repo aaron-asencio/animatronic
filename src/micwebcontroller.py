@@ -12,7 +12,7 @@ from datetime import datetime
 from utils.audio_utils import AudioUtils
 from constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
 from collections import deque
-from config_store import ConfigStore, ALLOWED_PROFILES, PROFILE_MIC
+from config_store import ConfigStore, ALLOWED_PROFILES, PROFILE_MIC, sanitize_voice_effects
 
 app = Flask(__name__)
 
@@ -127,15 +127,6 @@ STYLE_PRESETS = {
         'bitcrush':   {'enabled': True,  'amount': 0.50},
         'ring_mod':   {'enabled': True,  'amount': 0.70},
     },
-    'chipmunk': {
-        'pitch':      {'enabled': True,  'amount': 1.45},
-        'distortion': {'enabled': False, 'amount': 0.00},
-        'echo':       {'enabled': False, 'amount': 0.00},
-        'reverb':     {'enabled': False, 'amount': 0.00},
-        'tremolo':    {'enabled': False, 'amount': 0.00},
-        'bitcrush':   {'enabled': False, 'amount': 0.00},
-        'ring_mod':   {'enabled': False, 'amount': 0.00},
-    },
     'possessed': {
         'pitch':      {'enabled': True,  'amount': 0.60},
         'distortion': {'enabled': True,  'amount': 0.75},
@@ -152,6 +143,56 @@ effect_state = {
     'tremolo_phase': 0.0,
     'ring_phase': 0.0,
 }
+
+# ── Saved (tuned) voice-style overrides ──────────────────────────────────────
+# The operator can tune a style (e.g. "ghost") and SAVE it; the saved override
+# is persisted in tuning.json via the Config_Store and layered on top of the
+# built-in STYLE_PRESETS. Selecting a style loads its saved override if one
+# exists, else the factory preset. `current_style` tracks which style the live
+# effects_config was last loaded from, so a save targets the right style.
+saved_voice_styles = config_store.load_voice_styles()   # {style: <chain>}
+current_style = {'value': None}
+
+
+def _factory_preset(style):
+    """Return a fresh deep copy of a built-in factory style preset.
+
+    Args:
+        style: The style name (assumed already validated against STYLE_PRESETS).
+
+    Returns:
+        A new dict {effect: {"enabled": bool, "amount": float}}.
+    """
+    return {name: dict(params) for name, params in STYLE_PRESETS[style].items()}
+
+
+def _apply_chain_to_live(chain):
+    """Overwrite the live effects_config in place from a full effect chain.
+
+    Mutates the module-global effects_config the stream callback reads each
+    frame, so the change takes effect immediately on any running stream. Only
+    known effect names are touched; the chain is trusted (already sanitised).
+
+    Args:
+        chain: A full effect chain {effect: {"enabled": bool, "amount": float}}.
+    """
+    for name, params in chain.items():
+        if name in effects_config:
+            effects_config[name] = dict(params)
+
+
+def _effective_style_chain(style):
+    """Resolve the chain a style should load: saved override else factory.
+
+    Args:
+        style: A style name present in STYLE_PRESETS.
+
+    Returns:
+        The full effect chain to apply for that style.
+    """
+    saved = saved_voice_styles.get(style)
+    return dict(saved) if saved else _factory_preset(style)
+
 
 def stream_mic():
     """
@@ -364,6 +405,28 @@ def apply_effects(audio_data):
     audio = np.clip(audio, -32768, 32767)
     return audio.astype(np.int16)
 
+def _release_gpio():
+    """Turn off and release the jaw motor and eye LED GPIO pins.
+
+    Closes the gpiozero devices so their underlying pins (MOUTH_MOTOR_PIN,
+    EYE_LIGHT_PIN) are freed for another process, and resets the module globals
+    to None + jaw state to closed so talk() re-creates them cleanly on the next
+    stream. Safe to call when the devices are already None (no-op).
+    """
+    global jaw_motor, led_eye_light, jaw_open, below_count
+    for name in ('jaw_motor', 'led_eye_light'):
+        device = globals().get(name)
+        if device is not None:
+            try:
+                device.off()
+                device.close()   # frees the underlying GPIO pin
+            except Exception as e:
+                print(f"warning: could not release {name}: {e}")
+            globals()[name] = None
+    jaw_open = False
+    below_count = 0
+
+
 #@app.route('/start', methods=['POST'])
 def start_streaming():
     """Start streaming microphone to speaker"""
@@ -409,7 +472,15 @@ def stop_streaming():
             audio_state['audio'].terminate()
         
         audio_state['stream'] = None
-        
+
+        # Release the jaw motor and eye LED so their GPIO pins are freed for
+        # another process (e.g. animatronic.py's AudioPlayer). talk() lazily
+        # re-creates them on the next stream. Done only after the stream thread
+        # has joined, so the callback is no longer touching these devices.
+        # Without this, this process holds MOUTH_MOTOR_PIN/EYE_LIGHT_PIN for its
+        # whole lifetime and any other GPIO user hits lgpio 'GPIO busy'.
+        _release_gpio()
+
         return jsonify({
             'status': 'success', 
             'message': 'Streaming stopped'
@@ -594,7 +665,7 @@ def set_effects():
 
     1. Load a named style preset:
         {"style": "demon"}
-       Valid styles: natural, demon, ghost, robot, chipmunk, possessed
+       Valid styles: natural, demon, ghost, robot, possessed
 
     2. Toggle a single effect on/off:
         {"effect": "echo", "enabled": true}
@@ -614,18 +685,20 @@ def set_effects():
     """
     data = request.json or {}
 
-    # 1. Style preset — overwrites the whole config.
+    # 1. Style preset — loads the SAVED (tuned) override if one exists, else
+    #    the built-in factory preset, overwriting the whole live config.
     if 'style' in data:
         style = str(data['style']).lower()
         if style not in STYLE_PRESETS:
             valid = ', '.join(STYLE_PRESETS.keys())
             return jsonify({'status': 'error',
                             'message': f'Unknown style "{style}". Valid: {valid}'}), 400
-        # Deep copy so later edits don't mutate the preset.
-        for name, params in STYLE_PRESETS[style].items():
-            effects_config[name] = dict(params)
-        print(f"Voice style set to '{style}': {effects_config}")
-        return jsonify({'status': 'success', 'style': style, 'effects': effects_config})
+        _apply_chain_to_live(_effective_style_chain(style))
+        current_style['value'] = style
+        tuned = style in saved_voice_styles
+        print(f"Voice style set to '{style}' ({'tuned' if tuned else 'factory'}): {effects_config}")
+        return jsonify({'status': 'success', 'style': style,
+                        'tuned': tuned, 'effects': effects_config})
 
     # 2 & 3. Single-effect toggle / amount.
     if 'effect' in data:
@@ -648,6 +721,97 @@ def set_effects():
 
     return jsonify({'status': 'error',
                     'message': 'Provide "style", or "effect" with "enabled"/"amount"'}), 400
+
+
+@app.route('/effects/save', methods=['POST'])
+def save_effects():
+    """Save the current live effect chain as the tuned override for a style.
+
+    Persists the live ``effects_config`` under a style name so that re-selecting
+    that style later loads this tuned version instead of the factory preset. The
+    prior saved override for the same style is snapshotted first, enabling a
+    single-level revert.
+
+    The target style is taken from the request body ("style") when provided,
+    otherwise the style the live config was last loaded from (``current_style``).
+
+    Args:
+        (request body) style: Optional style name to save under. Defaults to the
+            currently selected style. Must be one of the built-in styles.
+
+    Example:
+        curl -X POST http://localhost:5000/effects/save \\
+             -H 'Content-Type: application/json' -d '{"style": "ghost"}'
+    """
+    global saved_voice_styles
+    data = request.json or {}
+    style = str(data.get('style') or current_style['value'] or '').lower()
+    if not style:
+        return jsonify({'status': 'error',
+                        'message': 'No style selected; provide "style" to save under'}), 400
+    if style not in STYLE_PRESETS:
+        valid = ', '.join(STYLE_PRESETS.keys())
+        return jsonify({'status': 'error',
+                        'message': f'Unknown style "{style}". Valid: {valid}'}), 400
+
+    try:
+        clean = config_store.save_voice_style(style, effects_config)
+    except ValueError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+    # Refresh the in-memory cache and remember which style is active.
+    saved_voice_styles = config_store.load_voice_styles()
+    current_style['value'] = style
+    print(f"Voice style '{style}' saved as tuned override")
+    return jsonify({'status': 'success', 'style': style, 'effects': clean,
+                    'can_revert': _can_revert()})
+
+
+@app.route('/effects/revert', methods=['POST'])
+def revert_effects():
+    """Revert the last saved style to its previous saved value (single level).
+
+    Restores the one previous snapshot recorded by the most recent save: the
+    prior tuned override for that style, or the factory preset when the style
+    had no prior override (i.e. the save that created it). The restored chain is
+    applied to the live stream immediately AND persisted, so the saved override
+    now matches the reverted state.
+
+    Returns 409 when there is nothing to revert to.
+    """
+    global saved_voice_styles
+    prev = config_store.load_previous_voice_style()
+    style = prev.get('style')
+    if not style or style not in STYLE_PRESETS:
+        return jsonify({'status': 'error',
+                        'message': 'Nothing to revert'}), 409
+
+    # prior effects is None when the previous save first CREATED the override;
+    # reverting then means going back to the factory preset for that style.
+    chain = prev.get('effects') or _factory_preset(style)
+
+    try:
+        clean = config_store.save_voice_style(style, chain)
+    except ValueError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+    saved_voice_styles = config_store.load_voice_styles()
+    _apply_chain_to_live(clean)
+    current_style['value'] = style
+    print(f"Voice style '{style}' reverted to previous saved value")
+    return jsonify({'status': 'success', 'style': style, 'effects': clean,
+                    'can_revert': _can_revert()})
+
+
+def _can_revert():
+    """Whether a previous snapshot exists to revert to.
+
+    Returns:
+        True when the previous-snapshot slot names a known style.
+    """
+    prev = config_store.load_previous_voice_style()
+    style = prev.get('style')
+    return bool(style) and style in STYLE_PRESETS
 
 
 @app.route('/handler', methods=['POST'])
@@ -683,6 +847,9 @@ def get_status():
         'profiles': jaw_profiles,   # {"file": {...}, "mic": {...}}
         'effects': effects_config,
         'styles': list(STYLE_PRESETS.keys()),
+        'current_style': current_style['value'],
+        'tuned_styles': sorted(saved_voice_styles.keys()),
+        'can_revert': _can_revert(),
     })
 
 if __name__ == '__main__':

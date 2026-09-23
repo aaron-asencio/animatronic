@@ -30,6 +30,20 @@ CONFIG_DIRNAME = "config"
 CONFIG_PATH_OVERRIDE_ENV_PRIMARY = "ANIMATRONIC_TUNING_CONFIG"
 CONFIG_PATH_OVERRIDE_ENV = "ANIMATRONIC_JAW_CONFIG"
 
+# --- Voice FX persistence ---------------------------------------------------
+# The seven tunable voice effects. This tuple is the schema/validation source of
+# truth for a saved voice-style override (kept here, in the leaf config module,
+# so it does not depend on the audio layer's STYLE_PRESETS). Each effect entry
+# is {"enabled": bool, "amount": float >= 0}.
+VOICE_EFFECT_NAMES = (
+    "pitch", "distortion", "echo", "reverb", "tremolo", "bitcrush", "ring_mod",
+)
+
+# Top-level tuning.json keys for the saved per-style overrides and the single
+# previous-snapshot slot used by the one-level revert.
+VOICE_STYLES_KEY = "voice_styles"
+VOICE_STYLES_PREVIOUS_KEY = "voice_styles_previous"
+
 
 def _default_profile():
     """Return a fresh copy of the default jaw-tuning profile.
@@ -46,6 +60,43 @@ def _default_profile():
         "ema_alpha": DEFAULT_EMA_ALPHA,
         "close_hold_frames": DEFAULT_CLOSE_HOLD_FRAMES,
     }
+
+
+def sanitize_voice_effects(effects):
+    """Validate and normalise a full voice-effect chain.
+
+    Coerces an untrusted mapping into a canonical chain of exactly
+    ``VOICE_EFFECT_NAMES``, each entry ``{"enabled": bool, "amount": float}``.
+    Unknown effect names are dropped and any missing effect is filled with a
+    disabled/zero entry, so the result is always complete and safe to persist.
+
+    Args:
+        effects: A mapping of effect name -> {"enabled": ..., "amount": ...}.
+
+    Returns:
+        A new dict keyed by every name in ``VOICE_EFFECT_NAMES``.
+
+    Raises:
+        ValueError: If ``effects`` is not a mapping, or any supplied amount is
+            negative or not a number.
+    """
+    if not isinstance(effects, dict):
+        raise ValueError("voice effects must be a mapping of effect -> params")
+
+    clean = {}
+    for name in VOICE_EFFECT_NAMES:
+        entry = effects.get(name)
+        if not isinstance(entry, dict):
+            clean[name] = {"enabled": False, "amount": 0.0}
+            continue
+        try:
+            amount = float(entry.get("amount", 0.0))
+        except (TypeError, ValueError):
+            raise ValueError(f"effect '{name}' amount must be a number")
+        if amount < 0:
+            raise ValueError(f"effect '{name}' amount must be >= 0")
+        clean[name] = {"enabled": bool(entry.get("enabled", False)), "amount": amount}
+    return clean
 
 
 class ConfigStore:
@@ -223,6 +274,123 @@ class ConfigStore:
         profiles[name].update(updates)
         self.save_profiles(profiles)
         return profiles
+
+    def _load_raw(self):
+        """Best-effort load of the whole Config_File as a dict.
+
+        Returns:
+            The parsed top-level JSON object, or an empty dict on any missing
+            file / parse / read error (never raises).
+        """
+        if not os.path.exists(self._config_path):
+            return {}
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            return loaded if isinstance(loaded, dict) else {}
+        except (json.JSONDecodeError, ValueError, OSError, UnicodeDecodeError):
+            return {}
+
+    def _write_raw(self, payload):
+        """Write the whole Config_File and make it world-readable.
+
+        Args:
+            payload: The top-level dict to serialise as the entire file.
+        """
+        config_dir = os.path.dirname(self._config_path)
+        if config_dir:
+            os.makedirs(config_dir, exist_ok=True)
+        with open(self._config_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        # World-readable (0644) for the same reason as save_profiles: a
+        # root-written (umask 077) file must stay readable by a non-root reader.
+        try:
+            os.chmod(self._config_path, 0o644)
+        except OSError as e:
+            print(f"Could not chmod tuning config ({e}); leaving existing permissions")
+
+    def load_voice_styles(self):
+        """Load all SAVED (tuned) voice-style overrides.
+
+        These are operator-tuned overrides layered on top of the audio layer's
+        built-in factory presets. Only styles the operator has saved appear
+        here; callers fall back to their factory preset for any style absent
+        from the result. Missing/unreadable config yields an empty dict.
+
+        Returns:
+            A dict {style_name: <sanitised effect chain>} of mutable copies.
+        """
+        raw = self._load_raw()
+        stored = raw.get(VOICE_STYLES_KEY, {})
+        if not isinstance(stored, dict):
+            return {}
+        result = {}
+        for style, effects in stored.items():
+            try:
+                result[str(style)] = sanitize_voice_effects(effects)
+            except ValueError:
+                # Skip a corrupt entry rather than failing the whole load.
+                continue
+        return result
+
+    def save_voice_style(self, style, effects):
+        """Persist a tuned override for one style; snapshot the prior for revert.
+
+        Before overwriting the saved override for ``style``, the currently
+        persisted override for that same style (if any) is copied into the
+        single ``voice_styles_previous`` slot so a one-level revert can restore
+        it. Other top-level sections (e.g. ``profiles``) are preserved.
+
+        Args:
+            style:   The style name being saved (e.g. "ghost").
+            effects: The full effect chain to persist for that style.
+
+        Returns:
+            The sanitised effect chain that was persisted.
+
+        Raises:
+            ValueError: If ``style`` is empty or ``effects`` fails validation.
+        """
+        style = str(style).strip().lower()
+        if not style:
+            raise ValueError("style must be a non-empty name")
+        clean = sanitize_voice_effects(effects)
+
+        raw = self._load_raw()
+        styles = raw.get(VOICE_STYLES_KEY)
+        if not isinstance(styles, dict):
+            styles = {}
+
+        # Snapshot the prior saved value for this style (single-level undo).
+        prior = styles.get(style)
+        previous = {"style": style, "effects": prior if isinstance(prior, dict) else None}
+
+        styles[style] = clean
+        raw[VOICE_STYLES_KEY] = styles
+        raw[VOICE_STYLES_PREVIOUS_KEY] = previous
+        self._write_raw(raw)
+        print(f"Voice style override saved for '{style}'")
+        return clean
+
+    def load_previous_voice_style(self):
+        """Load the single previous-snapshot slot used by revert.
+
+        Returns:
+            A dict ``{"style": <name or None>, "effects": <chain or None>}``.
+            When there is nothing to revert to, both values are None.
+        """
+        raw = self._load_raw()
+        prev = raw.get(VOICE_STYLES_PREVIOUS_KEY)
+        if not isinstance(prev, dict):
+            return {"style": None, "effects": None}
+        style = prev.get("style")
+        effects = prev.get("effects")
+        if effects is not None:
+            try:
+                effects = sanitize_voice_effects(effects)
+            except ValueError:
+                effects = None
+        return {"style": (str(style) if style else None), "effects": effects}
 
 
 # Module-level default instance + thin wrappers for simple call sites.

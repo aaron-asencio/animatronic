@@ -573,7 +573,6 @@ The **Voice Style** dropdown loads a full preset in one click:
 | `demon` | Deep pitch + distortion + echo + light reverb. |
 | `ghost` | Slight pitch + heavy echo + reverb + tremolo. |
 | `robot` | Distortion + bitcrush + ring modulation. |
-| `chipmunk` | Pitch shifted up. |
 | `possessed` | Everything cranked — deep, distorted, echoing, reverberant. |
 
 **Effect tips**

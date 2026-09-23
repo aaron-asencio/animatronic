@@ -63,7 +63,7 @@ ROUTINE_ACTIONS = {
     'startParty', 'hello', 'happyHalloween', 'howYallDoin', 'cantHear',
     'niceDay', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
     'torture', 'vaderBeaten', 'yoda', 'yodaFear', 'evilLaugh', 'vincentPrice',
-    'owl',
+    'owl', 'moreCandy',
 }
 
 MOVEMENT_ACTIONS = {
@@ -74,7 +74,7 @@ MOVEMENT_ACTIONS = {
     'reachAndLook', 'patrol',
 }
 
-VOICE_STYLES = ['natural', 'demon', 'ghost', 'robot', 'chipmunk', 'possessed']
+VOICE_STYLES = ['natural', 'demon', 'ghost', 'robot', 'possessed']
 VOICE_EFFECTS = ['pitch', 'distortion', 'echo', 'reverb', 'tremolo',
                  'bitcrush', 'ring_mod']
 
@@ -205,13 +205,29 @@ def _mic_is_streaming():
 
     Routines/movements and the mic stream both drive the jaw motor GPIO, so
     they cannot run at the same time (lgpio raises 'GPIO busy'). We check here
-    so we can refuse cleanly instead of spawning a subprocess that crashes.
+    so we can stop the mic before spawning a subprocess that would crash.
     Returns False if the mic controller is unreachable (nothing holding the pin).
     """
     body, code = _proxy('GET', '/status')
     if code == 200 and isinstance(body, dict):
         return bool(body.get('is_streaming'))
     return False
+
+
+def _stop_mic():
+    """Stop the mic stream so it releases the jaw-motor / eye GPIO pins.
+
+    The mic controller frees MOUTH_MOTOR_PIN/EYE_LIGHT_PIN when its stream
+    stops, so a gesture subprocess can then claim them without a 'GPIO busy'
+    error. Returns True if the mic is confirmed not streaming afterward.
+    """
+    body, code = _proxy('POST', '/handler', {'action': 'stop'})
+    print(f"[launch] auto-stopped mic before gesture (status {code})")
+    # The pins are freed on the mic controller side once its stream thread
+    # joins (inside the /handler stop). Give it a brief moment to settle before
+    # the subprocess tries to claim the same pins.
+    time.sleep(0.4)
+    return not _mic_is_streaming()
 
 
 def launch_gesture(kind, action, launcher):
@@ -230,9 +246,11 @@ def launch_gesture(kind, action, launcher):
             active = _active_proc['label'] or 'another process'
             return False, f'Servos busy — {active} is still running.'
         # The mic stream holds the jaw-motor GPIO; a gesture can't claim it too.
+        # Auto-stop the mic (it releases the pins on stop) instead of refusing.
         if _mic_is_streaming():
-            return False, ('Mic streaming is on — it uses the jaw motor. '
-                           'Turn off the mic before running a routine.')
+            if not _stop_mic():
+                return False, ('Mic streaming is on and could not be stopped; '
+                               'it uses the jaw motor. Turn off the mic and retry.')
         proc = launcher(action)
         label = f'{kind}:{action}'
         _active_proc['proc'] = proc
@@ -391,6 +409,22 @@ def jaw():
 def effects():
     data = request.json or {}
     body, code = _proxy('POST', '/effects', data)
+    return jsonify(body), code
+
+
+@app.route('/effects/save', methods=['POST'])
+def effects_save():
+    """Save the current live effect chain as the tuned override for a style."""
+    data = request.json or {}
+    body, code = _proxy('POST', '/effects/save', data)
+    return jsonify(body), code
+
+
+@app.route('/effects/revert', methods=['POST'])
+def effects_revert():
+    """Revert the last saved style to its previous saved value (single level)."""
+    data = request.json or {}
+    body, code = _proxy('POST', '/effects/revert', data)
     return jsonify(body), code
 
 
