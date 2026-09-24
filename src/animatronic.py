@@ -37,6 +37,7 @@ from performance import (
 )
 import nap_signal
 import constants
+from range_sensor import ApproachDetector
 import asyncio
 import threading
 import argparse
@@ -740,21 +741,68 @@ class Animatronic:
     # Snore tracks the nap randomly alternates between, one per sleep segment.
     _NAP_SNORE_TRACKS = ("snore.wav", "sb_snore.wav")
 
-    def _poll_nap_sensor(self):
-        """Placeholder: poll the wake sensor (ultrasonic / IR). TBD.
+    # Distance (meters) beyond which an object never wakes the nap. An approach
+    # is only significant once the object is within this gate AND getting closer
+    # across several readings (see ApproachDetector / _poll_nap_sensor).
+    NAP_WAKE_GATE_M = 3.0
 
-        A Mode's Sleep/Nap behaviour is meant to be interrupted by a proximity
-        sensor. The hardware (ultrasonic or IR) and its wiring are not yet
-        decided, so this is a stub that always reports "no detection". When the
-        sensor lands, implement the read here and return True on trigger.
+    # How often (seconds) the nap loop checks the latched sensor flag WHILE a
+    # sleep cycle is running, so an approach is caught mid-cycle. This only reads
+    # an in-memory flag (the sensor itself is sampled by the detector's own
+    # background thread), so it can be frequent and cheap.
+    NAP_SENSOR_POLL_INTERVAL_S = 0.1
+
+    def _open_nap_sensor(self):
+        """Open the HC-SR04 approach detector for a nap run (best-effort).
+
+        Called once at the start of a nap. Constructs an ``ApproachDetector``
+        (gated at ``NAP_WAKE_GATE_M``) and stores it on the instance so
+        ``_poll_nap_sensor`` can read it between sleep cycles. If the sensor
+        can't be opened (not wired, no GPIO access), logs and leaves the
+        detector as None so the nap still runs and simply won't sensor-wake.
+        """
+        self._nap_detector = None
+        try:
+            self._nap_detector = ApproachDetector(gate_m=self.NAP_WAKE_GATE_M)
+            # Sample in the background so the (blocking) sensor read never stalls
+            # the async movement loop; the loop just checks the latched flag.
+            self._nap_detector.start_polling()
+            print(f"[nap] approach sensor armed (wake if an object approaches "
+                  f"within {self.NAP_WAKE_GATE_M} m)")
+        except Exception as e:
+            print(f"[nap] approach sensor unavailable, no sensor-wake: {e}")
+            self._nap_detector = None
+
+    def _close_nap_sensor(self):
+        """Release the nap approach detector's GPIO pins (best-effort)."""
+        detector = getattr(self, "_nap_detector", None)
+        if detector is not None:
+            try:
+                detector.close()
+            except Exception as e:
+                print(f"[nap] could not release approach sensor: {e}")
+        self._nap_detector = None
+
+    def _poll_nap_sensor(self):
+        """Check the HC-SR04 approach detector's latched wake flag.
+
+        Non-blocking: the actual sensor sampling runs in the detector's
+        background poller (started in ``_open_nap_sensor``), so this just reads
+        the latched flag and is cheap enough to call frequently — including
+        BETWEEN individual moves within a sleep cycle for a snappy wake. The
+        flag latches True once an *approaching* object is confirmed: three
+        consecutive samples each closer than the last, all within
+        ``NAP_WAKE_GATE_M`` (objects beyond the gate never trigger). See
+        ``range_sensor.ApproachDetector`` for the exact rule.
 
         Returns:
-            True when the sensor detects a wake condition, else False. Always
-            False for now (no sensor wired).
+            True when an approaching object has been confirmed (fire the
+            startle), else False. Always False when no sensor is armed.
         """
-        # TODO(sensor): read the ultrasonic / IR sensor and return True on a
-        # proximity trigger. Placeholder returns False (never sensor-interrupts).
-        return False
+        detector = getattr(self, "_nap_detector", None)
+        if detector is None:
+            return False
+        return detector.triggered()
 
     def napping(self, timeout_seconds=60):
         """NAPPING mode: yawn, then snore with the head lowered until interrupted.
@@ -774,8 +822,10 @@ class Animatronic:
         - **Timeout** (``timeout_seconds``, default 60, configurable): the nap
           ends and the head is RAISED exactly as at the end of the ``sleep``
           routine (``sleep_snore_return``).
-        - **Sensor** (ultrasonic / IR — TBD, see ``_poll_nap_sensor``): runs the
-          ``_startle`` response (TBD placeholder) instead of the calm wake.
+        - **Sensor** (HC-SR04 approach, see ``_poll_nap_sensor``): when an
+          object is confirmed approaching (three consecutive closer readings
+          within ``NAP_WAKE_GATE_M``), runs the ``_startle`` response instead of
+          the calm wake. Objects farther than the gate never interrupt.
         - **External stop** (``nap_signal`` — e.g. the web app wants to run
           another action): the nap winds down like the timeout case (calm wake),
           then exits so the servo lock frees for the requested action.
@@ -793,6 +843,10 @@ class Animatronic:
         # Clear any stale stop request from a previous run so we start clean.
         nap_signal.clear_stop()
 
+        # Arm the proximity wake sensor for this nap (best-effort; the nap still
+        # runs and simply won't sensor-wake if the sensor can't be opened).
+        self._open_nap_sensor()
+
         # 1. Yawn first (gesture + yawn.wav), reusing the standard runner.
         print("[nap] yawning before the nap...")
         self.run_action_and_audio("_do_yawn", self.music[19])  # yawn.wav
@@ -803,6 +857,7 @@ class Animatronic:
         except Exception as e:
             print(f"[nap] error during nap loop: {e}")
             self._safe_rest()
+            self._close_nap_sensor()
             nap_signal.clear_stop()
             return
 
@@ -814,8 +869,10 @@ class Animatronic:
             # Timeout or external stop: calm wake, head raised like sleep's end.
             print(f"[nap] {reason} interrupt -> calm wake (head raised)")
 
-        # Always clear the stop signal on exit so the next Mode starts clean and
-        # the requesting web-app action can proceed once the lock frees.
+        # Release the sensor's GPIO pins so a following routine/startle can use
+        # them, and clear the stop signal on exit so the next Mode starts clean
+        # and the requesting web-app action can proceed once the lock frees.
+        self._close_nap_sensor()
         nap_signal.clear_stop()
 
     async def _run_nap_loop(self, timeout_seconds):
@@ -825,8 +882,11 @@ class Animatronic:
         neck-tilt verified_pose_override for the whole span), then repeats sleep
         bob/rock cycles while a randomly-chosen snore track plays, starting a
         fresh randomly-alternated track whenever the previous one finishes.
-        Between whole cycles it checks the three interruption signals. On any
-        interruption it performs the calm wake (``sleep_snore_return``, which
+        Between whole cycles it checks the stop and timeout signals; the sensor
+        approach flag is ALSO polled on a short interval WHILE each cycle runs,
+        so an approaching object wakes the nap mid-cycle (after the in-flight
+        cycle finishes — no sweep is cut mid-stroke). On any interruption it
+        performs the calm wake (``sleep_snore_return``, which
         also releases the override) UNLESS the reason is a sensor trigger, in
         which case the caller runs the startle response instead (and this method
         still releases the override so the widened clamp never leaks).
@@ -885,8 +945,26 @@ class Animatronic:
                     audio_thread.start()
                     print(f"[nap] snoring: {track}")
 
-                # One sleep cycle (head bob + arm rock).
-                await mv.sleep_snore_loop_body()
+                # One sleep cycle (head bob + arm rock). Run it as a task and
+                # watch the (non-blocking, latched) sensor flag on a short
+                # interval WHILE it runs, so a confirmed approach is caught
+                # mid-cycle instead of only at the next cycle boundary. We do
+                # NOT cancel the move mid-stroke (that could leave a servo
+                # part-way through a sweep) — we let the in-flight cycle finish,
+                # then break. The bob/rock cycle is short (~2.5-3.5s) and made of
+                # sub-second moves, so "finish the current cycle then wake" is
+                # already far snappier than the old whole-cycles-only check and
+                # keeps every sweep intact.
+                cycle = asyncio.ensure_future(mv.sleep_snore_loop_body())
+                sensor_tripped = False
+                while not cycle.done():
+                    if not sensor_tripped and self._poll_nap_sensor():
+                        sensor_tripped = True  # latched; wake after this cycle
+                    await asyncio.sleep(self.NAP_SENSOR_POLL_INTERVAL_S)
+                await cycle  # propagate any error; cycle already complete
+                if sensor_tripped:
+                    reason = self.NAP_INTERRUPT_SENSOR
+                    break
         finally:
             # Wake the head to rest and release the neck-tilt override. On a
             # sensor interrupt the startle response follows in the caller, but

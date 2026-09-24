@@ -100,6 +100,13 @@ _last_action = {'value': 'idle'}   # for status display
 # the watchdog kills the process, which releases the lock.
 GESTURE_TIMEOUT = 90
 
+# Nap timeout bounds (seconds). The nap is a Mode, not a gesture, so it has no
+# GESTURE_TIMEOUT watchdog — it runs until its own timeout, a sensor wake, or an
+# external stop. Floor keeps a nap from ending instantly; ceiling caps a single
+# nap at 15 minutes so a stray large value can't hold the servo lock for hours.
+NAP_MIN_TIMEOUT = 5
+NAP_MAX_TIMEOUT = 15 * 60  # 900s (15 minutes)
+
 
 # ── Subprocess launchers ─────────────────────────────────────────────────────
 def run_routine(action):
@@ -481,7 +488,7 @@ def nap(state):
     """Start or stop the napping MODE.
 
     - ``start``: launch napping (optional JSON ``{"timeout": <seconds>}``,
-      default 60). A Mode runs until interrupted.
+      default 60, clamped to 5s..15min). A Mode runs until interrupted.
     - ``stop``: ask a running nap to wind down via the cross-process stop
       signal; it wakes the head, releases the servo lock, and exits.
     """
@@ -491,7 +498,9 @@ def nap(state):
             timeout_seconds = int(data.get('timeout', 60))
         except (TypeError, ValueError):
             return jsonify({'status': 'error', 'message': 'timeout must be an integer'}), 400
-        timeout_seconds = max(5, timeout_seconds)
+        # Clamp into [NAP_MIN_TIMEOUT, NAP_MAX_TIMEOUT] (5s .. 15 min).
+        timeout_seconds = max(NAP_MIN_TIMEOUT,
+                              min(NAP_MAX_TIMEOUT, timeout_seconds))
         ok, message = launch_napping(timeout_seconds)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409

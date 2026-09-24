@@ -40,6 +40,13 @@ NECK_CENTER = 90
 EYE_LIGHT_PIN = 6      # gpiozero LED — eye lights
 MOUTH_MOTOR_PIN = 15   # gpiozero DigitalOutputDevice — jaw motor (pin 18 no longer working)
 
+# HC-SR04 ultrasonic range sensor (gpiozero DistanceSensor).
+# TRIG is an output (fires the ping); ECHO is an input (times the return pulse).
+# NOTE: ECHO idles at 5V but the Pi GPIO is 3.3V — use a voltage divider on the
+# ECHO line (or a level shifter) to avoid damaging the input.
+RANGE_TRIG_PIN = 23    # HC-SR04 trigger (output)
+RANGE_ECHO_PIN = 24    # HC-SR04 echo (input, via voltage divider)
+
 
 # --------------------------------------------------------------------------- #
 # AXIS DIRECTION REFERENCE — how commanded angle maps to physical motion       #
