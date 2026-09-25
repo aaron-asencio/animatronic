@@ -1246,7 +1246,7 @@ def main(args):
             with servo_lock():
                 action_map[args.action]()
         except ServoBusyError:
-            print("Servos busy — another routine is already running. Aborting.")
+            print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
     elif args.action == 'napping':
         # Napping is a MODE: it drives servos (head drop/bob + arm rock), so it
@@ -1257,7 +1257,7 @@ def main(args):
             with servo_lock():
                 a.napping(timeout_seconds=args.nap_timeout)
         except ServoBusyError:
-            print("Servos busy — another routine is already running. Aborting.")
+            print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
     elif args.action == 'awake':
         # Awake is a MODE: it performs ambient Routines on a loop, so it holds
@@ -1268,7 +1268,7 @@ def main(args):
             with servo_lock():
                 a.awake(timeout_seconds=args.awake_timeout)
         except ServoBusyError:
-            print("Servos busy — another routine is already running. Aborting.")
+            print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
     elif args.action == 'mic':
         # Mic mode is audio-only and does not move servos, so it does NOT take

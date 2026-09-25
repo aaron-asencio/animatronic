@@ -87,7 +87,7 @@ def main(args):
                     except Exception as rest_err:
                         print(f"return_to_rest failed: {rest_err}")
         except ServoBusyError:
-            print("Servos busy — another routine is already running. Aborting.")
+            print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
     elif args.action is not None:
         print(f"Unknown action: {args.action}")

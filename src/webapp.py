@@ -238,7 +238,7 @@ def _watchdog(proc, label):
     try:
         proc.wait(timeout=GESTURE_TIMEOUT)
     except subprocess.TimeoutExpired:
-        print(f"[watchdog] {label} exceeded {GESTURE_TIMEOUT}s — killing")
+        print(f"[watchdog] {label} exceeded {GESTURE_TIMEOUT}s - killing")
         _terminate_proc(proc, f'watchdog timeout {GESTURE_TIMEOUT}s')
         with _launch_lock:
             # Only clear if this is still the tracked process.
@@ -313,7 +313,7 @@ def _preempt_mode_if_running(wait_seconds=15):
     if not is_mode or proc is None or proc.poll() is not None:
         return True  # no background mode active
 
-    print(f"[launch] preempting {label} mode — requesting stop and waiting")
+    print(f"[launch] preempting {label} mode - requesting stop and waiting")
     nap_signal.request_stop()
 
     # Wait for the mode process to exit AND the servo lock to free, so the new
