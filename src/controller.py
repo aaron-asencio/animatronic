@@ -17,7 +17,7 @@ HEAD gestures (channels 0–1):
     swivelHead, scan, shakeHead, shakeNo, smallShakeNo
 
 COMPOSITE gestures (arm + head simultaneously):
-    waveAndSwivel,
+    waveAndSwivel, waveAndSwivelSmooth,
     comeAndLook, reachAndLook, patrol
 """
 
@@ -63,10 +63,12 @@ def main(args):
         'awaken':           mv.awaken,
 
         # --- COMPOSITE gestures ---
-        'waveAndSwivel':    mv.wave_and_swivel,
+        'waveAndSwivel':      mv.wave_and_swivel,
+        'waveAndSwivelSmooth': mv.wave_and_swivel_smooth,
         'comeAndLook':      mv.come_and_look,
         'reachAndLook':     mv.reach_and_look,
         'patrol':           mv.patrol,
+        'handVisor':        mv.hand_visor,
     }
 
     print(args.action)

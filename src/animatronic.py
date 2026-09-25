@@ -265,8 +265,8 @@ class Animatronic:
     # --- Wave routines ---
 
     def start_party(self):
-        """Party switch audio — wave + swivel head."""
-        self.run_action_and_audio("_do_wave_and_swivel", self.music[3])
+        """Party switch audio — smooth wave + swivel head (returns to rest)."""
+        self.run_action_and_audio("_do_wave_and_swivel_smooth", self.music[3])
 
     # --- Beckon routines ---
 
@@ -344,7 +344,7 @@ class Animatronic:
                                 constants.NECK_TILT,          # 0,1
                             }),
                             lead_in=mv.shake_no_lead_in,      # 250ms gate + center
-                            loop_body=mv.shake_no_loop_body,  # one randomized sweep
+                            loop_body=mv.shake_no_loop_body,  # pan sweep + tilt centering (82-98)
                             do_return=mv.shake_no_return,     # neck to center
                             supplies_gate=True,               # opens the audio gate
                         ),
@@ -379,8 +379,12 @@ class Animatronic:
         self.run_action_and_audio("_do_wave_and_swivel", self.music[16])
 
     def vincent_price(self):
-        """Vincent Price laugh audio — reach out + look around."""
-        self.run_action_and_audio("_do_reach_and_look", self.music[17])
+        """Vincent Price laugh audio — smooth reach + flowing head look-around.
+
+        Uses the eased ``reach_and_look_smooth`` gesture so the arm and head move
+        smoothly and flow for the whole laugh, then return to rest.
+        """
+        self.run_action_and_audio("_do_reach_and_look_smooth", self.music[17])
 
     def yawn(self):
         """Yawn audio + cover-mouth gesture (jaw syncs to the yawn.wav).
@@ -1213,6 +1217,10 @@ class Animatronic:
         mv = Movements("Animatronic")
         await self._run(mv.wave_and_swivel())
 
+    async def _do_wave_and_swivel_smooth(self):
+        mv = Movements("Animatronic")
+        await self._run(mv.wave_and_swivel_smooth())
+
     async def _do_come_and_look(self):
         mv = Movements("Animatronic")
         await self._run(mv.come_and_look())
@@ -1220,6 +1228,16 @@ class Animatronic:
     async def _do_reach_and_look(self):
         mv = Movements("Animatronic")
         await self._run(mv.reach_and_look())
+
+    async def _do_reach_and_look_smooth(self):
+        # vincentPrice: smooth eased reach + flowing head look-around that runs
+        # for the whole laugh, then returns to rest. Wait the standard idle so
+        # the audio is playing before motion begins, then flow for the rest of
+        # the clip.
+        mv = Movements("Animatronic")
+        duration = self._audio_duration_seconds(self.music[17])  # vincent-price-laugh.wav
+        await asyncio.sleep(self.idle)
+        await mv.reach_and_look_smooth(duration=max(0.0, duration - self.idle))
 
     async def _do_yawn(self):
         # Gesture starts at t=0; the yawn audio is gated 300ms in yawn() so the

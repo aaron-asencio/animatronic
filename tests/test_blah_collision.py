@@ -65,12 +65,14 @@ _ARM_POSES = [
 # --- Neck (shake_no) extreme poses -------------------------------------------
 #
 # The randomized shake sweeps NECK_PAN across [25, 155] (right extreme ~[25,35],
-# left extreme ~[145,155]) with NECK_TILT held at center (90). The extremes are
-# the widest pan endpoints plus the neutral center. See src/movements.py
-# _SN_RIGHT_* / _SN_LEFT_*.
+# left extreme ~[145,155]) while NECK_TILT does a "randomize within range with
+# centering" move across the 82-98 band (center 90, half_range 8). The extremes
+# are the widest pan endpoints x the tilt band endpoints plus each center. See
+# src/movements.py _SN_RIGHT_* / _SN_LEFT_* / _SN_TILT_*.
 _NECK_POSES = [
-    {constants.NECK_PAN: pan, constants.NECK_TILT: 90}
+    {constants.NECK_PAN: pan, constants.NECK_TILT: tilt}
     for pan in (25, 90, 155)
+    for tilt in (82, 90, 98)
 ]
 
 # Cartesian product of arm x neck extremes: every combined pose the two

@@ -71,7 +71,7 @@ MOVEMENT_ACTIONS = {
     'nod', 'lookUp', 'lookAround', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
     'swivelHead', 'scan', 'shakeHead', 'no', 'smno',
     'waveAndSwivel', 'comeAndLook',
-    'reachAndLook', 'patrol',
+    'reachAndLook', 'patrol', 'handVisor',
 }
 
 VOICE_STYLES = ['natural', 'demon', 'ghost', 'robot', 'possessed']
