@@ -59,6 +59,7 @@ def main(args):
         'shakeHead':        mv.shake_head,
         'no':               mv.shake_no,
         'smno':             mv.small_shake_no,
+        'snuckUp':          mv.snuck_up,
 
         # --- COMPOSITE gestures ---
         'waveAndSwivel':    mv.wave_and_swivel,

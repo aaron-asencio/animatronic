@@ -92,6 +92,7 @@ class Animatronic:
         'snore.wav',               # 22
         'more_candy.wav',          # 23
         'sb_snore.wav',            # 24
+        'snuck_up.wav',            # 25  (snuckUp "you snuck up on me!" reaction)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -137,7 +138,7 @@ class Animatronic:
     # Core audio + movement runner                                         #
     # ------------------------------------------------------------------ #
 
-    def run_action_and_audio(self, method_name, audio_file):
+    def run_action_and_audio(self, method_name, audio_file, audio_delay=0.0):
         """Play an audio file via AudioPlayer while running a gesture coroutine.
 
         AudioPlayer runs in a background thread so the gesture coroutine can
@@ -147,17 +148,24 @@ class Animatronic:
         Args:
             method_name: Name of an async method on this class (e.g. '_do_wave').
             audio_file:  Filename (not full path) of the audio file in audio_dir.
+            audio_delay: Seconds to GATE (delay) audio start after the gesture
+                begins. The audio thread sleeps this long before playing, so the
+                motion leads and the sound comes in ``audio_delay`` seconds later
+                — the simple-runner analogue of the Performance Framework's
+                GateSpec. Default 0.0 (audio starts immediately, ungated).
         """
         audio_path = os.path.join(self._resolve_audio_dir(), audio_file)
         player = AudioPlayer()
 
-        audio_thread = threading.Thread(
-            target=player.play_audio_file,
-            args=(audio_path,),
-            daemon=True,
-        )
+        def _play():
+            # Gate: hold the audio for audio_delay seconds so the gesture leads.
+            if audio_delay > 0:
+                time.sleep(audio_delay)
+            player.play_audio_file(audio_path)
+
+        audio_thread = threading.Thread(target=_play, daemon=True)
         audio_thread.start()
-        print(f"Playing audio: {audio_path}")
+        print(f"Playing audio: {audio_path} (gated {audio_delay}s)")
         try:
             asyncio.run(getattr(self, method_name)())
         except Exception as e:
@@ -373,8 +381,21 @@ class Animatronic:
         self.run_action_and_audio("_do_reach_and_look", self.music[17])
 
     def yawn(self):
-        """Yawn audio + cover-mouth gesture (jaw syncs to the yawn.wav)."""
-        self.run_action_and_audio("_do_yawn", self.music[19])
+        """Yawn audio + cover-mouth gesture (jaw syncs to the yawn.wav).
+
+        Audio is GATED 300ms: the cover-mouth gesture leads and the yawn sound
+        comes in 0.3s later, so the arm is already rising when the yawn begins.
+        """
+        self.run_action_and_audio("_do_yawn", self.music[19], audio_delay=0.3)
+
+    def snuck_up(self):
+        """Snuck-up reaction — head jerk + arm recoil + a "snuck up" gasp.
+
+        The Routine the napping Mode runs when the proximity sensor wakes it
+        (see ``_startle``), also runnable on its own via ``--action=snuckUp``.
+        Pairs the ``snuck_up`` gesture with ``snuck_up.wav``.
+        """
+        self.run_action_and_audio("_do_snuck_up", self.music[25])  # snuck_up.wav
 
     # --- Performance-framework routines ---
 
@@ -848,8 +869,9 @@ class Animatronic:
         self._open_nap_sensor()
 
         # 1. Yawn first (gesture + yawn.wav), reusing the standard runner.
+        # Audio gated 300ms so the cover gesture leads the yawn sound.
         print("[nap] yawning before the nap...")
-        self.run_action_and_audio("_do_yawn", self.music[19])  # yawn.wav
+        self.run_action_and_audio("_do_yawn", self.music[19], audio_delay=0.3)  # yawn.wav
 
         # 2. Head-lowered snore loop until an interruption signal.
         try:
@@ -1004,20 +1026,133 @@ class Animatronic:
                     print(f"[nap] could not release {attr}: {e}")
 
     def _startle(self):
-        """STARTLE response to a sensor wake. TBD placeholder.
+        """STARTLE response to a sensor wake: run the snuck-up Routine.
 
-        When the (TBD) proximity sensor interrupts the nap, the figure should
-        react with a startled "who's there?!" — a quick head snap up, maybe a
-        gasp audio clip and an arm recoil. That choreography is not designed
-        yet, so this is a placeholder: the head is already raised to rest by the
-        nap loop's wake, and this simply logs that a startle would play here.
+        When the proximity sensor interrupts the nap, the figure reacts with a
+        "you snuck up on me!" — a head jerk back + arm recoil + a recover nod,
+        paired with the ``snuck_up.wav`` gasp. The nap loop's wake
+        (``sleep_snore_return``) has already brought the figure to REST and
+        released the sleep pose override before this runs, which is exactly the
+        start pose the ``snuck_up`` gesture expects.
 
-        Replace this with the real startle Routine when it is authored.
+        This runs INSIDE the napping mode, which already holds the servo lock,
+        so it must NOT re-acquire it — ``run_action_and_audio`` does not take the
+        lock, so delegating to the shared runner (rather than duplicating the
+        audio-thread logic) is safe here. The runner drives everything back to
+        REST on error, so the figure never ends energized against a jam.
         """
-        # TODO(startle): author the startle Routine (head snap + gasp audio +
-        # recoil) and run it here. Placeholder: head is already at rest from the
-        # nap loop's calm wake; nothing else to do yet.
-        print("[nap] STARTLE response is TBD — placeholder no-op (head already raised)")
+        print("[nap] snuck up: who's there?!")
+        self.run_action_and_audio("_do_snuck_up", self.music[25])  # snuck_up.wav
+
+    # ------------------------------------------------------------------ #
+    # Awake — a MODE (continuous active "filler" behaviour until interrupted) #
+    # ------------------------------------------------------------------ #
+
+    # Interruption reasons returned by the awake loop (mirrors the nap reasons).
+    AWAKE_INTERRUPT_TIMEOUT = "timeout"
+    AWAKE_INTERRUPT_SENSOR = "sensor"
+    AWAKE_INTERRUPT_STOP = "stop"       # external stop request (e.g. web app)
+
+    # Filler Routines the awake loop cycles through, picked at random each
+    # iteration. These are the "idle-but-alive" ambient routines (patrol via
+    # vader_beaten, plus other ambient performers). Keep to routines that return
+    # to rest cleanly. MORE TBD — extend this pool as new ambient routines land.
+    _AWAKE_ROUTINE_POOL = ("vader_beaten", "krusty", "waiting", "start_party")
+
+    def awake(self, timeout_seconds=300):
+        """AWAKE mode: perform ambient Routines on a loop until interrupted.
+
+        A Mode (per the animation vocabulary) is a continuous background
+        behaviour that runs until interrupted. Awake mode is the active
+        counterpart to napping: instead of resting, the figure performs a random
+        ambient "filler" Routine (see ``_AWAKE_ROUTINE_POOL`` — patrol via
+        ``vader_beaten``, and others TBD), then picks another, and so on, filling
+        the time until a more deliberate action is wanted.
+
+        Interruption signals (checked BETWEEN whole routines so one is never cut
+        off mid-performance):
+
+        - **Timeout** (``timeout_seconds``, default 300): the mode ends after the
+          current routine finishes.
+        - **Sensor** (HC-SR04 approach, reused from napping via
+          ``_open_nap_sensor`` / ``_poll_nap_sensor``): an approaching object
+          ends the mode. (Response TBD — for now it just winds down.)
+        - **External stop** (``nap_signal`` — e.g. the web app wants to run a
+          requested action): the mode ends and exits so the servo lock frees for
+          the requested action. This is what makes a web action button "arouse"
+          the mode (see the animation-vocabulary Awake mode).
+
+        Unlike napping, this loop is SYNCHRONOUS: each routine it runs goes
+        through ``run_action_and_audio`` which calls ``asyncio.run`` internally,
+        so the loop itself must not be inside an event loop. It checks the three
+        interrupt signals between routines (all non-blocking: the sensor poll
+        reads a latched flag and the timeout is a monotonic deadline).
+
+        Runs INSIDE ``servo_lock()`` (taken by the CLI ``awake`` branch) for its
+        whole life, exactly like napping — the routines it calls use
+        ``run_action_and_audio`` which does NOT re-take the lock.
+
+        Args:
+            timeout_seconds: How long to stay awake before the timeout ends the
+                mode. Default 300s; configurable via the CLI.
+        """
+        # Clear any stale stop request from a previous Mode run so we start clean.
+        nap_signal.clear_stop()
+
+        # Arm the proximity sensor (best-effort; the mode still runs and simply
+        # won't sensor-interrupt if the sensor can't be opened).
+        self._open_nap_sensor()
+
+        print(f"[awake] entering awake mode (timeout {int(timeout_seconds)}s)")
+        try:
+            reason = self._run_awake_loop(timeout_seconds)
+        except Exception as e:
+            print(f"[awake] error during awake loop: {e}")
+            self._safe_rest()
+            self._close_nap_sensor()
+            nap_signal.clear_stop()
+            return
+
+        print(f"[awake] {reason} interrupt -> winding down")
+        # Ensure a clean, unloaded rest pose on exit regardless of how the last
+        # routine ended.
+        self._safe_rest()
+
+        # Release the sensor GPIO pins and clear the stop signal so the next Mode
+        # starts clean and any web-requested action can proceed once the lock
+        # frees.
+        self._close_nap_sensor()
+        nap_signal.clear_stop()
+
+    def _run_awake_loop(self, timeout_seconds):
+        """Run random ambient Routines until interrupted; return the reason.
+
+        Picks a random routine from ``_AWAKE_ROUTINE_POOL`` and runs it to
+        completion, then checks the stop/sensor/timeout signals before starting
+        another. Checking BETWEEN routines (never mid-performance) matches the
+        nap loop's between-cycles semantics.
+
+        Args:
+            timeout_seconds: Seconds after which the timeout interrupt fires.
+
+        Returns:
+            One of AWAKE_INTERRUPT_TIMEOUT / AWAKE_INTERRUPT_SENSOR /
+            AWAKE_INTERRUPT_STOP.
+        """
+        deadline = time.monotonic() + max(1, timeout_seconds)
+        while True:
+            # Check interrupts BEFORE each routine so a fresh stop/sensor/timeout
+            # ends the mode promptly without starting another performance.
+            if nap_signal.stop_requested():
+                return self.AWAKE_INTERRUPT_STOP
+            if self._poll_nap_sensor():
+                return self.AWAKE_INTERRUPT_SENSOR
+            if time.monotonic() >= deadline:
+                return self.AWAKE_INTERRUPT_TIMEOUT
+
+            routine_name = random.choice(self._AWAKE_ROUTINE_POOL)
+            print(f"[awake] performing: {routine_name}")
+            getattr(self, routine_name)()
 
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
@@ -1040,11 +1175,10 @@ class Animatronic:
         await self._run(mv.reach_and_look())
 
     async def _do_yawn(self):
-        # yawn.wav is only ~2.5s, so use a short lead-in: the arm rises WITH the
-        # yawn sound (and the jaw motion). Lead-in tuned to 0.05s so the hand
-        # reaches the mouth on time (was arriving slightly late at 0.3s).
+        # Gesture starts at t=0; the yawn audio is gated 300ms in yawn() so the
+        # arm is already rising when the yawn sound comes in.
         mv = Movements("Animatronic")
-        await self._run_lead(mv.yawn_cover(), 0.05)
+        await mv.yawn_cover()
 
     async def _do_patrol(self):
         mv = Movements("Animatronic")
@@ -1061,6 +1195,12 @@ class Animatronic:
     async def _do_swivel_head(self):
         mv = Movements("Animatronic")
         await self._run(mv.swivel_head())
+
+    async def _do_snuck_up(self):
+        # Ungated: the gesture starts at t=0 alongside the audio (no lead-in
+        # delay), so the head jerk/arm recoil fires the instant the gasp begins.
+        mv = Movements("Animatronic")
+        await mv.snuck_up()
 
 
 def main(args):
@@ -1089,6 +1229,7 @@ def main(args):
         'evilLaugh':      a.evil_laugh,
         'vincentPrice':   a.vincent_price,
         'yawn':           a.yawn,
+        'snuckUp':        a.snuck_up,
         # Performance-framework routines
         'brains':         a.brains,
         'hypnotic':       a.hypnotic,
@@ -1118,6 +1259,17 @@ def main(args):
         except ServoBusyError:
             print("Servos busy — another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
+    elif args.action == 'awake':
+        # Awake is a MODE: it performs ambient Routines on a loop, so it holds
+        # the servo lock for its whole run just like napping. It runs until
+        # interrupted (timeout, sensor, or an external stop request from the web
+        # app). Fail fast if the servos are already in use.
+        try:
+            with servo_lock():
+                a.awake(timeout_seconds=args.awake_timeout)
+        except ServoBusyError:
+            print("Servos busy — another routine is already running. Aborting.")
+            sys.exit(BUSY_EXIT_CODE)
     elif args.action == 'mic':
         # Mic mode is audio-only and does not move servos, so it does NOT take
         # the servo lock (that would needlessly block gesture routines).
@@ -1139,6 +1291,10 @@ if __name__ == '__main__':
     parser.add_argument('--nap-timeout', dest='nap_timeout', type=int, default=60,
                         help='Napping mode: seconds before the timeout wake '
                              '(default: 60). Only used with --action=napping.')
+    parser.add_argument('--awake-timeout', dest='awake_timeout', type=int,
+                        default=300,
+                        help='Awake mode: seconds before the timeout ends the '
+                             'mode (default: 300). Only used with --action=awake.')
     args = parser.parse_args()
     print(args.action)
     main(args)

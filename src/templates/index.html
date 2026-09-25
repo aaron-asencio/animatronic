@@ -151,6 +151,7 @@
     <button class="tab-btn" data-tab="jaw">Jaw Tuning</button>
     <button class="tab-btn" data-tab="automation">Automation</button>
     <button class="tab-btn" data-tab="napping">Napping</button>
+    <button class="tab-btn" data-tab="awake">Awake</button>
   </div>
 
   <!-- Persistent live-mic toggle: available from every tab -->
@@ -383,6 +384,30 @@
         ⏹ Stop nap
       </button>
       <span class="val" id="nap-status" style="color:var(--muted);"></span>
+    </div>
+  </div>
+
+  <!-- AWAKE -->
+  <div class="panel" id="awake">
+    <div class="section-title">Awake mode</div>
+    <p class="hint" style="margin-top:0;">Performs ambient routines (patrol and
+       others) on a loop as filler until the timeout elapses or you stop it.
+       Pressing any routine or movement button also arouses it — the mode winds
+       down and yields so your action runs.</p>
+    <div class="row">
+      <label>Awake timeout<br><small style="color:var(--muted)">seconds before the mode winds down</small></label>
+      <input type="range" id="awake-timeout" min="5" max="1800" step="5" value="300"
+             oninput="document.getElementById('v-awake-timeout').textContent = this.value">
+      <span class="val" id="v-awake-timeout">300</span>
+    </div>
+    <div class="fx-actions" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+      <button class="action" id="awake-start-btn" onclick="startAwake()"
+              title="Start awake mode with the timeout above.">🙂 Start awake</button>
+      <button class="action" id="awake-stop-btn" onclick="stopAwake()" disabled
+              title="Wind down awake mode: it finishes the current routine, returns to rest, and releases the servos.">
+        ⏹ Stop awake
+      </button>
+      <span class="val" id="awake-status" style="color:var(--muted);"></span>
     </div>
   </div>
 
@@ -680,6 +705,38 @@
       if (status) status.textContent = active ? 'napping…' : '';
     }
 
+    // ── Awake mode ───────────────────────────────────────────────────────────
+    async function startAwake() {
+      const timeout = +document.getElementById('awake-timeout').value;
+      const res = await fetch('/awake/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({timeout}),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (res.ok && data.status === 'success') {
+        toast('Awake (' + timeout + 's)');
+        setAwakeActive(true);
+      } else {
+        toast(data.message || 'Could not start awake', true);
+      }
+    }
+    async function stopAwake() {
+      await fetch('/awake/stop', {method: 'POST'});
+      toast('Winding down…');
+      // The mode winds down on its own; the status poll flips the buttons back.
+    }
+    // Reflect awake active/idle state in the Start/Stop buttons + label.
+    function setAwakeActive(active) {
+      const startBtn = document.getElementById('awake-start-btn');
+      const stopBtn = document.getElementById('awake-stop-btn');
+      const status = document.getElementById('awake-status');
+      if (startBtn) startBtn.disabled = active;
+      if (stopBtn) stopBtn.disabled = !active;
+      if (status) status.textContent = active ? 'awake…' : '';
+    }
+
     // ── Status poll ────────────────────────────────────────────────────────
     async function pollStatus() {
       try {
@@ -706,6 +763,8 @@
         // Reflect nap active/idle: the mode is running when it's the active
         // action and the servos are busy. Enables Stop / disables Start.
         setNapActive(data.last_action === 'napping' && !!data.servos_busy);
+        // Same for awake mode.
+        setAwakeActive(data.last_action === 'awake' && !!data.servos_busy);
         // Reflect persisted jaw tuning (both profiles) in the sliders.
         if (data.mic && data.mic.profiles) populateJaw(data.mic.profiles);
         // Keep the Revert button state fresh, but DON'T repopulate the FX
