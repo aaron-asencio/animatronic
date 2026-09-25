@@ -59,6 +59,19 @@ DEFAULT_APPROACH_MIN_STEP_M = 0.05
 # approach. The HC-SR04 read itself takes tens of ms; ~0.1 s keeps the wake
 # responsive without hammering the sensor (or its echo timeout).
 DEFAULT_APPROACH_POLL_INTERVAL_S = 0.1
+# GLITCH REJECTION. The HC-SR04 intermittently returns spurious readings —
+# most importantly gpiozero reports 0.0 m on a MISSED ECHO, and electrical
+# noise/crosstalk can yield other garbage-short values. Untreated, a single
+# such spike looks like a huge instantaneous "approach" (anchor -> ~0) and
+# false-fires the wake. Two guards reject these:
+#   - Readings at/below MIN_VALID_M are treated as no-echo glitches and ignored
+#     (a real target essentially never sits this close to the sensor).
+#   - A single sample that moves more than MAX_STEP_M closer than the anchor is
+#     physically implausible for one poll interval (a fast human walk ~1.5 m/s
+#     over 0.1 s is ~15 cm), so it is treated as a glitch and ignored rather
+#     than counted as many closer-steps at once.
+DEFAULT_APPROACH_MIN_VALID_M = 0.03   # <= this reads as a no-echo glitch
+DEFAULT_APPROACH_MAX_STEP_M = 0.40    # a bigger single jump closer = glitch
 
 
 class RangeSensor:
@@ -171,6 +184,13 @@ class ApproachDetector:
       wobble around the anchor is ignored, filtering the sensor's ~1 cm jitter
       so a stationary object never "approaches". Moving a full step AWAY
       re-anchors and drops the streak (the object is receding).
+    - **Glitch rejection** — the HC-SR04 intermittently returns spurious
+      short readings (gpiozero reports ~0.0 m on a missed echo; noise/crosstalk
+      yields other garbage). Readings at/below ``min_valid_m`` are ignored as
+      no-echo glitches, and a single sample jumping more than ``max_step_m``
+      closer than the anchor is rejected as implausible for one poll — both
+      without disturbing the anchor/streak. This stops a one-sample spike from
+      false-firing the wake while a real approach still accumulates.
 
     The detector owns its ``RangeSensor`` and is a context manager, so closing
     it releases the GPIO pins::
@@ -187,7 +207,9 @@ class ApproachDetector:
                  consecutive=DEFAULT_APPROACH_CONSECUTIVE,
                  min_step_m=DEFAULT_APPROACH_MIN_STEP_M,
                  max_distance=DEFAULT_MAX_DISTANCE_M,
-                 poll_interval_s=DEFAULT_APPROACH_POLL_INTERVAL_S):
+                 poll_interval_s=DEFAULT_APPROACH_POLL_INTERVAL_S,
+                 min_valid_m=DEFAULT_APPROACH_MIN_VALID_M,
+                 max_step_m=DEFAULT_APPROACH_MAX_STEP_M):
         """Create an approach detector.
 
         Args:
@@ -204,6 +226,12 @@ class ApproachDetector:
                              is None. Ignored if a sensor is supplied.
             poll_interval_s: Seconds between samples when using the background
                              poller (``start_polling``).
+            min_valid_m:     Readings at or below this are treated as no-echo
+                             glitches and ignored (the HC-SR04/gpiozero reports
+                             ~0.0 m on a missed echo).
+            max_step_m:      A single sample that jumps more than this much
+                             CLOSER than the anchor is treated as a spurious
+                             glitch and ignored (implausible for one poll).
         """
         self._owns_sensor = sensor is None
         self.sensor = sensor if sensor is not None else RangeSensor(
@@ -212,6 +240,8 @@ class ApproachDetector:
         self.consecutive = max(1, int(consecutive))
         self.min_step_m = min_step_m
         self.poll_interval_s = poll_interval_s
+        self.min_valid_m = min_valid_m
+        self.max_step_m = max_step_m
         # Approach tracking is CADENCE-INDEPENDENT: we don't compare each sample
         # to the immediately-previous one (that makes the min-step threshold
         # depend on how fast we poll — a fast poll sees sub-min_step moves and
@@ -258,6 +288,13 @@ class ApproachDetector:
         distance = self.sensor.distance_m()
 
         with self._lock:
+            # No-echo glitch: gpiozero reports ~0.0 m when the ping gets no
+            # echo. A real target never sits this close, so ignore the sample
+            # entirely (don't touch the anchor/streak) rather than treating it
+            # as a huge instantaneous approach.
+            if distance <= self.min_valid_m:
+                return False
+
             # Outside the gate: ignore, and break any in-progress approach.
             if distance > self.gate_m:
                 self._anchor_m = None
@@ -272,7 +309,13 @@ class ApproachDetector:
 
             delta = self._anchor_m - distance  # >0 means closer than the anchor
 
-            if delta >= self.min_step_m:
+            if delta > self.max_step_m:
+                # Implausibly large single jump closer (more than a person could
+                # move in one poll) — a spurious short reading. Ignore it: don't
+                # advance the anchor or count steps. A genuine fast approach
+                # still accumulates over subsequent in-range samples.
+                pass
+            elif delta >= self.min_step_m:
                 # Moved a full step (or more) closer. Count however many whole
                 # min_step_m steps this represents (a fast approach can cross
                 # several at once) and advance the anchor to the new position.
