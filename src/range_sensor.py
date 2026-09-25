@@ -34,11 +34,19 @@ root.
 """
 
 import threading
+import os
 import time
 
 from gpiozero import DistanceSensor
 
 from constants import RANGE_ECHO_PIN, RANGE_TRIG_PIN
+
+# Debug logging for approach detection. Set RANGE_SENSOR_DEBUG=1 to print every
+# sensor reading and how the ApproachDetector classified it (glitch / beyond
+# gate / anchor / closer-step / FIRE). Off by default so normal runs are quiet.
+# Use it to diagnose false wakes: run the nap (or `rangetest.py --approach`)
+# with the env var set and watch what the sensor actually reports.
+_DEBUG = os.environ.get("RANGE_SENSOR_DEBUG", "") not in ("", "0", "false", "False")
 
 # gpiozero DistanceSensor caps out around 4 m for the HC-SR04; readings saturate
 # at max_distance. This default matches rangetest.py.
@@ -59,6 +67,19 @@ DEFAULT_APPROACH_MIN_STEP_M = 0.05
 # approach. The HC-SR04 read itself takes tens of ms; ~0.1 s keeps the wake
 # responsive without hammering the sensor (or its echo timeout).
 DEFAULT_APPROACH_POLL_INTERVAL_S = 0.1
+# GLITCH REJECTION. The HC-SR04 intermittently returns spurious readings —
+# most importantly gpiozero reports 0.0 m on a MISSED ECHO, and electrical
+# noise/crosstalk can yield other garbage-short values. Untreated, a single
+# such spike looks like a huge instantaneous "approach" (anchor -> ~0) and
+# false-fires the wake. Two guards reject these:
+#   - Readings at/below MIN_VALID_M are treated as no-echo glitches and ignored
+#     (a real target essentially never sits this close to the sensor).
+#   - A single sample that moves more than MAX_STEP_M closer than the anchor is
+#     physically implausible for one poll interval (a fast human walk ~1.5 m/s
+#     over 0.1 s is ~15 cm), so it is treated as a glitch and ignored rather
+#     than counted as many closer-steps at once.
+DEFAULT_APPROACH_MIN_VALID_M = 0.03   # <= this reads as a no-echo glitch
+DEFAULT_APPROACH_MAX_STEP_M = 0.40    # a bigger single jump closer = glitch
 
 
 class RangeSensor:
@@ -171,6 +192,13 @@ class ApproachDetector:
       wobble around the anchor is ignored, filtering the sensor's ~1 cm jitter
       so a stationary object never "approaches". Moving a full step AWAY
       re-anchors and drops the streak (the object is receding).
+    - **Glitch rejection** — the HC-SR04 intermittently returns spurious
+      short readings (gpiozero reports ~0.0 m on a missed echo; noise/crosstalk
+      yields other garbage). Readings at/below ``min_valid_m`` are ignored as
+      no-echo glitches, and a single sample jumping more than ``max_step_m``
+      closer than the anchor is rejected as implausible for one poll — both
+      without disturbing the anchor/streak. This stops a one-sample spike from
+      false-firing the wake while a real approach still accumulates.
 
     The detector owns its ``RangeSensor`` and is a context manager, so closing
     it releases the GPIO pins::
@@ -187,7 +215,9 @@ class ApproachDetector:
                  consecutive=DEFAULT_APPROACH_CONSECUTIVE,
                  min_step_m=DEFAULT_APPROACH_MIN_STEP_M,
                  max_distance=DEFAULT_MAX_DISTANCE_M,
-                 poll_interval_s=DEFAULT_APPROACH_POLL_INTERVAL_S):
+                 poll_interval_s=DEFAULT_APPROACH_POLL_INTERVAL_S,
+                 min_valid_m=DEFAULT_APPROACH_MIN_VALID_M,
+                 max_step_m=DEFAULT_APPROACH_MAX_STEP_M):
         """Create an approach detector.
 
         Args:
@@ -204,6 +234,12 @@ class ApproachDetector:
                              is None. Ignored if a sensor is supplied.
             poll_interval_s: Seconds between samples when using the background
                              poller (``start_polling``).
+            min_valid_m:     Readings at or below this are treated as no-echo
+                             glitches and ignored (the HC-SR04/gpiozero reports
+                             ~0.0 m on a missed echo).
+            max_step_m:      A single sample that jumps more than this much
+                             CLOSER than the anchor is treated as a spurious
+                             glitch and ignored (implausible for one poll).
         """
         self._owns_sensor = sensor is None
         self.sensor = sensor if sensor is not None else RangeSensor(
@@ -212,6 +248,8 @@ class ApproachDetector:
         self.consecutive = max(1, int(consecutive))
         self.min_step_m = min_step_m
         self.poll_interval_s = poll_interval_s
+        self.min_valid_m = min_valid_m
+        self.max_step_m = max_step_m
         # Approach tracking is CADENCE-INDEPENDENT: we don't compare each sample
         # to the immediately-previous one (that makes the min-step threshold
         # depend on how fast we poll — a fast poll sees sub-min_step moves and
@@ -257,45 +295,74 @@ class ApproachDetector:
         # concurrent triggered()/reset() call never waits on the hardware.
         distance = self.sensor.distance_m()
 
+        # ``why`` records how this sample was classified, for RANGE_SENSOR_DEBUG.
+        why = None
         with self._lock:
+            # No-echo glitch: gpiozero reports ~0.0 m when the ping gets no
+            # echo. A real target never sits this close, so ignore the sample
+            # entirely (don't touch the anchor/streak) rather than treating it
+            # as a huge instantaneous approach.
+            if distance <= self.min_valid_m:
+                self._debug(distance, f"GLITCH<=min_valid({self.min_valid_m})")
+                return False
+
             # Outside the gate: ignore, and break any in-progress approach.
             if distance > self.gate_m:
                 self._anchor_m = None
                 self._closer_steps = 0
+                self._debug(distance, f"beyond gate({self.gate_m}) - reset")
                 return False
 
             # First in-gate reading: anchor here, nothing counted yet.
             if self._anchor_m is None:
                 self._anchor_m = distance
                 self._closer_steps = 0
+                self._debug(distance, "anchor set")
                 return False
 
             delta = self._anchor_m - distance  # >0 means closer than the anchor
 
-            if delta >= self.min_step_m:
+            if delta > self.max_step_m:
+                # Implausibly large single jump closer (more than a person could
+                # move in one poll) — a spurious short reading. Ignore it: don't
+                # advance the anchor or count steps. A genuine fast approach
+                # still accumulates over subsequent in-range samples.
+                why = f"GLITCH jump>{self.max_step_m} (delta={delta:.3f}) - ignored"
+            elif delta >= self.min_step_m:
                 # Moved a full step (or more) closer. Count however many whole
                 # min_step_m steps this represents (a fast approach can cross
                 # several at once) and advance the anchor to the new position.
                 steps = int(delta // self.min_step_m)
                 self._closer_steps += steps
                 self._anchor_m = distance
+                why = f"closer +{steps} step(s) (delta={delta:.3f})"
             elif delta <= -self.min_step_m:
                 # Moved a full step AWAY: the object is receding. Re-anchor and
                 # drop the streak — this isn't an approach.
                 self._anchor_m = distance
                 self._closer_steps = 0
-            # else: within +/- min_step_m of the anchor — jitter/slow creep.
-            # Keep the anchor fixed so many tiny fast samples ACCUMULATE toward
-            # the next step instead of resetting the streak (this is the
-            # cadence-independence fix: the decision no longer depends on the
-            # per-sample delta being >= min_step_m).
+                why = f"receding (delta={delta:.3f}) - streak reset"
+            else:
+                # Within +/- min_step_m of the anchor — jitter/slow creep. Keep
+                # the anchor fixed so many tiny fast samples ACCUMULATE toward
+                # the next step instead of resetting the streak (the cadence-
+                # independence fix: the decision no longer depends on the
+                # per-sample delta being >= min_step_m).
+                why = f"jitter (delta={delta:.3f}) - hold"
 
             # ``consecutive`` closer-steps confirm the approach: e.g. with the
             # defaults, the object moving 3 x 5 cm = 15 cm closer within the gate.
             confirmed = self._closer_steps >= self.consecutive
             if confirmed:
                 self._triggered = True
+                why += "  ==> FIRE"
+            self._debug(distance, f"{why} [steps={self._closer_steps}, anchor={self._anchor_m:.3f}]")
             return confirmed
+
+    def _debug(self, distance, note):
+        """Print one classified reading when RANGE_SENSOR_DEBUG is set."""
+        if _DEBUG:
+            print(f"[range] {distance:.3f} m | {note}")
 
     # --- Background polling (non-blocking wake flag) ---------------------- #
 
