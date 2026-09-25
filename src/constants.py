@@ -8,7 +8,7 @@ All servos are configured for a 270-degree actuation range.
 
 Channel layout
 --------------
-Channels 0-3 : Head / neck
+Channels 0-1 : Head / neck
 Channels 4-7 : Right arm
 """
 

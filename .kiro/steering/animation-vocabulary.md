@@ -16,7 +16,7 @@ Gesture  →  Gestures  →  Routine  →  Act
 (motion)    (sequence)   (+audio)    (composition)
 
 Stream  = live mic passthrough (audio-driven jaw, gestures allowed)
-Mode    = a continuous background loop (Mic stream or Sleep)
+Mode    = a continuous background loop (Mic stream, Sleep, or Awake)
 ```
 
 Each term maps onto a specific layer of the architecture:
@@ -138,7 +138,7 @@ effects and driving the jaw motor from mic input, owned by
 ## Mode
 
 A **Mode** is a background behavior that **runs continuously until
-interrupted**. Two modes exist:
+interrupted**. Three modes exist:
 
 ### Mic stream mode
 
@@ -150,14 +150,42 @@ Continuously runs the live mic passthrough (see Stream).
 
 ### Sleep mode
 
-Continuously runs a resting/idle behavior until a sensor interrupts it.
+Continuously runs a resting/idle behavior until a sensor interrupts it. Like
+Awake mode, it is **filler**: idle behavior that fills the time until a more
+deliberate action is wanted.
 
 - **Interrupted by**: a sensor (**sensor TBD**).
 - Sleep mode can also be configured with a **timeout**. When set, the timeout
   elapsing is itself the interruption signal — no sensor is required.
+- **Pressing a web action button** also interrupts it — requesting any
+  Routine/Movement from the control panel makes the mode wind down and yield so
+  the requested action can run (implemented via `nap_signal` / the mode's
+  cross-process stop signal).
 - An interruption **can trigger a response**, e.g.:
   - **snoring → startle response**
   - **inactive → look around / wave response**
+
+### Awake mode
+
+Continuously runs active behavior — the animatronic performs Routines (e.g.
+`patrol`, and others **TBD**) on a loop rather than resting — until interrupted.
+Like Sleep mode, it is **filler**: idle-but-alive behavior that fills the time
+until a more deliberate action is wanted.
+
+- **Interrupted by**:
+  - a **timeout** (the elapsing is itself the interruption signal, as in Sleep
+    mode);
+  - a **sensor** (**sensor TBD**); or
+  - **pressing a web action button** — requesting any Routine/Movement from the
+    control panel arouses Awake mode: it winds down and yields so the requested
+    action can run. This mirrors how the web app preempts the napping Mode (see
+    `nap_signal` / the mode's cross-process stop signal).
+- Because the Routines it runs own audio and the jaw motor, Awake mode
+  **interrupts the live mic stream** (like any Routine — see Stream/Mode) and
+  cannot share the jaw/audio path with it.
+- The conceptual opposite of Sleep mode: Sleep idles until roused, Awake is
+  actively performing until it winds down (timeout) or is roused to a different
+  behavior (sensor, or an operator's web button).
 
 ## Quick Reference
 

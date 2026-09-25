@@ -205,10 +205,10 @@ def main():
                 import time
                 time.sleep(args.hold)
             except KeyboardInterrupt:
-                print("\nInterrupted — leaving servo at its current angle. "
+                print("\nInterrupted - leaving servo at its current angle. "
                       "Cut power if it is straining.")
     except ServoBusyError:
-        print("Servos busy — another routine is running. Aborting.")
+        print("Servos busy - another routine is running. Aborting.")
         sys.exit(BUSY_EXIT_CODE)
 
 

@@ -63,7 +63,7 @@ MIC_CONTROLLER_URL = 'http://localhost:5000'
 ROUTINE_ACTIONS = {
     'startParty', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
     'torture', 'vaderBeaten', 'yodaFear', 'evilLaugh', 'vincentPrice',
-    'moreCandy',
+    'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic',
 }
 
 MOVEMENT_ACTIONS = {
@@ -107,6 +107,13 @@ GESTURE_TIMEOUT = 90
 NAP_MIN_TIMEOUT = 5
 NAP_MAX_TIMEOUT = 15 * 60  # 900s (15 minutes)
 
+# Awake mode timeout bounds (seconds). Like napping, Awake is a Mode with no
+# GESTURE_TIMEOUT watchdog — it runs ambient Routines until its own timeout, a
+# sensor, or an external stop. Floor keeps it from ending instantly; ceiling
+# caps a single awake session at 30 minutes.
+AWAKE_MIN_TIMEOUT = 5
+AWAKE_MAX_TIMEOUT = 30 * 60  # 1800s (30 minutes)
+
 
 # ── Subprocess launchers ─────────────────────────────────────────────────────
 def run_routine(action):
@@ -136,6 +143,23 @@ def run_napping(timeout_seconds):
     cmd = [VENV_PYTHON, ANIMATRONIC, '--action=napping',
            f'--nap-timeout={int(timeout_seconds)}']
     print(f"[napping] {' '.join(cmd)}")
+    # Fresh run: clear any stale stop request so the mode doesn't exit at once.
+    nap_signal.clear_stop()
+    return subprocess.Popen(cmd, cwd=PROJECT_DIR)
+
+
+def run_awake(timeout_seconds):
+    """Launch animatronic.py --action=awake (the awake MODE).
+
+    A Mode runs until interrupted; it holds the servo lock for its whole run.
+    Popen (non-blocking) so the HTTP response returns immediately.
+
+    Args:
+        timeout_seconds: Seconds before the awake timeout ends the mode.
+    """
+    cmd = [VENV_PYTHON, ANIMATRONIC, '--action=awake',
+           f'--awake-timeout={int(timeout_seconds)}']
+    print(f"[awake] {' '.join(cmd)}")
     # Fresh run: clear any stale stop request so the mode doesn't exit at once.
     nap_signal.clear_stop()
     return subprocess.Popen(cmd, cwd=PROJECT_DIR)
@@ -214,7 +238,7 @@ def _watchdog(proc, label):
     try:
         proc.wait(timeout=GESTURE_TIMEOUT)
     except subprocess.TimeoutExpired:
-        print(f"[watchdog] {label} exceeded {GESTURE_TIMEOUT}s — killing")
+        print(f"[watchdog] {label} exceeded {GESTURE_TIMEOUT}s - killing")
         _terminate_proc(proc, f'watchdog timeout {GESTURE_TIMEOUT}s')
         with _launch_lock:
             # Only clear if this is still the tracked process.
@@ -254,16 +278,24 @@ def _stop_mic():
     return not _mic_is_streaming()
 
 
-def _preempt_napping_if_running(wait_seconds=15):
-    """If the napping MODE is running, ask it to stop and wait for it to finish.
+# Labels of the background Modes (napping, awake) that hold the servo lock and
+# respond to the nap_signal cross-process stop. A web-requested action preempts
+# any of these (see _preempt_mode_if_running).
+_MODE_LABELS = ('napping', 'awake')
 
-    A Mode (napping) runs continuously and holds the servo lock, so a normal
-    routine/movement request would be refused as "busy". Instead, when the
-    active tracked process is the napping mode, we set the cross-process stop
-    signal (nap_signal) so the mode winds down cleanly (wakes the head, releases
-    the servo lock, exits), then wait — bounded — for the servo lock to actually
-    free before returning. This lets a web-requested action preempt a nap: the
-    action waits for the mode to finish and release the lock, then runs.
+
+def _preempt_mode_if_running(wait_seconds=15):
+    """If a background MODE is running, ask it to stop and wait for it to finish.
+
+    A Mode (napping or awake) runs continuously and holds the servo lock, so a
+    normal routine/movement request would be refused as "busy". Instead, when
+    the active tracked process is one of these Modes, we set the cross-process
+    stop signal (nap_signal) so the mode winds down cleanly (returns to rest,
+    releases the servo lock, exits), then wait — bounded — for the servo lock to
+    actually free before returning. This lets a web-requested action preempt a
+    Mode: the action waits for the mode to finish and release the lock, then
+    runs. It is what makes a web action button "arouse" Awake mode (and wake a
+    nap), per the animation-vocabulary Mode rules.
 
     Must be called while holding ``_launch_lock``.
 
@@ -271,17 +303,17 @@ def _preempt_napping_if_running(wait_seconds=15):
         wait_seconds: Max seconds to wait for the mode to exit and free the lock.
 
     Returns:
-        True if no nap was running, or the nap stopped and the lock is now free.
-        False if a nap was running but did not release the lock within the
-        timeout (caller should treat this as still-busy).
+        True if no mode was running, or the mode stopped and the lock is now
+        free. False if a mode was running but did not release the lock within
+        the timeout (caller should treat this as still-busy).
     """
     label = _active_proc['label']
     proc = _active_proc['proc']
-    is_nap = bool(label) and label.startswith('napping')
-    if not is_nap or proc is None or proc.poll() is not None:
-        return True  # no napping mode active
+    is_mode = bool(label) and label.startswith(_MODE_LABELS)
+    if not is_mode or proc is None or proc.poll() is not None:
+        return True  # no background mode active
 
-    print("[launch] preempting napping mode — requesting stop and waiting")
+    print(f"[launch] preempting {label} mode - requesting stop and waiting")
     nap_signal.request_stop()
 
     # Wait for the mode process to exit AND the servo lock to free, so the new
@@ -292,11 +324,11 @@ def _preempt_napping_if_running(wait_seconds=15):
             _active_proc['proc'] = None
             _active_proc['label'] = None
             nap_signal.clear_stop()
-            print("[launch] napping mode stopped; servo lock free")
+            print(f"[launch] {label} mode stopped; servo lock free")
             return True
         time.sleep(0.2)
 
-    print("[launch] napping mode did not stop within timeout")
+    print(f"[launch] {label} mode did not stop within timeout")
     return False
 
 
@@ -312,10 +344,11 @@ def launch_gesture(kind, action, launcher):
         (ok: bool, message: str). ok=False means the servos are busy.
     """
     with _launch_lock:
-        # If the napping MODE is running, ask it to wind down and wait for it to
-        # release the servo lock, then proceed (a requested action preempts a nap).
-        if not _preempt_napping_if_running():
-            return False, 'Napping mode is stopping — try again in a moment.'
+        # If a background MODE (napping/awake) is running, ask it to wind down
+        # and wait for it to release the servo lock, then proceed (a requested
+        # action preempts/arouses the mode).
+        if not _preempt_mode_if_running():
+            return False, 'A background mode is stopping — try again in a moment.'
         if _gesture_busy():
             active = _active_proc['label'] or 'another process'
             return False, f'Servos busy — {active} is still running.'
@@ -509,6 +542,65 @@ def nap(state):
         # Signal the mode to wind down; it releases the lock and exits itself.
         nap_signal.request_stop()
         return jsonify({'status': 'success', 'message': 'nap stop requested'})
+    return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
+
+
+# ── Route: awake mode ────────────────────────────────────────────────────────
+def launch_awake(timeout_seconds):
+    """Serialised launch of the awake MODE subprocess.
+
+    Mirrors ``launch_napping``: check-and-spawn under ``_launch_lock``, track the
+    process in ``_active_proc`` (label ``awake``) so the busy check, preemption,
+    and force-stop all see it. Refuses if the servos are already busy. No
+    watchdog is attached — like napping, a Mode runs open-endedly (until
+    timeout/sensor/stop), so the GESTURE_TIMEOUT backstop would wrongly kill it.
+
+    Returns:
+        (ok, message). ok=False means the servos were busy.
+    """
+    with _launch_lock:
+        # Auto-stop the mic (a Mode owns the jaw/audio path, like a routine).
+        if _mic_is_streaming():
+            if not _stop_mic():
+                return False, ('Mic streaming is on and could not be stopped; '
+                               'turn off the mic and retry.')
+        if _gesture_busy():
+            active = _active_proc['label'] or 'another process'
+            return False, f'Servos busy — {active} is still running.'
+        proc = run_awake(timeout_seconds)
+        _active_proc['proc'] = proc
+        _active_proc['label'] = 'awake'
+        _last_action['value'] = 'awake'
+        return True, f'awake started (timeout {int(timeout_seconds)}s)'
+
+
+@app.route('/awake/<state>', methods=['POST'])
+def awake(state):
+    """Start or stop the awake MODE.
+
+    - ``start``: launch awake (optional JSON ``{"timeout": <seconds>}``, default
+      300, clamped to 5s..30min). A Mode runs ambient Routines until interrupted.
+    - ``stop``: ask a running awake mode to wind down via the cross-process stop
+      signal; it finishes the current routine, returns to rest, releases the
+      servo lock, and exits.
+    """
+    if state == 'start':
+        data = request.json or {}
+        try:
+            timeout_seconds = int(data.get('timeout', 300))
+        except (TypeError, ValueError):
+            return jsonify({'status': 'error', 'message': 'timeout must be an integer'}), 400
+        # Clamp into [AWAKE_MIN_TIMEOUT, AWAKE_MAX_TIMEOUT] (5s .. 30 min).
+        timeout_seconds = max(AWAKE_MIN_TIMEOUT,
+                              min(AWAKE_MAX_TIMEOUT, timeout_seconds))
+        ok, message = launch_awake(timeout_seconds)
+        if not ok:
+            return jsonify({'status': 'busy', 'message': message}), 409
+        return jsonify({'status': 'success', 'message': message})
+    if state == 'stop':
+        # Signal the mode to wind down; it releases the lock and exits itself.
+        nap_signal.request_stop()
+        return jsonify({'status': 'success', 'message': 'awake stop requested'})
     return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
 
 

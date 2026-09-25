@@ -1964,6 +1964,125 @@ class Movements:
             steps=15, delay=0.02)
 
     # ================================================================== #
+    # SNUCK UP — "you snuck up on me!" reaction (head jerk + arm recoil)   #
+    # ================================================================== #
+
+    # snuck_up pose landmarks (all within the global SAFE_LIMITS, so NO
+    # verified_pose_override is needed):
+    #   NECK_TILT 35  — chin JERKED UP (decrease raises the head; floor is 30)
+    #   NECK_TILT 100 — small dip DOWN during the recover nod (increase lowers)
+    #   NECK_TILT 90  — level rest
+    #   RT_SHOULDER_ROTATOR 90 -> 20 — arm jolts UP from rest (0), settles to 20
+    #   RT_SHOULDER_TILT 75    — arm pulls out from rest (55) and holds
+    #   RT_ELBOW_TILT 75       — elbow flexes to a raised "on-guard" hold
+    #   RT_ELBOW_ROTATOR 270   — forearm rotated palm-up, held
+    #   NECK_PAN 85-95         — head does a small nervous swivel around center
+    #                            (90) via the randomized-centering primitive
+    # The final arm hold (rotator 20 / elbow 75) stays FAR below the hand-to-
+    # face FORBIDDEN_COMBINATION (needs rotator>=210 AND elbow>=150), so the
+    # flexed-and-raised pose is safe.
+    _SU_TILT_UP = 35        # chin jerked up (fast)
+    _SU_TILT_DOWN = 100     # small dip down on the recover nod
+    _SU_ROT_JOLT = 90       # arm jolts up on the initial recoil
+    _SU_ROT_FINAL = 20      # arm settles to this raised hold
+    _SU_SHOULDER_TILT = 75  # arm pulled out, held
+    _SU_ELBOW_TILT = 75     # elbow flexed to the on-guard hold
+    _SU_ELBOW_ROT = 270     # forearm rotated palm-up, held
+    # Neck-pan "randomize within range with centering" band: 85-95.
+    _SU_NECK_PAN_CENTER = 90
+    _SU_NECK_PAN_HALF = 5
+
+    async def snuck_up(self):
+        """Snuck up: a "you snuck up on me!" reaction — head jerk + arm recoil.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_ROTATOR (7),
+                  RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
+
+        The reaction the napping Mode runs when the proximity sensor wakes it.
+        It assumes the standard REST pose as its start (the nap wake leaves the
+        head level at 90 and the arm at REST before this runs) and:
+
+        1. JERK BACK (fast, concurrent): the head jerks chin-UP once
+           (NECK_TILT 90 -> 35) while the arm recoils UP and out
+           (RT_SHOULDER_ROTATOR 0 -> 90, RT_SHOULDER_TILT 55 -> 75,
+           RT_ELBOW_TILT 5 -> 75, RT_ELBOW_ROTATOR 150 -> 270 palm-up). One
+           sharp jolt (low steps + tiny delay), imitating the _sleep_snore_drop
+           jerk idiom. The shoulder rotator then eases from the 90 jolt down to
+           its 20 hold, and the arm STAYS in this raised on-guard pose.
+        2. RECOVER NOD: the head lowers back at NORMAL speed to level, then does
+           a single small nod DOWN to 100 and back UP to 90 (rest). No side-to-
+           side shake.
+        3. NERVOUS SWIVEL: while holding the on-guard arm, the head does a few
+           "randomize within range with centering" pans in the 85-95 band
+           (center 90) so it flicks side to side organically rather than
+           freezing.
+        4. LOWER TO REST: the on-guard arm relaxes back down and the head
+           recenters, so the figure ends clean and unloaded at REST_POSITIONS.
+
+        Every commanded angle is inside the global SAFE_LIMITS, so this gesture
+        needs NO verified_pose_override. The transient on-guard hold (rotator 20,
+        elbow 75) is far from the hand-to-face FORBIDDEN_COMBINATION
+        (rotator>=210 AND elbow>=150), so the flexed/raised pose is safe.
+        """
+        # 1. JERK BACK: head chin-up + arm recoil together, fast (the jolt).
+        print("[snuck_up] jerk back: head up + arm recoil")
+        await self.trunkController.move_to(
+            {
+                constants.NECK_TILT: self._SU_TILT_UP,
+                constants.RT_SHOULDER_ROTATOR: self._SU_ROT_JOLT,
+                constants.RT_SHOULDER_TILT: self._SU_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT: self._SU_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR: self._SU_ELBOW_ROT,
+            },
+            steps=7, delay=0.012,
+        )
+        # Arm settles the shoulder rotator to its raised hold (90 -> 20).
+        await self.trunkController.move_to(
+            {constants.RT_SHOULDER_ROTATOR: self._SU_ROT_FINAL},
+            steps=18, delay=0.02,
+        )
+
+        # 2. RECOVER NOD: head eases back to level at normal speed, then a single
+        # small nod down to 100 and back up to 90 (rest). No side-to-side shake.
+        print("[snuck_up] recover nod")
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: constants.REST_POSITIONS[constants.NECK_TILT]},
+            steps=25, delay=0.02,
+        )
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: self._SU_TILT_DOWN}, steps=18, delay=0.02)
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: constants.REST_POSITIONS[constants.NECK_TILT]},
+            steps=18, delay=0.02,
+        )
+
+        # 3. NERVOUS SWIVEL: hold the on-guard arm and flick the head pan within
+        # the 85-95 band via the shared randomized-centering primitive.
+        print("[snuck_up] nervous swivel (neck-pan centering 85-95)")
+        for _ in range(3):
+            await self.randomized_centering_move(
+                constants.NECK_PAN,
+                center=self._SU_NECK_PAN_CENTER,
+                half_range=self._SU_NECK_PAN_HALF,
+                jitter_pct=0.3,
+                state_attr="_su_neck_pan_pos",
+            )
+
+        # 4. LOWER TO REST: the "on-guard" arm relaxes back down and the head
+        # recenters, so the figure ends clean and unloaded at REST_POSITIONS.
+        print("[snuck_up] lower arm to rest")
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+                constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_ELBOW_ROTATOR: constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+            },
+            steps=35, delay=0.03,
+        )
+
+    # ================================================================== #
     # COMPOSITE gestures — arm + head gathered simultaneously             #
     # Each method documents which arm and head gesture it combines.       #
     # ================================================================== #
