@@ -63,7 +63,7 @@ MIC_CONTROLLER_URL = 'http://localhost:5000'
 ROUTINE_ACTIONS = {
     'startParty', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
     'torture', 'vaderBeaten', 'yodaFear', 'evilLaugh', 'vincentPrice',
-    'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic',
+    'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic', 'awaken',
 }
 
 MOVEMENT_ACTIONS = {

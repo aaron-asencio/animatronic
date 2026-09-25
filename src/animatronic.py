@@ -45,6 +45,7 @@ import random
 import sys
 import os
 import time
+import wave
 
 
 class Animatronic:
@@ -93,6 +94,7 @@ class Animatronic:
         'more_candy.wav',          # 23
         'sb_snore.wav',            # 24
         'snuck_up.wav',            # 25  (snuckUp "you snuck up on me!" reaction)
+        'awakened.wav',            # 26  (awaken groggy "just woke up" reaction)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -396,6 +398,39 @@ class Animatronic:
         Pairs the ``snuck_up`` gesture with ``snuck_up.wav``.
         """
         self.run_action_and_audio("_do_snuck_up", self.music[25])  # snuck_up.wav
+
+    def awaken(self):
+        """Awaken reaction — groggy stir + lazy head bob, paired with awakened.wav.
+
+        The Routine the napping Mode runs when it is interrupted (see
+        ``_startle``), also runnable on its own via ``--action=awaken``. Reuses
+        ``snuck_up``'s arm motion with the shoulder channels halved (a sleepy
+        stir, not a startle) and lolls the head around lazily until the
+        ``awakened.wav`` audio finishes, then lowers the arm to rest. Ungated:
+        motion and audio start together.
+        """
+        self.run_action_and_audio("_do_awaken", self.music[26])  # awakened.wav
+
+    @staticmethod
+    def _audio_duration_seconds(audio_file, default=7.0):
+        """Return the length of an audio file in seconds (best-effort).
+
+        Used so a routine can drive motion for exactly the clip's duration
+        (e.g. awaken's lazy head bob runs until awakened.wav ends). Falls back to
+        ``default`` if the file can't be read.
+
+        Args:
+            audio_file: Filename (not full path) in the resolved audio dir.
+            default:    Seconds to return if the file can't be measured.
+        """
+        try:
+            path = os.path.join(Animatronic._resolve_audio_dir(), audio_file)
+            with wave.open(path, 'rb') as wf:
+                return wf.getnframes() / float(wf.getframerate())
+        except Exception as e:
+            print(f"[awaken] could not measure {audio_file} ({e}); "
+                  f"using {default}s")
+            return default
 
     # --- Performance-framework routines ---
 
@@ -1026,14 +1061,15 @@ class Animatronic:
                     print(f"[nap] could not release {attr}: {e}")
 
     def _startle(self):
-        """STARTLE response to a sensor wake: run the snuck-up Routine.
+        """Wake response to a nap interruption: run the AWAKEN Routine.
 
-        When the proximity sensor interrupts the nap, the figure reacts with a
-        "you snuck up on me!" — a head jerk back + arm recoil + a recover nod,
-        paired with the ``snuck_up.wav`` gasp. The nap loop's wake
+        When the nap is interrupted, the figure reacts with a groggy "just woke
+        up" — a gentle arm stir (snuck_up's arm with the shoulder motion halved)
+        while the head lolls around lazily until the ``awakened.wav`` audio
+        finishes, then the arm lowers to rest. The nap loop's wake
         (``sleep_snore_return``) has already brought the figure to REST and
-        released the sleep pose override before this runs, which is exactly the
-        start pose the ``snuck_up`` gesture expects.
+        released the sleep pose override before this runs, which is the start
+        pose the ``awaken`` gesture expects.
 
         This runs INSIDE the napping mode, which already holds the servo lock,
         so it must NOT re-acquire it — ``run_action_and_audio`` does not take the
@@ -1041,8 +1077,8 @@ class Animatronic:
         audio-thread logic) is safe here. The runner drives everything back to
         REST on error, so the figure never ends energized against a jam.
         """
-        print("[nap] snuck up: who's there?!")
-        self.run_action_and_audio("_do_snuck_up", self.music[25])  # snuck_up.wav
+        print("[nap] awaken: groggy wake-up")
+        self.run_action_and_audio("_do_awaken", self.music[26])  # awakened.wav
 
     # ------------------------------------------------------------------ #
     # Awake — a MODE (continuous active "filler" behaviour until interrupted) #
@@ -1202,6 +1238,14 @@ class Animatronic:
         mv = Movements("Animatronic")
         await mv.snuck_up()
 
+    async def _do_awaken(self):
+        # Ungated: motion + audio start together at t=0. The lazy head bob runs
+        # for the awakened.wav duration so the head lolls around until the audio
+        # finishes, then the arm lowers to rest.
+        mv = Movements("Animatronic")
+        duration = self._audio_duration_seconds(self.music[26])  # awakened.wav
+        await mv.awaken(duration=duration)
+
 
 def main(args):
     """Dispatch --action to the corresponding Animatronic routine.
@@ -1230,6 +1274,7 @@ def main(args):
         'vincentPrice':   a.vincent_price,
         'yawn':           a.yawn,
         'snuckUp':        a.snuck_up,
+        'awaken':         a.awaken,
         # Performance-framework routines
         'brains':         a.brains,
         'hypnotic':       a.hypnotic,

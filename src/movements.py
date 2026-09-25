@@ -2083,6 +2083,114 @@ class Movements:
         )
 
     # ================================================================== #
+    # AWAKEN — groggy "just woke up" reaction (gentle arm + lazy head bob) #
+    # ================================================================== #
+
+    # awaken reuses snuck_up's arm motion but with the shoulder motion HALVED
+    # (a sleepy, half-hearted stir instead of a sharp startle). Halving is taken
+    # as half the DISPLACEMENT FROM REST, so the values stay within SAFE_LIMITS:
+    #   RT_SHOULDER_ROTATOR jolt 90 -> 45, hold 20 -> 10 (rest is 0; halved)
+    #   RT_SHOULDER_TILT 75 -> 65 (rest is 55; snuck_up's +20 becomes +10 — a
+    #     literal 75/2=37.5 would fall below the SAFE_LIMITS floor of 45, so we
+    #     halve the offset from rest instead).
+    #   RT_ELBOW_TILT 75 and RT_ELBOW_ROTATOR 270 are unchanged (only the two
+    #     SHOULDER channels were called out to halve).
+    _AW_ROT_STIR = 45        # shoulder rotator stir (snuck_up 90, halved)
+    _AW_ROT_HOLD = 10        # shoulder rotator hold (snuck_up 20, halved)
+    _AW_SHOULDER_TILT = 65   # shoulder tilt hold (rest 55 + half of snuck_up's +20)
+    _AW_ELBOW_TILT = 75      # elbow flex (same as snuck_up)
+    _AW_ELBOW_ROT = 270      # forearm palm-up (same as snuck_up)
+    # Lazy head-bob "randomize within range with centering" band: 75-105 on BOTH
+    # neck axes (center 90, half_range 15).
+    _AW_HEAD_CENTER = 90
+    _AW_HEAD_HALF = 15
+
+    async def awaken(self, duration=7.0):
+        """Awaken: a groggy "just woke up" reaction — gentle stir + lazy head bob.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_ROTATOR (7),
+                  RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
+
+        The reaction the napping Mode runs when it is interrupted. Reuses
+        ``snuck_up``'s arm motion but with the two SHOULDER channels halved so
+        the arm stirs sleepily rather than startling, and the head lazily bobs
+        around as if just waking up (not the sharp snuck_up jerk):
+
+        1. STIR (concurrent): the arm recoils gently up/out
+           (RT_SHOULDER_ROTATOR 0 -> 45, RT_SHOULDER_TILT 55 -> 65,
+           RT_ELBOW_TILT 5 -> 75, RT_ELBOW_ROTATOR 150 -> 270), then the
+           rotator eases to its 10 hold. Slower/softer than snuck_up's jolt.
+        2. LAZY HEAD BOB: for ``duration`` seconds, both NECK_PAN and NECK_TILT
+           do "randomize within range with centering" moves in the 75-105 band
+           (center 90) at a slow, sleepy pace, so the head lolls around
+           organically. Sized to run until the awakened.wav audio finishes.
+        3. LOWER TO REST: the arm relaxes back down and the head recenters, so
+           the figure ends clean and unloaded at REST_POSITIONS.
+
+        Every commanded angle is inside the global SAFE_LIMITS, so this gesture
+        needs NO verified_pose_override. The arm hold (rotator 10, elbow 75) is
+        far from the hand-to-face FORBIDDEN_COMBINATION (rotator>=210 AND
+        elbow>=150), so the flexed/raised pose is safe.
+
+        Args:
+            duration: Seconds to keep the lazy head bob going before lowering
+                the arm — set to the awakened.wav length so motion ends with the
+                audio. Default 7.0.
+        """
+        # 1. STIR: gentle arm recoil (halved shoulder motion), unhurried.
+        print("[awaken] stir: gentle arm recoil")
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._AW_ROT_STIR,
+                constants.RT_SHOULDER_TILT: self._AW_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT: self._AW_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR: self._AW_ELBOW_ROT,
+            },
+            steps=25, delay=0.02,
+        )
+        await self.trunkController.move_to(
+            {constants.RT_SHOULDER_ROTATOR: self._AW_ROT_HOLD},
+            steps=20, delay=0.02,
+        )
+
+        # 2. LAZY HEAD BOB: loll the head around (both pan + tilt centering in
+        # 75-105) at a sleepy pace until the audio duration elapses. Slow moves
+        # (high steps, larger delay) sell "still groggy". Each centering move
+        # takes ~0.5-0.7s, so this runs several before the ~7s audio ends.
+        print(f"[awaken] lazy head bob for ~{duration:.1f}s")
+        loop = asyncio.get_event_loop()
+        end = loop.time() + max(0.0, duration)
+        while loop.time() < end:
+            await self.randomized_centering_move(
+                constants.NECK_PAN,
+                center=self._AW_HEAD_CENTER, half_range=self._AW_HEAD_HALF,
+                jitter_pct=0.3, state_attr="_aw_pan_pos",
+                steps_range=(28, 40), delay_base=0.03, delay_jitter=0.006,
+            )
+            if loop.time() >= end:
+                break
+            await self.randomized_centering_move(
+                constants.NECK_TILT,
+                center=self._AW_HEAD_CENTER, half_range=self._AW_HEAD_HALF,
+                jitter_pct=0.3, state_attr="_aw_tilt_pos",
+                steps_range=(28, 40), delay_base=0.03, delay_jitter=0.006,
+            )
+
+        # 3. LOWER TO REST: arm relaxes down, head recenters — clean/unloaded.
+        print("[awaken] lower arm to rest")
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+                constants.NECK_TILT: constants.REST_POSITIONS[constants.NECK_TILT],
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+                constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_ELBOW_ROTATOR: constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+            },
+            steps=40, delay=0.03,
+        )
+
+    # ================================================================== #
     # COMPOSITE gestures — arm + head gathered simultaneously             #
     # Each method documents which arm and head gesture it combines.       #
     # ================================================================== #
