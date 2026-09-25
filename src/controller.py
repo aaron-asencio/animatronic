@@ -60,6 +60,7 @@ def main(args):
         'no':               mv.shake_no,
         'smno':             mv.small_shake_no,
         'snuckUp':          mv.snuck_up,
+        'awaken':           mv.awaken,
 
         # --- COMPOSITE gestures ---
         'waveAndSwivel':    mv.wave_and_swivel,
