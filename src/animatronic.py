@@ -927,6 +927,17 @@ class Animatronic:
         # Head drops asleep and the neck-tilt override opens (held until wake).
         await mv.sleep_snore_lead_in()
 
+        # DISCARD any approach accumulated during setup. The sensor's background
+        # poller has been running since _open_nap_sensor() — through the whole
+        # yawn and the head-drop — so the figure's OWN moving head/arm (or startup
+        # sensor noise) can pass through the sensor cone and prime the approach
+        # streak before the figure is even still. Reset here, once the head has
+        # settled asleep, so the wake only measures motion from NOW on.
+        detector = getattr(self, "_nap_detector", None)
+        if detector is not None:
+            detector.reset()
+            print("[nap] approach detector reset after head-drop; now watching")
+
         # Build ONE AudioPlayer for the whole nap and reuse it for every snore
         # segment. play_audio_file opens/closes its own PyAudio stream per call,
         # so a single player can play many clips sequentially. Constructing a

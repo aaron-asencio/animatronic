@@ -41,12 +41,19 @@ from gpiozero import DistanceSensor
 
 from constants import RANGE_ECHO_PIN, RANGE_TRIG_PIN
 
-# Debug logging for approach detection. Set RANGE_SENSOR_DEBUG=1 to print every
+# Debug logging for approach detection. Set RANGE_SENSOR_DEBUG=1 to record every
 # sensor reading and how the ApproachDetector classified it (glitch / beyond
-# gate / anchor / closer-step / FIRE). Off by default so normal runs are quiet.
-# Use it to diagnose false wakes: run the nap (or `rangetest.py --approach`)
-# with the env var set and watch what the sensor actually reports.
+# gate / anchor / closer-step / receding / jitter / FIRE). Off by default so
+# normal runs are quiet.
+#
+# Output goes to the file named by RANGE_SENSOR_DEBUG_FILE (default
+# /tmp/range_debug.log) rather than stdout, so it survives the mic controller's
+# continuous "RMS:" spam and reaches us even though the nap runs as a subprocess
+# (a stdout print would be interleaved/lost). Each line is timestamped. To
+# diagnose a false wake: set RANGE_SENSOR_DEBUG=1 before launching the webapp,
+# reproduce, then read the log file.
 _DEBUG = os.environ.get("RANGE_SENSOR_DEBUG", "") not in ("", "0", "false", "False")
+_DEBUG_FILE = os.environ.get("RANGE_SENSOR_DEBUG_FILE", "/tmp/range_debug.log")
 
 # gpiozero DistanceSensor caps out around 4 m for the HC-SR04; readings saturate
 # at max_distance. This default matches rangetest.py.
@@ -360,9 +367,20 @@ class ApproachDetector:
             return confirmed
 
     def _debug(self, distance, note):
-        """Print one classified reading when RANGE_SENSOR_DEBUG is set."""
-        if _DEBUG:
-            print(f"[range] {distance:.3f} m | {note}")
+        """Append one classified reading to the debug log when enabled.
+
+        Writes to ``_DEBUG_FILE`` (not stdout) so the trace survives the mic
+        controller's continuous stdout spam and is captured even when the nap
+        runs as a subprocess. Best-effort: never raises into the poll loop.
+        """
+        if not _DEBUG:
+            return
+        try:
+            ts = time.strftime("%H:%M:%S") + f".{int((time.time() % 1) * 1000):03d}"
+            with open(_DEBUG_FILE, "a") as fh:
+                fh.write(f"{ts} [range] {distance:.3f} m | {note}\n")
+        except OSError:
+            pass  # logging must never break detection
 
     # --- Background polling (non-blocking wake flag) ---------------------- #
 
