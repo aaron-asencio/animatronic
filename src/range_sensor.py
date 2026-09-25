@@ -41,12 +41,19 @@ from gpiozero import DistanceSensor
 
 from constants import RANGE_ECHO_PIN, RANGE_TRIG_PIN
 
-# Debug logging for approach detection. Set RANGE_SENSOR_DEBUG=1 to print every
+# Debug logging for approach detection. Set RANGE_SENSOR_DEBUG=1 to record every
 # sensor reading and how the ApproachDetector classified it (glitch / beyond
-# gate / anchor / closer-step / FIRE). Off by default so normal runs are quiet.
-# Use it to diagnose false wakes: run the nap (or `rangetest.py --approach`)
-# with the env var set and watch what the sensor actually reports.
+# gate / anchor / closer-step / receding / jitter / FIRE). Off by default so
+# normal runs are quiet.
+#
+# Output goes to the file named by RANGE_SENSOR_DEBUG_FILE (default
+# /tmp/range_debug.log) rather than stdout, so it survives the mic controller's
+# continuous "RMS:" spam and reaches us even though the nap runs as a subprocess
+# (a stdout print would be interleaved/lost). Each line is timestamped. To
+# diagnose a false wake: set RANGE_SENSOR_DEBUG=1 before launching the webapp,
+# reproduce, then read the log file.
 _DEBUG = os.environ.get("RANGE_SENSOR_DEBUG", "") not in ("", "0", "false", "False")
+_DEBUG_FILE = os.environ.get("RANGE_SENSOR_DEBUG_FILE", "/tmp/range_debug.log")
 
 # gpiozero DistanceSensor caps out around 4 m for the HC-SR04; readings saturate
 # at max_distance. This default matches rangetest.py.
@@ -56,30 +63,35 @@ DEFAULT_MAX_DISTANCE_M = 4.0
 # Ignore anything farther than this: an object beyond the gate never counts as
 # approaching, so a distant wall / passer-by can't trigger a wake.
 DEFAULT_APPROACH_GATE_M = 3.0
-# Require this many consecutive closer readings to confirm a real approach
-# (filters out one-off noise / a single flinch).
+# Require this many CONSECUTIVE closer samples (in a row) to confirm a real
+# approach. This is the key guard against spurious spikes: one bad reading can
+# advance the streak by at most one and its revert resets it, so it takes a
+# sustained approach across this many polls to fire.
 DEFAULT_APPROACH_CONSECUTIVE = 3
-# A reading must be at least this much closer than the previous one to count as
-# "getting closer". Guards against the HC-SR04's ~1 cm jitter registering as
-# approach when the object is actually still.
-DEFAULT_APPROACH_MIN_STEP_M = 0.05
+# A sample must be at least this much closer than the PREVIOUS sample to count
+# as "getting closer"; smaller changes are stationary jitter and reset the
+# streak. Measured HC-SR04 noise on this build is ~1.2 cm, so 3 cm sits safely
+# above the noise floor while still registering a slow, genuine approach
+# (~4-5 cm per 0.1 s poll).
+DEFAULT_APPROACH_MIN_STEP_M = 0.03
 # How often the background poller samples the sensor when watching for an
 # approach. The HC-SR04 read itself takes tens of ms; ~0.1 s keeps the wake
 # responsive without hammering the sensor (or its echo timeout).
 DEFAULT_APPROACH_POLL_INTERVAL_S = 0.1
 # GLITCH REJECTION. The HC-SR04 intermittently returns spurious readings —
-# most importantly gpiozero reports 0.0 m on a MISSED ECHO, and electrical
-# noise/crosstalk can yield other garbage-short values. Untreated, a single
-# such spike looks like a huge instantaneous "approach" (anchor -> ~0) and
-# false-fires the wake. Two guards reject these:
+# gpiozero reports 0.0 m on a MISSED ECHO, and noise/crosstalk yields other
+# garbage-short spikes (observed on this build: a steady 1.45 m stream jumped to
+# 1.15 m for one sample, then snapped back). The consecutive-samples rule is the
+# primary guard (one spike can add at most one to the streak and its revert
+# resets it), but these two thresholds reject the obvious cases outright:
 #   - Readings at/below MIN_VALID_M are treated as no-echo glitches and ignored
 #     (a real target essentially never sits this close to the sensor).
-#   - A single sample that moves more than MAX_STEP_M closer than the anchor is
-#     physically implausible for one poll interval (a fast human walk ~1.5 m/s
-#     over 0.1 s is ~15 cm), so it is treated as a glitch and ignored rather
-#     than counted as many closer-steps at once.
+#   - A sample that jumps more than MAX_STEP_M closer than the PREVIOUS sample is
+#     implausible for one 0.1 s poll (a fast human walk ~1.5 m/s is ~15 cm), so
+#     it is treated as a spurious spike and RESETS the streak. Set at 0.30 m to
+#     catch the observed ~0.30 m spike directly.
 DEFAULT_APPROACH_MIN_VALID_M = 0.03   # <= this reads as a no-echo glitch
-DEFAULT_APPROACH_MAX_STEP_M = 0.40    # a bigger single jump closer = glitch
+DEFAULT_APPROACH_MAX_STEP_M = 0.30    # a bigger single jump closer = spurious spike
 
 
 class RangeSensor:
@@ -173,32 +185,29 @@ class ApproachDetector:
       (between individual moves) without stalling the event loop on a blocking
       read. Once latched, ``triggered()`` stays True until ``reset()``.
 
-    Detection rule (per the wake spec) — CADENCE-INDEPENDENT so it behaves the
-    same whether polled slowly (e.g. the test tool at 0.5 s) or quickly (the
-    nap's 0.1 s background poller):
+    Detection rule (per the wake spec). An approach must be a SUSTAINED closer
+    trend across several polls in a row — not a single big jump — so a lone
+    spurious short reading (the HC-SR04's characteristic spike, which reverts on
+    the next sample) can never fire the wake:
 
-    - **Range gate** — a reading farther than ``gate_m`` is ignored. An object
-      beyond the gate can never trigger a wake, and it also RESETS the streak
-      so a far reading breaks an in-progress approach.
-    - **Closer-steps** — the detector anchors a reference distance and counts
-      how many whole ``min_step_m`` chunks the object moves CLOSER than that
-      anchor, advancing the anchor each step. An approach is confirmed once
-      ``consecutive`` such steps accumulate — i.e. a net approach of
-      ``consecutive * min_step_m`` meters (default 3 * 5 cm = 15 cm). Because
-      the count is by DISTANCE moved, not by per-sample comparison, a fast poll
-      sees the same total approach as a slow one; tiny sub-step samples
-      accumulate rather than resetting the streak.
-    - **Minimum step** — ``min_step_m`` is the chunk size; sub-``min_step_m``
-      wobble around the anchor is ignored, filtering the sensor's ~1 cm jitter
-      so a stationary object never "approaches". Moving a full step AWAY
-      re-anchors and drops the streak (the object is receding).
-    - **Glitch rejection** — the HC-SR04 intermittently returns spurious
-      short readings (gpiozero reports ~0.0 m on a missed echo; noise/crosstalk
-      yields other garbage). Readings at/below ``min_valid_m`` are ignored as
-      no-echo glitches, and a single sample jumping more than ``max_step_m``
-      closer than the anchor is rejected as implausible for one poll — both
-      without disturbing the anchor/streak. This stops a one-sample spike from
-      false-firing the wake while a real approach still accumulates.
+    - **Range gate** — a reading farther than ``gate_m`` is ignored and RESETS
+      the streak, so an object beyond the gate can never trigger a wake and a
+      far reading breaks an in-progress approach.
+    - **Consecutive closer samples** — each sample is compared to the PREVIOUS
+      one. A sample that is closer by a plausible per-poll amount
+      (``[min_step_m, max_step_m]``) advances the streak by exactly ONE; an
+      approach is confirmed once ``consecutive`` such samples occur IN A ROW
+      (default 3). Anything that breaks the chain resets the streak to zero.
+    - **Minimum step** — ``min_step_m`` is the floor for "closer": sub-
+      ``min_step_m`` wobble counts as stationary jitter and RESETS the streak,
+      filtering the sensor's ~1 cm noise so a still object never "approaches".
+    - **Spike / glitch rejection** — a reading at/below ``min_valid_m`` is a
+      no-echo glitch (gpiozero reports ~0.0 m) and is ignored; a jump closer by
+      more than ``max_step_m`` is implausible for one poll (a fast walk is
+      ~15 cm per 0.1 s) and is treated as a spurious spike that RESETS the
+      streak. Because one spike can advance the streak by at most one (and its
+      revert next sample resets it), it takes a genuine, sustained approach to
+      reach ``consecutive`` in a row.
 
     The detector owns its ``RangeSensor`` and is a context manager, so closing
     it releases the GPIO pins::
@@ -226,10 +235,12 @@ class ApproachDetector:
                              ``close()``).
             gate_m:          Maximum distance in meters to consider; readings
                              farther than this are ignored and reset the streak.
-            consecutive:     Number of consecutive closer readings required to
-                             confirm an approach (must be >= 1).
-            min_step_m:      Minimum decrease in meters between consecutive
-                             readings to count as "getting closer".
+            consecutive:     Number of consecutive closer samples (in a row)
+                             required to confirm an approach (must be >= 1).
+            min_step_m:      Minimum decrease in meters between the previous
+                             sample and this one to count as "getting closer";
+                             smaller changes are stationary jitter and reset the
+                             streak.
             max_distance:    Passed to the owned ``RangeSensor`` when ``sensor``
                              is None. Ignored if a sensor is supplied.
             poll_interval_s: Seconds between samples when using the background
@@ -237,9 +248,9 @@ class ApproachDetector:
             min_valid_m:     Readings at or below this are treated as no-echo
                              glitches and ignored (the HC-SR04/gpiozero reports
                              ~0.0 m on a missed echo).
-            max_step_m:      A single sample that jumps more than this much
-                             CLOSER than the anchor is treated as a spurious
-                             glitch and ignored (implausible for one poll).
+            max_step_m:      A sample that jumps more than this much CLOSER than
+                             the previous sample is treated as a spurious spike
+                             and resets the streak (implausible for one poll).
         """
         self._owns_sensor = sensor is None
         self.sensor = sensor if sensor is not None else RangeSensor(
@@ -259,7 +270,13 @@ class ApproachDetector:
         # samples then accumulate toward the next step instead of resetting.
         #   _anchor_m: distance at the last confirmed step (or first in-gate read)
         #   _closer_steps: how many min_step_m closer-steps since the anchor chain began
-        self._anchor_m = None
+        # Approach is confirmed by CONSECUTIVE closer SAMPLES, not by distance
+        # chunks: each qualifying sample advances the streak by exactly one, and
+        # any spike / reversal / stationary-gap resets it. This makes a lone
+        # spurious short reading (which reverts on the next sample) unable to
+        # fire — a real approach shows sustained closer motion across several
+        # polls. ``_prev_m`` is the previous in-gate reading we compare against.
+        self._prev_m = None
         self._closer_steps = 0
         # Background-poller state. _lock guards the streak/flag when the poller
         # thread and the caller touch them concurrently.
@@ -275,7 +292,7 @@ class ApproachDetector:
         while the background poller is running.
         """
         with self._lock:
-            self._anchor_m = None
+            self._prev_m = None
             self._closer_steps = 0
             self._triggered = False
 
@@ -308,61 +325,73 @@ class ApproachDetector:
 
             # Outside the gate: ignore, and break any in-progress approach.
             if distance > self.gate_m:
-                self._anchor_m = None
+                self._prev_m = None
                 self._closer_steps = 0
                 self._debug(distance, f"beyond gate({self.gate_m}) - reset")
                 return False
 
-            # First in-gate reading: anchor here, nothing counted yet.
-            if self._anchor_m is None:
-                self._anchor_m = distance
+            # First in-gate reading: nothing to compare against yet.
+            if self._prev_m is None:
+                self._prev_m = distance
                 self._closer_steps = 0
-                self._debug(distance, "anchor set")
+                self._debug(distance, "first sample")
                 return False
 
-            delta = self._anchor_m - distance  # >0 means closer than the anchor
+            delta = self._prev_m - distance  # >0 means closer than LAST sample
 
+            # Compare each sample to the PREVIOUS one. A qualifying closer sample
+            # advances the streak by exactly ONE; anything else resets it. So an
+            # approach must be SUSTAINED across ``consecutive`` polls in a row —
+            # a single spurious spike (which reverts next sample) can never reach
+            # the threshold. Always advance _prev_m to track the real signal.
             if delta > self.max_step_m:
-                # Implausibly large single jump closer (more than a person could
-                # move in one poll) — a spurious short reading. Ignore it: don't
-                # advance the anchor or count steps. A genuine fast approach
-                # still accumulates over subsequent in-range samples.
-                why = f"GLITCH jump>{self.max_step_m} (delta={delta:.3f}) - ignored"
-            elif delta >= self.min_step_m:
-                # Moved a full step (or more) closer. Count however many whole
-                # min_step_m steps this represents (a fast approach can cross
-                # several at once) and advance the anchor to the new position.
-                steps = int(delta // self.min_step_m)
-                self._closer_steps += steps
-                self._anchor_m = distance
-                why = f"closer +{steps} step(s) (delta={delta:.3f})"
-            elif delta <= -self.min_step_m:
-                # Moved a full step AWAY: the object is receding. Re-anchor and
-                # drop the streak — this isn't an approach.
-                self._anchor_m = distance
+                # Implausibly large jump closer for one poll (~a fast walk is
+                # ~15cm/0.1s) - a spurious short spike. Reset the streak; do NOT
+                # count it. Keep prev at the spike so the revert next sample
+                # reads as a big recede (also a reset), never a false approach.
                 self._closer_steps = 0
-                why = f"receding (delta={delta:.3f}) - streak reset"
+                why = f"SPIKE closer>{self.max_step_m} (delta={delta:.3f}) - reset"
+            elif delta >= self.min_step_m:
+                # A plausible closer step: advance the streak by one.
+                self._closer_steps += 1
+                why = f"closer sample (delta={delta:.3f})"
+            elif delta <= -self.min_step_m:
+                # Moved away by more than jitter: receding - reset the streak.
+                self._closer_steps = 0
+                why = f"receding (delta={delta:.3f}) - reset"
             else:
-                # Within +/- min_step_m of the anchor — jitter/slow creep. Keep
-                # the anchor fixed so many tiny fast samples ACCUMULATE toward
-                # the next step instead of resetting the streak (the cadence-
-                # independence fix: the decision no longer depends on the
-                # per-sample delta being >= min_step_m).
-                why = f"jitter (delta={delta:.3f}) - hold"
+                # Within +/- min_step_m: stationary/jitter. Not getting closer,
+                # so the approach is not sustained - reset the streak. (Real
+                # approach shows closer motion on consecutive polls; a stationary
+                # sample breaks that chain.)
+                self._closer_steps = 0
+                why = f"jitter (delta={delta:.3f}) - reset"
 
-            # ``consecutive`` closer-steps confirm the approach: e.g. with the
-            # defaults, the object moving 3 x 5 cm = 15 cm closer within the gate.
+            self._prev_m = distance
+
+            # ``consecutive`` closer samples IN A ROW confirm the approach.
             confirmed = self._closer_steps >= self.consecutive
             if confirmed:
                 self._triggered = True
                 why += "  ==> FIRE"
-            self._debug(distance, f"{why} [steps={self._closer_steps}, anchor={self._anchor_m:.3f}]")
+            self._debug(distance, f"{why} [streak={self._closer_steps}, prev={self._prev_m:.3f}]")
             return confirmed
 
     def _debug(self, distance, note):
-        """Print one classified reading when RANGE_SENSOR_DEBUG is set."""
-        if _DEBUG:
-            print(f"[range] {distance:.3f} m | {note}")
+        """Append one classified reading to the debug log when enabled.
+
+        Writes to ``_DEBUG_FILE`` (not stdout) so the trace survives the mic
+        controller's continuous stdout spam and is captured even when the nap
+        runs as a subprocess. Best-effort: never raises into the poll loop.
+        """
+        if not _DEBUG:
+            return
+        try:
+            ts = time.strftime("%H:%M:%S") + f".{int((time.time() % 1) * 1000):03d}"
+            with open(_DEBUG_FILE, "a") as fh:
+                fh.write(f"{ts} [range] {distance:.3f} m | {note}\n")
+        except OSError:
+            pass  # logging must never break detection
 
     # --- Background polling (non-blocking wake flag) ---------------------- #
 
