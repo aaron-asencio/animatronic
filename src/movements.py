@@ -237,7 +237,7 @@ class Movements:
         # Rest + arm-up values.
         ROT_REST, ROT_UP = 0, 270            # shoulder rotator lifts the arm
         TILT_REST, TILT_CENTER = 55, 55      # shoulder tilt stays ~55 (rest == wave center)
-        ELBOW_REST, ELBOW_UP = 0, 0          # elbow tilt held flat (arm extended)
+        ELBOW_REST, ELBOW_UP = 5, 0          # rest at 5 (REST_POSITIONS); 0 while arm extended
         FOREARM_REST, FOREARM_CENTER = 150, 30
         # Wave oscillation extremes (paired so the joints swing together).
         TILT_LO, TILT_HI = 45, 65            # shoulder tilt
@@ -1878,6 +1878,12 @@ class Movements:
     # 250ms audio-gate delay: shake_no supplies the gate in the blah performance,
     # so its lead-in sleeps this long before completing, delaying audio start.
     _SN_GATE_DELAY = 0.25
+    # NECK_TILT "randomize within range with centering" band for the blah
+    # performance loop body: 82-98 (center 90, half_range 8). Used ONLY by the
+    # phased blah head shake, NOT the standalone shake_no gesture, so the pan
+    # sweep behavior of the standalone gesture is unchanged.
+    _SN_TILT_CENTER = 90
+    _SN_TILT_HALF = 8
 
     async def _shake_no_center(self):
         """Center the head at the neutral pan/tilt pose (pan=90, tilt=90).
@@ -1924,13 +1930,30 @@ class Movements:
         await self._shake_no_center()
 
     async def shake_no_loop_body(self):
-        """Loop-body phase: ONE randomized pan sweep.
+        """Loop-body phase: ONE randomized pan sweep + ONE tilt centering move.
 
-        Owns NECK_PAN (0). One invocation equals one sweep, reusing the same
-        randomized right/left extremes and jittered timing as the standalone
-        shake (given the same RNG seed). Contains no audio logic.
+        Owns NECK_PAN (0) and NECK_TILT (1). One invocation equals one pan
+        sweep (reusing the same randomized right/left extremes and jittered
+        timing as the standalone shake, given the same RNG seed) plus ONE
+        "randomize within range with centering" transition on NECK_TILT within
+        the 82-98 band (center 90, half_range 8). The tilt centering runs AFTER
+        the pan sweep, so the head drifts up/down organically over the course of
+        the blah performance instead of staying flat at 90. The two axes are
+        disjoint channels both owned by this movement, so driving them here is
+        safe. Contains no audio logic.
+
+        This tilt motion lives ONLY in the phased blah loop body, so the
+        standalone ``shake_no`` gesture (which calls ``_shake_no_sweep``
+        directly) is unaffected.
         """
         await self._shake_no_sweep()
+        await self.randomized_centering_move(
+            constants.NECK_TILT,
+            center=self._SN_TILT_CENTER,
+            half_range=self._SN_TILT_HALF,
+            jitter_pct=0.3,
+            state_attr="_sn_tilt_pos",
+        )
 
     async def shake_no_return(self):
         """Return phase: recenter the neck to the resting pose.
@@ -2220,6 +2243,92 @@ class Movements:
             asyncio.create_task(self.swivel_head()),
         )
 
+    # --- wave_and_swivel_smooth landmarks (used by startParty) ------------ #
+    # Smooth head swivel band. NECK_PAN ("neck rotate") uses the current
+    # neck_pan() range 30-150 => center 90, half_range 60, driven by
+    # randomized_centering_move so the head rotate is "randomize within range
+    # with centering" instead of a fixed metronomic sweep. NECK_TILT keeps the
+    # neck_ellipse swing but HALVED: the ellipse tilted with amplitude 45, so
+    # here it dips only ~22 deg below level (90 -> 112) at the ellipse low.
+    _WSS_PAN_CENTER = constants.NECK_CENTER   # 90
+    _WSS_PAN_HALF_RANGE = 60                  # band 30..150 (current neck_pan range)
+    _WSS_PAN_JITTER_PCT = 0.20                # endpoint jitter += 0.20*60 = 12 deg
+    _WSS_TILT_LEVEL = 90                      # head level (rest)
+    _WSS_TILT_DIP = 112                       # ellipse low: 22 deg dip (half of 45)
+
+    async def wave_and_swivel_smooth(self, arcs=2):
+        """Smooth wave + swivel for startParty; arm and head return to rest.
+
+        ARM: _wave_arm(no neck)  ·  HEAD: eased swivel over NECK_PAN + NECK_TILT.
+
+        The arm and head run CONCURRENTLY over DISJOINT channels (arm 4-7, head
+        0-1). Unlike ``wave_and_swivel`` (raw one-degree ``neck_ellipse``
+        sweeps), the head here eases every move through ``move_to`` for smooth
+        acceleration/settle:
+
+        - NECK_PAN ("neck rotate"): each arc picks its pan target via
+          ``randomized_centering_move`` over the CURRENT pan range
+          (center 90, half_range 60 => band [30, 150]) -- "randomize within
+          range with centering", so the head rotate transitions among LT/CENTER/
+          RT with endpoint jitter instead of a fixed metronomic sweep.
+        - NECK_TILT: dips toward ``_WSS_TILT_DIP`` (112) then back to level,
+          HALVING the old ellipse tilt amplitude (45 -> ~22 deg below level).
+          Eased alongside the pan in the SAME ``move_to`` (via the primitive's
+          ``companion`` hook) so pan + tilt arrive together like an ellipse arc.
+
+        Ends by easing the head back to level-center (pan 90, tilt 90); the wave
+        arm returns itself to REST, so the figure finishes clean and unloaded.
+
+        Channels: NECK_PAN (0), NECK_TILT (1) [head]; RT_SHOULDER_ROTATOR (7),
+                  RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+                  [arm].
+
+        Args:
+            arcs: Number of eased swivel arcs the head traces (default 2, to
+                match wave_and_swivel's double neck-ellipse).
+        """
+        async def head_swivel():
+            # Start level and centered so the swivel begins from a known pose.
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: self._WSS_PAN_CENTER,
+                 constants.NECK_TILT: self._WSS_TILT_LEVEL},
+                steps=20, delay=0.02)
+            # Seed the centering primitive's pan state at center.
+            self._wss_pan_pos = self._WSS_PAN_CENTER
+            for i in range(arcs):
+                # Ellipse LOW: pan transitions (randomize+center) while the tilt
+                # dips ~22 deg (half the old amplitude), eased together.
+                await self.randomized_centering_move(
+                    constants.NECK_PAN,
+                    center=self._WSS_PAN_CENTER,
+                    half_range=self._WSS_PAN_HALF_RANGE,
+                    jitter_pct=self._WSS_PAN_JITTER_PCT,
+                    state_attr="_wss_pan_pos",
+                    steps_range=(24, 32), delay_base=0.03,
+                    companion=lambda: {constants.NECK_TILT: self._WSS_TILT_DIP},
+                )
+                # Ellipse HIGH: another pan transition while the tilt returns to
+                # level, completing the eased oval arc.
+                await self.randomized_centering_move(
+                    constants.NECK_PAN,
+                    center=self._WSS_PAN_CENTER,
+                    half_range=self._WSS_PAN_HALF_RANGE,
+                    jitter_pct=self._WSS_PAN_JITTER_PCT,
+                    state_attr="_wss_pan_pos",
+                    steps_range=(24, 32), delay_base=0.03,
+                    companion=lambda: {constants.NECK_TILT: self._WSS_TILT_LEVEL},
+                )
+            # RETURN TO REST: ease the head back to level-center.
+            await self.trunkController.move_to(
+                {constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+                 constants.NECK_TILT: constants.REST_POSITIONS[constants.NECK_TILT]},
+                steps=24, delay=0.02)
+
+        await asyncio.gather(
+            asyncio.create_task(self._wave_arm(include_neck=False)),
+            asyncio.create_task(head_swivel()),
+        )
+
     async def come_and_look(self):
         """Beckon while scanning the environment.
 
@@ -2238,6 +2347,102 @@ class Movements:
         await asyncio.gather(
             asyncio.create_task(self.reach_out()),
             asyncio.create_task(self.look_around()),
+        )
+
+    # --- reach_and_look_smooth landmarks (used by vincentPrice) ----------- #
+    # Reach pose (eased, arm arrives together). Same landmarks as reach_out's
+    # extended pose, driven through move_to for smoothstep easing instead of the
+    # older linear move_by_direction 1-deg sweeps.
+    _RL_REACH = {
+        constants.RT_SHOULDER_ROTATOR: 60,
+        constants.RT_SHOULDER_TILT:    80,
+        constants.RT_ELBOW_TILT:       40,
+    }
+    # Smooth head look-around waypoints (pan, tilt) — a slow, flowing sweep that
+    # eases between points. Kept within a comfortable range around center.
+    _RL_LOOK_POINTS = (
+        (110, 80),   # look up-left
+        (70, 100),   # look down-right
+        (105, 100),  # look down-left
+        (75, 80),    # look up-right
+        (90, 90),    # back to center-ish
+    )
+
+    async def reach_and_look_smooth(self, duration=14.0):
+        """Smooth reach + flowing head look-around, then return to rest.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_ROTATOR (7),
+                  RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5).
+
+        The vincentPrice routine's motion. Unlike ``reach_and_look`` (which uses
+        the older linear ``move_by_direction`` sweeps), every move here goes
+        through ``move_to`` with smoothstep easing so the arm and head
+        accelerate and settle smoothly. The ARM and HEAD run CONCURRENTLY over
+        disjoint channels:
+
+        - ARM: REPEATS an eased reach — out to the reach pose (shoulder rotator
+          60, shoulder tilt 80, elbow tilt 40 — arriving together), brief hold,
+          eased back to REST, then a 1 s pause — looping for ``duration`` so the
+          arm keeps reaching throughout the laugh.
+        - HEAD: slowly sweeps between look-around waypoints (eased ``move_to``
+          on pan+tilt together) for ``duration`` seconds, then eases back to
+          REST (center 90/90). Sized to flow for the whole audio clip.
+
+        Ends with every channel at REST_POSITIONS.
+
+        Args:
+            duration: Seconds to keep the head sweeping — set to the
+                vincent-price-laugh.wav length so motion flows for the whole
+                clip. Default 14.0.
+        """
+        loop = asyncio.get_event_loop()
+        end = loop.time() + max(0.0, duration)
+
+        async def arm_reach():
+            """Repeat eased reach/hold/retract with a 1 s pause, until duration."""
+            while loop.time() < end:
+                # Ease out to the reach pose.
+                await self.trunkController.move_to(
+                    dict(self._RL_REACH), steps=45, delay=0.02)
+                # Hold the reach a moment, then retract smoothly to rest.
+                await asyncio.sleep(1.0)
+                await self.trunkController.move_to(
+                    {
+                        constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+                        constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                        constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                    },
+                    steps=50, delay=0.02,
+                )
+                # 1 s pause at rest before the next reach (skip if we're done).
+                if loop.time() >= end:
+                    break
+                await asyncio.sleep(1.0)
+
+        async def head_look():
+            """Slowly sweep the head between waypoints until duration elapses."""
+            i = 0
+            while loop.time() < end:
+                pan, tilt = self._RL_LOOK_POINTS[i % len(self._RL_LOOK_POINTS)]
+                i += 1
+                # Slow, eased sweep so the head flows rather than snapping.
+                await self.trunkController.move_to(
+                    {constants.NECK_PAN: pan, constants.NECK_TILT: tilt},
+                    steps=45, delay=0.03,
+                )
+            # Ease back to a level, centered rest.
+            await self.trunkController.move_to(
+                {
+                    constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+                    constants.NECK_TILT: constants.REST_POSITIONS[constants.NECK_TILT],
+                },
+                steps=40, delay=0.03,
+            )
+
+        # Arm (5,6,7) and head (0,1) own disjoint channels — run them together.
+        await asyncio.gather(
+            asyncio.create_task(arm_reach()),
+            asyncio.create_task(head_look()),
         )
 
     async def patrol(self):
@@ -2488,6 +2693,176 @@ class Movements:
         """
         await self.trunkController.move_to(
             {constants.NECK_PAN: constants.NECK_CENTER}, steps=20, delay=0.02)
+
+    # ================================================================== #
+    # hand_visor — "block the sun and look around"                        #
+    #                                                                     #
+    # The arm raises to a fixed "hand-as-a-visor" pose, then the head     #
+    # looks around for ~5s while the ARM FOLLOWS the neck pan (the visor  #
+    # tracks with the head). Arm (4-7) and head (0-1) own disjoint         #
+    # channels; each glance eases the neck pan/tilt, then eases the arm    #
+    # (blended for the chosen pan) so the visor tracks the head.           #
+    #                                                                     #
+    # Every commanded angle stays inside the global SAFE_LIMITS           #
+    # (ch4 [0,270], ch5 [0,160], ch6 [45,270] — 45 is exactly the floor,  #
+    # ch7 [0,270]), so this gesture needs NO verified_pose_override.      #
+    # ================================================================== #
+
+    # Visor CENTER arm pose (reached first, before the head starts looking).
+    #   ch4 RT_ELBOW_ROTATOR 190, ch5 RT_ELBOW_TILT 130,
+    #   ch6 RT_SHOULDER_TILT 45,  ch7 RT_SHOULDER_ROTATOR 270.
+    _HV_ARM_CENTER = {
+        constants.RT_ELBOW_ROTATOR: 190,   # ch4
+        constants.RT_ELBOW_TILT:    130,   # ch5
+        constants.RT_SHOULDER_TILT:  45,   # ch6
+        constants.RT_SHOULDER_ROTATOR: 270,  # ch7
+    }
+    # Arm pose when the neck pan is at its HIGH extreme (NECK_PAN 110).
+    _HV_ARM_PAN_HIGH = {
+        constants.RT_ELBOW_ROTATOR: 190,   # ch4
+        constants.RT_ELBOW_TILT:    125,   # ch5
+        constants.RT_SHOULDER_TILT:  45,   # ch6
+        constants.RT_SHOULDER_ROTATOR: 270,  # ch7
+    }
+    # Arm pose when the neck pan is at its LOW extreme (NECK_PAN 70).
+    _HV_ARM_PAN_LOW = {
+        constants.RT_ELBOW_ROTATOR: 190,   # ch4
+        constants.RT_ELBOW_TILT:    130,   # ch5
+        constants.RT_SHOULDER_TILT:  60,   # ch6
+        constants.RT_SHOULDER_ROTATOR: 270,  # ch7
+    }
+    # Neck "randomize within range with centering" bands for the look-around.
+    #   NECK_PAN  ~70-110 => center 90, half_range 20.
+    #   NECK_TILT ~85-95  => center 90, half_range 5 (too small to affect the arm).
+    _HV_PAN_CENTER, _HV_PAN_HALF = 90, 20    # [70, 110]
+    _HV_TILT_CENTER, _HV_TILT_HALF = 90, 5   # [85, 95]
+    _HV_PAN_LOW, _HV_PAN_HIGH = 70, 110      # pan extremes the arm interpolates over
+
+    def _hand_visor_arm_for_pan(self, pan):
+        """Arm targets for a given neck-pan angle (linear blend of the extremes).
+
+        The visor arm FOLLOWS the neck pan: at the LOW pan extreme (70) the arm
+        holds ``_HV_ARM_PAN_LOW``, at the HIGH extreme (110) it holds
+        ``_HV_ARM_PAN_HIGH``, and in between each channel is linearly
+        interpolated by where ``pan`` sits in ``[70, 110]`` (clamped). Only
+        RT_SHOULDER_TILT (60<->45) and RT_ELBOW_TILT (130<->125) actually change
+        between the two poses; RT_ELBOW_ROTATOR (190) and RT_SHOULDER_ROTATOR
+        (270) are constant. move_to clamps every result to SAFE_LIMITS.
+
+        Args:
+            pan: The neck-pan angle chosen for this glance.
+
+        Returns:
+            Dict of arm channel -> target angle for this pan.
+        """
+        span = self._HV_PAN_HIGH - self._HV_PAN_LOW
+        frac = (pan - self._HV_PAN_LOW) / span if span else 0.0
+        frac = min(1.0, max(0.0, frac))  # clamp: pan may sit outside [70,110]
+        arm = {}
+        for channel, low in self._HV_ARM_PAN_LOW.items():
+            high = self._HV_ARM_PAN_HIGH[channel]
+            arm[channel] = int(round(low + (high - low) * frac))
+        return arm
+
+    async def hand_visor(self, duration=10.0):
+        """Hand visor: raise a hand to block the sun, then look around ~5s.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_ROTATOR (7),
+                  RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
+
+        Starts from REST. Sequence:
+
+        1. VISOR UP: the four arm channels move CONCURRENTLY (one eased
+           ``move_to``) to the visor center pose — RT_ELBOW_ROTATOR 190,
+           RT_ELBOW_TILT 130, RT_SHOULDER_TILT 45, RT_SHOULDER_ROTATOR 270 — so
+           the hand comes up to shade the eyes.
+        2. LOOK AROUND (~``duration`` s): the head does "randomize within range
+           with centering" glances — NECK_PAN in [70, 110] (center 90) and
+           NECK_TILT in [85, 95] (center 90). Because the arm and head own
+           DISJOINT channels, each glance drives BOTH in the SAME ``move_to``:
+           the neck pan/tilt AND the arm blended for that pan (see
+           ``_hand_visor_arm_for_pan``), so the visor arm tracks the head as it
+           turns. As the pan rises toward 110 the shoulder tilt eases to 45 and
+           the elbow tilt to 125; as it falls toward 70 they ease to 60 and 130.
+           NECK_TILT's band is intentionally tiny (±5), so it does not perturb
+           the arm/hand position.
+        3. RETURN TO REST: the head recenters (90/90) and the arm eases back to
+           REST_POSITIONS, so the figure ends clean and unloaded.
+
+        Every commanded angle is within the global SAFE_LIMITS (RT_SHOULDER_TILT
+        bottoms at exactly its 45 floor), so this gesture needs NO
+        verified_pose_override. The visor pose keeps RT_SHOULDER_ROTATOR at 270
+        but RT_ELBOW_TILT at 125-130 (below the 150 hand-to-face floor), so the
+        FORBIDDEN_COMBINATION (elbow tilt 150-270 AND rotator 210-270) never
+        triggers.
+
+        All randomness is drawn from the shared ``random`` module, so
+        ``random.seed(x)`` before a run makes the glance sequence deterministic.
+
+        Args:
+            duration: How long to keep looking around, in seconds (default 10.0).
+        """
+        # 1. VISOR UP: raise the arm to the visor center pose, all four channels
+        # together (eased). The hand comes up to shade the eyes.
+        print("[hand_visor] visor up: raise hand to block the sun")
+        await self.trunkController.move_to(
+            dict(self._HV_ARM_CENTER), steps=45, delay=0.02)
+
+        # Seed the neck centering trackers at center so the first glance
+        # transitions from a known position.
+        self._hv_pan_pos = self._HV_PAN_CENTER
+        self._hv_tilt_pos = self._HV_TILT_CENTER
+
+        # 2. LOOK AROUND: for ~duration seconds, each glance picks the next
+        # NECK_PAN via "randomize within range with centering" [70,110] and
+        # eases the neck AND the pan-tracked arm there TOGETHER in one move_to.
+        # The arm blend is supplied through the primitive's ``companion`` hook,
+        # so pan + arm arrive together (disjoint channels). NECK_TILT is a
+        # separate small centering move ([85,95], too small to affect the arm).
+        print(f"[hand_visor] look around for ~{duration:.1f}s (arm follows pan)")
+        loop = asyncio.get_event_loop()
+        end = loop.time() + max(0.0, duration)
+        while loop.time() < end:
+            # Pick + ease the next NECK_PAN via the shared centering primitive;
+            # it returns the committed pan target. Run a small NECK_TILT
+            # centering drift ([85,95]) CONCURRENTLY — both neck channels are
+            # owned only here and are disjoint from each other and the arm.
+            pan_task = asyncio.create_task(self.randomized_centering_move(
+                constants.NECK_PAN,
+                center=self._HV_PAN_CENTER, half_range=self._HV_PAN_HALF,
+                jitter_pct=0.3, state_attr="_hv_pan_pos",
+                steps_range=(22, 34), delay_base=0.04, delay_jitter=0.0,
+            ))
+            tilt_task = asyncio.create_task(self.randomized_centering_move(
+                constants.NECK_TILT,
+                center=self._HV_TILT_CENTER, half_range=self._HV_TILT_HALF,
+                jitter_pct=0.3, state_attr="_hv_tilt_pos",
+                steps_range=(22, 34), delay_base=0.04, delay_jitter=0.0,
+            ))
+            # The arm FOLLOWS the pan: blend the visor pose for the pan target
+            # and ease it there CONCURRENTLY with the neck (disjoint arm
+            # channels 4-7), so the visor tracks the head as it turns.
+            pan = await pan_task
+            arm_task = asyncio.create_task(self.trunkController.move_to(
+                self._hand_visor_arm_for_pan(pan), steps=28, delay=0.04))
+            await asyncio.gather(tilt_task, arm_task)
+
+            # Random settle/gaze pause before the next glance.
+            await asyncio.sleep(random.uniform(0.6, 1.4))
+
+        # 3. RETURN TO REST: recenter the head and ease the arm back to REST.
+        print("[hand_visor] return to rest")
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+                constants.NECK_TILT: constants.REST_POSITIONS[constants.NECK_TILT],
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+                constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_ELBOW_ROTATOR: constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+            },
+            steps=45, delay=0.03,
+        )
 
 
 if __name__ == '__main__':

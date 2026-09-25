@@ -8,7 +8,8 @@
       "action": {
         "type": "command",
         "command": "bash /home/aaron/workspace/animatronic-v2/.kiro/hooks/ship-it.sh"
-      }
+      },
+      "enabled": false
     }
   ]
 }
