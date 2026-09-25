@@ -57,3 +57,29 @@ pytest -k "test_specific"
 - Capture test artifacts (coverage, reports) separately from console output
 - Use test result formatters that work well with CI systems
 - Consider splitting large test suites across multiple jobs
+
+## Hardware Movement Verification (servo routines)
+
+The operator validates servo travel limits and collisions on the PHYSICAL robot
+and can cut power immediately if a movement misbehaves. Therefore, for new
+movement routines/gestures (e.g. `Movements` coroutines, `Animatronic` routines)
+and their updates:
+
+- **Do NOT run `SERVO_SIM` collision/limit verification.** Skip the
+  simulate-and-inspect passes that check for `CLAMPED` warnings, validate
+  commanded angle ranges against `SAFE_LIMITS`, or verify
+  `FORBIDDEN_COMBINATIONS`. The operator does this on hardware.
+- This is the operator's explicit choice; do not reintroduce these sim checks or
+  ask to run them each time.
+
+Still do the following (these are NOT collision tests):
+
+- **Compile checks** (`python -m py_compile ...`) to catch syntax/import errors
+  before the operator runs anything on the robot.
+- **Non-safety logic verification** where relevant — e.g. audio-duration wiring,
+  web routes/allowlists, approach-detection logic, action-map dispatch.
+- **Keep the in-code safety intact**: continue writing every servo write through
+  `set_angle`/`move_to` (which clamp to `SAFE_LIMITS`), returning to rest after
+  routines/errors, and respecting `FORBIDDEN_COMBINATIONS` / verified-pose
+  overrides. Not running the sim does NOT mean dropping these guards from the
+  code — it only means not simulating to verify the angles.
