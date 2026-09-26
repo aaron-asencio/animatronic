@@ -393,6 +393,203 @@ class Movements:
                 },
             )
 
+    # --- yawn_cover shared primitives + phase adapters -------------------- #
+    #
+    # The standalone ``yawn_cover`` above holds a FIXED 1.3s (tuned to the yawn
+    # clip). The phased adapters below instead let the Performance_Framework own
+    # the timing: the hand-to-mouth reach supplies the audio gate, the hold loops
+    # for the audio duration, and the lower runs when playback ends. They reuse
+    # yawn_cover's EXACT operator-verified poses and its verified_pose_override,
+    # so no new pose is introduced. Used by the ``clearThroat`` routine to bring
+    # the hand to the mouth, play ``clear_throat.wav`` once the hand arrives, hold
+    # until it finishes, then lower. Contains no audio logic (the framework owns
+    # audio); these only drive channels 0,1 (head) and 4-7 (arm).
+
+    # Rest + hand-to-mouth pose values. The COVER pose matches yawn_cover's
+    # operator-verified "hand in front of mouth" keyframes exactly; the REST
+    # values match constants.REST_POSITIONS so the return lands each joint on
+    # its documented rest -- notably RT_ELBOW_TILT rests at 5 (elbow straight),
+    # NOT 0, which the standalone yawn_cover overshoots (the runner sweeps it
+    # home there; here the adapter's own return lands it correctly).
+    _YC_TILT_REST, _YC_TILT_COVER = 55, 35
+    _YC_ROT_REST, _YC_ROT_COVER = 0, 200
+    _YC_ELBOW_REST, _YC_ELBOW_COVER = 5, 165
+    _YC_FOREARM_REST, _YC_FOREARM_COVER = 150, 185
+    # Same two sub-limit channels yawn_cover widens, operator-verified safe in
+    # THIS folded-to-the-mouth pose only. Held across lead-in -> loop -> return.
+    _YAWN_COVER_OVERRIDE = {
+        constants.RT_SHOULDER_TILT: (35, 270),
+        constants.RT_ELBOW_TILT: (0, 170),
+    }
+
+    # Seconds to open the audio gate BEFORE the hand fully settles at the mouth,
+    # so ``clear_throat.wav`` starts a touch early (the sound leads the final
+    # settle rather than waiting for it). The fold's last ``_YC_GATE_LEAD``
+    # seconds finish during the first hold. Must be < the fold duration
+    # (45 * 0.02 = 0.9s) so the gate still opens partway INTO the fold.
+    _YC_GATE_LEAD = 0.5
+
+    async def _yawn_cover_center_head(self):
+        """Center the head so the mouth faces forward for the throat-clear.
+
+        Channels: NECK_PAN (0), NECK_TILT (1). Neck uses global SAFE_LIMITS;
+        the arm override only covers the two arm channels.
+        """
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: constants.NECK_CENTER,   # 90 = forward
+                constants.NECK_TILT: 90,                     # 90 = level
+            },
+            steps=30, delay=0.02,
+        )
+
+    async def _yawn_cover_fold_up(self):
+        """Fold the hand up in front of the mouth (yawn_cover's up-fold).
+
+        Shoulder rotates first; elbow + forearm hold until 30% through, then
+        bend the hand up to the mouth -- same staging/keyframes as yawn_cover.
+
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
+        """
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_TILT: self._YC_TILT_COVER,
+                constants.RT_SHOULDER_ROTATOR: self._YC_ROT_COVER,
+                constants.RT_ELBOW_TILT: self._YC_ELBOW_COVER,
+                constants.RT_ELBOW_ROTATOR: self._YC_FOREARM_COVER,
+            },
+            steps=45, delay=0.02,
+            start_fractions={
+                constants.RT_ELBOW_TILT: 0.30,
+                constants.RT_ELBOW_ROTATOR: 0.30,
+            },
+        )
+
+    async def _yawn_cover_raise(self):
+        """RAISE: center the head, then fold the hand up in front of the mouth.
+
+        Reproduces yawn_cover's centering + up-fold keyframes exactly (head to
+        90/90 first so the mouth faces forward; shoulder rotates first, elbow +
+        forearm fold in from 30% through). Used by the standalone-style full
+        raise; the phased ``yawn_cover_lead_in`` instead splits this so it can
+        open the audio gate ``_YC_GATE_LEAD`` seconds before the fold settles.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7), RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4)
+        """
+        await self._yawn_cover_center_head()
+        await self._yawn_cover_fold_up()
+
+    async def _yawn_cover_lower(self):
+        """LOWER: unfold the hand and settle the arm back to rest.
+
+        Reverse of ``_yawn_cover_raise``'s up-fold: open the elbow/forearm first,
+        then the shoulder lowers (same start_fractions/steps as yawn_cover's DOWN
+        move), so the arm unfolds before it drops.
+
+        Channels: RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4),
+                  RT_SHOULDER_ROTATOR (7), RT_SHOULDER_TILT (6).
+        """
+        await self.trunkController.move_to(
+            {
+                constants.RT_ELBOW_TILT: self._YC_ELBOW_REST,
+                constants.RT_ELBOW_ROTATOR: self._YC_FOREARM_REST,
+                constants.RT_SHOULDER_ROTATOR: self._YC_ROT_REST,
+                constants.RT_SHOULDER_TILT: self._YC_TILT_REST,
+            },
+            steps=56, delay=0.02,
+            start_fractions={
+                constants.RT_SHOULDER_ROTATOR: 0.33,
+                constants.RT_SHOULDER_TILT: 0.33,
+            },
+        )
+
+    async def yawn_cover_lead_in(self):
+        """Lead-in phase: raise the hand to the mouth; opens the audio gate.
+
+        Owns head channels 0,1 and arm channels 4-7. Opens the
+        verified_pose_override for the two sub-limit arm channels and holds it
+        across the lead-in -> loop -> return lifetime via a per-adapter
+        AsyncExitStack (``_yawn_cover_stack``); ``yawn_cover_return`` closes it.
+        Contains no audio logic. To start ``clear_throat.wav`` ~0.5s SOONER, the
+        gate is opened partway INTO the up-fold rather than after it: this
+        coroutine centers the head, launches the fold as a background task, and
+        returns once the fold is within ``_YC_GATE_LEAD`` (0.5s) of finishing.
+        Because the framework opens the audio gate the instant this coroutine
+        returns, the sound leads the hand's final settle by ~0.5s. The still-
+        running fold task is stored on ``self._yawn_cover_fold_task`` and awaited
+        at the top of the first hold (``yawn_cover_loop_body``) so the motion
+        always completes fully before the hold begins.
+        """
+        # Open the override on a per-adapter AsyncExitStack so it stays active
+        # across the hold loop and is released only in the return phase.
+        self._yawn_cover_stack = contextlib.AsyncExitStack()
+        self._yawn_cover_stack.enter_context(
+            TrunkController.verified_pose_override(self._YAWN_COVER_OVERRIDE))
+
+        # Center the head, then start the up-fold WITHOUT awaiting it so the gate
+        # can open before the hand fully settles.
+        await self._yawn_cover_center_head()
+        self._yawn_cover_fold_task = asyncio.ensure_future(self._yawn_cover_fold_up())
+
+        # Return ~0.5s before the fold finishes so audio starts that much sooner.
+        # Fold duration is 45 * 0.02 = 0.9s; sleep the remainder (>= 0), letting
+        # the fold's last _YC_GATE_LEAD seconds run during the first hold.
+        fold_duration = 45 * 0.02
+        await asyncio.sleep(max(0.0, fold_duration - self._YC_GATE_LEAD))
+
+    async def yawn_cover_loop_body(self):
+        """Loop-body phase: HOLD the hand at the mouth while audio plays.
+
+        The framework repeats this while playback is active, checking
+        ``is_active()`` only between whole iterations, so the hand simply stays
+        folded at the mouth for the full duration of ``clear_throat.wav`` and no
+        servo is re-commanded (the arm is already at the cover pose). A short
+        sleep yields control so the runner can re-check playback between holds.
+        Contains no audio logic.
+
+        First, finish the up-fold started (un-awaited) by ``yawn_cover_lead_in``:
+        the gate opened ~0.5s early, so the fold's final settle completes here,
+        at the top of the hold, before the hand truly holds still.
+        """
+        await self._await_pending_fold()
+        await asyncio.sleep(0.1)
+
+    async def _await_pending_fold(self):
+        """Await and clear the pending up-fold task, if one is outstanding.
+
+        ``yawn_cover_lead_in`` launches the fold without awaiting it so the audio
+        gate can open early; this completes that motion. Safe to call more than
+        once and when no fold is pending (a no-op), so both the first hold and
+        the return path can call it to guarantee the fold always finishes.
+        """
+        task = getattr(self, "_yawn_cover_fold_task", None)
+        if task is not None:
+            self._yawn_cover_fold_task = None
+            await task
+
+    async def yawn_cover_return(self):
+        """Return phase: lower the hand to rest and release the pose override.
+
+        Owns arm channels 4-7. Lowers via the shared ``_yawn_cover_lower``
+        primitive, then closes the AsyncExitStack opened in
+        ``yawn_cover_lead_in`` so the verified_pose_override is scoped to exactly
+        the lead-in -> loop -> return span.
+
+        First finish any still-pending up-fold (for a very short clip the loop
+        may not have run), so the arm lowers from the fully-folded cover pose
+        rather than mid-fold.
+        """
+        try:
+            await self._await_pending_fold()
+            await self._yawn_cover_lower()
+        finally:
+            stack = getattr(self, "_yawn_cover_stack", None)
+            if stack is not None:
+                await stack.aclose()
+                self._yawn_cover_stack = None
+
     async def face_palm(self):
         """Face palm: head drops into the hand, shakes 3x in dismay, then recovers.
 

@@ -183,7 +183,29 @@ class AudioPlayer:
         stream.stop_stream()
         stream.close()
         p.terminate()
-   
+
+    def close(self):
+        """Turn off and release any GPIO devices this player owns.
+
+        Drives the jaw motor and eye LED off (if constructed) and closes them so
+        their pins are freed. This lets a caller that plays several tracks with
+        DIFFERENT player options build one ``AudioPlayer`` per track and release
+        the previous one's pins before constructing the next -- e.g. a chain
+        that plays one track with the jaw OFF and the next with it ON. Safe to
+        call when a device was never constructed (``drive_*=False``) and safe to
+        call more than once. Never raises: cleanup must not mask playback.
+        """
+        for device in (self.jaw_motor, self.led_eye_light):
+            if device is None:
+                continue
+            try:
+                device.off()
+                device.close()
+            except Exception as e:  # noqa: BLE001 - cleanup must never raise
+                print(f"AudioPlayer.close: error releasing {device}: {e}")
+        self.jaw_motor = None
+        self.led_eye_light = None
+
 if __name__ == "__main__":        
     music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav',
              'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-fear.wav']

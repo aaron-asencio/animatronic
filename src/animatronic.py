@@ -95,6 +95,8 @@ class Animatronic:
         'sb_snore.wav',            # 24
         'snuck_up.wav',            # 25  (snuckUp "you snuck up on me!" reaction)
         'awakened.wav',            # 26  (awaken groggy "just woke up" reaction)
+        'in_my_power.wav',         # 27  (hypnotic follow-on: "in my power")
+        'clear_throat.wav',        # 28  (clearThroat: hand-to-mouth throat clear)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -615,8 +617,12 @@ class Animatronic:
 
         Audio behaviour, UNIQUE to hypnotic among the routines: the definition
         sets ``player_options={"drive_jaw": False, "drive_eyes": False}`` so the
-        ``AudioPlayer`` plays the track with the jaw motor silent and does NOT
-        claim ``EYE_LIGHT_PIN``. Instead the eyes are driven by the runner's
+        LEAD track (``hypnotic.wav``) plays with the jaw motor silent and does
+        NOT claim ``EYE_LIGHT_PIN``. The FOLLOW-ON track (``in_my_power.wav``)
+        overrides this with ``{"drive_jaw": True, "drive_eyes": False}`` so the
+        jaw articulates on that line while the eyes stay off (the ambient blinker
+        keeps owning the eye pin across both tracks). Instead the eyes are driven
+        by the runner's
         AMBIENT task -- ``_blink_eyes(pb, 0.25, 0.25)`` -- which blinks them on a
         0.25s-on / 0.25s-off cadence (twice as fast) INDEPENDENT of the audio
         envelope, but BOUND TO THE AUDIO WINDOW: the blink STARTS when the audio
@@ -638,13 +644,20 @@ class Animatronic:
         finishes, so playback begins at t≈0.1s. The arm is ungated
         (``supplies_gate=False``), so its lead-in reaches out at t=0.
 
-        Because ``hypnotic.wav`` is SHORT (~5.05s), the arm sets
-        ``stop_loop_lead_seconds=1.5`` so it stops starting new sways once the
-        audio is within ~1.5s of ending and its last sway (~1s) plus the
-        ~40%-faster retract (~0.8s) finish before the audio does. The head sway
-        has no cutoff, so it keeps looping until the audio fully ends. Both then
-        return to rest — the arm retracts, the neck centers — with the runner
-        sweeping any residual channels home on completion or failure.
+        Audio is a TWO-TRACK chain: ``hypnotic.wav`` (~5.05s) then
+        ``in_my_power.wav`` (~7.02s) played back-to-back on the same audio
+        thread with no gap (``followup_audio_files``), for ~12.07s total. The
+        ``PlaybackController`` stays ``is_active()`` across both tracks and its
+        duration is the SUM, so the looping arm and head keep going through the
+        whole chain rather than stopping when ``hypnotic.wav`` ends.
+
+        The arm sets ``stop_loop_lead_seconds=1.5`` so it stops starting new
+        sways once the COMBINED audio is within ~1.5s of ending and its last
+        sway (~1s) plus the ~40%-faster retract (~0.8s) finish before the audio
+        does. The head sway has no cutoff, so it keeps looping until the audio
+        fully ends. Both then return to rest — the arm retracts, the neck centers
+        — with the runner sweeping any residual channels home on completion or
+        failure.
 
         A single ``Movements`` instance backs every ``MovementSpec`` phase
         callable so the arm and neck adapters share one ``TrunkController``. The
@@ -657,6 +670,16 @@ class Animatronic:
         HYPNOTIC = PerformanceDefinition(
             name="hypnotic",
             audio_file=self.music[21],  # hypnotic.wav — ~5.05 s
+            # in_my_power.wav (~7.02 s) plays back-to-back immediately after
+            # hypnotic.wav on the same audio thread, so the arm/head/eyes keep
+            # going across BOTH tracks (~12.07 s total) and the arm's near-end
+            # cutoff below fires against the end of in_my_power.wav, not hypnotic.
+            # Per-track options: the jaw is ON for in_my_power.wav (so the mouth
+            # articulates on this line) but eyes stay OFF -- the ambient blinker
+            # owns EYE_LIGHT_PIN, so re-enabling envelope eyes here would clash.
+            followup_audio_files=(
+                (self.music[27], {"drive_jaw": True, "drive_eyes": False}),
+            ),
             # Head sway supplies the gate: its lead-in sleeps 100ms before
             # completing, so audio starts ~100ms after the routine begins.
             gate=GateSpec(movement_name="hyp_head_sway"),
@@ -711,6 +734,78 @@ class Animatronic:
                 ambient=lambda pb: self._blink_eyes(pb, 0.25, 0.25),
             ).run()
         )
+
+    def clear_throat(self):
+        """"Clear throat" — bring the hand to the mouth, clear throat, lower.
+
+        Driven by the Performance_Framework so the AUDIO owns the hold timing
+        (unlike the standalone ``yawn_cover``, which holds a fixed 1.3s). A
+        single-step ``PerformanceDefinition`` runs ONE movement -- the phased
+        ``yawn_cover`` adapters -- which reuse yawn_cover's exact
+        operator-verified hand-to-mouth pose and its verified_pose_override:
+
+        * ``yawn_cover_lead_in`` centers the head and folds the hand up in front
+          of the mouth. It ``supplies_gate=True`` (``gate=GateSpec("clear_throat")``),
+          and opens the gate ~0.5s BEFORE the hand fully settles, so
+          ``clear_throat.wav`` (~3.5s) starts a touch early -- the sound leads
+          the final settle rather than waiting for it (the fold's last ~0.5s
+          finishes at the top of the first hold).
+        * ``yawn_cover_loop_body`` HOLDS the hand at the mouth. With
+          ``loop_for_audio=True`` the framework repeats the (no-op) hold while
+          playback is active. ``stop_loop_lead_seconds=0.9`` stops holding ~0.9s
+          before the clip ends so the hand starts lowering that much sooner (the
+          ~1.1s lower overlaps the audio tail).
+        * ``yawn_cover_return`` lowers the hand back to rest, then releases the
+          pose override.
+
+        The single movement owns head channels {0,1} and arm channels {4,5,6,7};
+        with no concurrent movement the group is trivially channel-disjoint. The
+        runner sweeps residual channels home on completion or failure. Default
+        player (jaw + envelope-driven eyes) articulates the throat-clear.
+
+        A single ``Movements`` instance backs the ``MovementSpec`` phase
+        callables so they share one ``TrunkController``. The runner is a
+        coroutine, launched with ``asyncio.run`` here at the top of the call
+        stack (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        CLEAR_THROAT = PerformanceDefinition(
+            name="clearThroat",
+            audio_file=self.music[28],  # clear_throat.wav — ~3.5 s
+            # The hand-to-mouth reach supplies the gate: audio starts the moment
+            # the lead-in completes (the hand has reached the mouth).
+            gate=GateSpec(movement_name="clear_throat"),
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,   # HOLD the hand until the clip ends
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="clear_throat",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                                constants.RT_SHOULDER_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_ELBOW_TILT,
+                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                            }),
+                            lead_in=mv.yawn_cover_lead_in,     # raise hand to mouth (gate)
+                            loop_body=mv.yawn_cover_loop_body,  # hold while audio plays
+                            do_return=mv.yawn_cover_return,     # lower hand at end
+                            supplies_gate=True,                 # opens the audio gate
+                            # Stop holding ~0.9s before the clip ends so the hand
+                            # starts lowering that much sooner (the ~1.1s lower
+                            # then overlaps the tail of the audio).
+                            stop_loop_lead_seconds=0.9,
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(CLEAR_THROAT, mv, audio_dir).run())
 
     def snore(self):
         """"Snore" audio — jerky heavy-head drop gates the snore, then sleep.
@@ -812,25 +907,52 @@ class Animatronic:
     # background thread), so it can be frequent and cheap.
     NAP_SENSOR_POLL_INTERVAL_S = 0.1
 
-    def _open_nap_sensor(self):
-        """Open the HC-SR04 approach detector for a nap run (best-effort).
+    def _open_nap_sensor(self, source="nap", detect_mode="approach"):
+        """Arm approach/presence detection for a Mode run (best-effort).
 
-        Called once at the start of a nap. Constructs an ``ApproachDetector``
-        (gated at ``NAP_WAKE_GATE_M``) and stores it on the instance so
-        ``_poll_nap_sensor`` can read it between sleep cycles. If the sensor
-        can't be opened (not wired, no GPIO access), logs and leaves the
-        detector as None so the nap still runs and simply won't sensor-wake.
+        The Mode does NOT open the HC-SR04 GPIO itself. The web app is the SOLE
+        owner of the sensor and publishes every reading via ``range_publish``;
+        this detector consumes that published distance through a
+        ``PublishedReadingSensor`` shim and runs the normal ``ApproachDetector``
+        approach/presence logic on it. One process owns the pins, so there is no
+        GPIO contention — which is what previously left the gauge blank and the
+        Mode unable to trigger when it fought the web app for the sensor.
+
+        The shim reports "far away" whenever there is no fresh published reading
+        (web app not publishing yet, or a no-echo read), so a missing feed reads
+        as "nothing there" rather than a false trigger. ``publish_source`` is
+        NOT set here (the web app already publishes for the gauge), so the Mode
+        never writes the shared file.
+
+        Args:
+            source: Retained for logging/back-compat (the web app is the actual
+                gauge publisher now).
+            detect_mode: ``"approach"`` (default — getting-closer trend, used by
+                napping) or ``"presence"`` (object simply within the gate, used
+                by awake). See ``range_sensor.ApproachDetector``.
         """
         self._nap_detector = None
         try:
-            self._nap_detector = ApproachDetector(gate_m=self.NAP_WAKE_GATE_M)
-            # Sample in the background so the (blocking) sensor read never stalls
-            # the async movement loop; the loop just checks the latched flag.
+            import range_publish
+            from range_publish import PublishedReadingSensor
+            self._nap_detector = ApproachDetector(
+                sensor=PublishedReadingSensor(),
+                gate_m=self.NAP_WAKE_GATE_M,
+                detect_mode=detect_mode,
+                # Read the operator's live sensitivity setting every sample so a
+                # dashboard slider change takes effect without restarting the
+                # mode (falls back to NAP_WAKE_GATE_M if unset).
+                gate_provider=range_publish.get_gate_m)
+            # Poll the PUBLISHED reading in the background (cheap file read); the
+            # loop just checks the latched flag between cycles.
             self._nap_detector.start_polling()
-            print(f"[nap] approach sensor armed (wake if an object approaches "
-                  f"within {self.NAP_WAKE_GATE_M} m)")
+            mode_desc = ("present within" if detect_mode == "presence"
+                         else "approaches within")
+            print(f"[nap] sensor detection armed ({detect_mode}: trigger if an "
+                  f"object is {mode_desc} {self.NAP_WAKE_GATE_M} m; reading from "
+                  f"the web app's published feed)")
         except Exception as e:
-            print(f"[nap] approach sensor unavailable, no sensor-wake: {e}")
+            print(f"[nap] sensor detection unavailable, no sensor-trigger: {e}")
             self._nap_detector = None
 
     def _close_nap_sensor(self):
@@ -863,6 +985,20 @@ class Animatronic:
         if detector is None:
             return False
         return detector.triggered()
+
+    def _reset_nap_sensor(self):
+        """Clear the approach detector's latched flag + streak (best-effort).
+
+        Called after reacting to an approach so a SINGLE detected approach does
+        not keep re-firing — the next reaction requires a fresh, newly-confirmed
+        approach. No-op when no sensor is armed.
+        """
+        detector = getattr(self, "_nap_detector", None)
+        if detector is not None:
+            try:
+                detector.reset()
+            except Exception as e:
+                print(f"[awake] could not reset approach sensor: {e}")
 
     def napping(self, timeout_seconds=60):
         """NAPPING mode: yawn, then snore with the head lowered until interrupted.
@@ -1104,44 +1240,95 @@ class Animatronic:
     AWAKE_INTERRUPT_SENSOR = "sensor"
     AWAKE_INTERRUPT_STOP = "stop"       # external stop request (e.g. web app)
 
-    # Filler Routines the awake loop cycles through, picked at random each
-    # iteration. These are the "idle-but-alive" ambient routines (patrol via
-    # vader_beaten, plus other ambient performers). Keep to routines that return
-    # to rest cleanly. MORE TBD — extend this pool as new ambient routines land.
-    _AWAKE_ROUTINE_POOL = ("vader_beaten", "krusty", "waiting", "start_party")
+    # Weighted "idle-but-alive" ambient pool the awake loop draws from each
+    # iteration. Each entry is (weight, method_name); weights are relative and
+    # need not sum to 100. The robot spends MOST of its time just looking around
+    # and only occasionally does something bigger:
+    #   - lookAroundRandom  70%  (gesture, no audio)
+    #   - handVisor         20%  (gesture, no audio)
+    #   - yawn / clearThroat 10% (routines, with audio) — split evenly below
+    # All of these return to rest cleanly on their own. Extend as new ambient
+    # gestures/routines land, keeping the weights relative.
+    _AWAKE_AMBIENT_POOL = (
+        (70, "_do_look_around_random"),  # gesture
+        (20, "_do_hand_visor"),          # gesture
+        (10, "_AWAKE_OCCASIONAL"),       # placeholder → picks yawn|clearThroat
+    )
+    # The 10% "occasional" bucket splits evenly between these two Routines.
+    _AWAKE_OCCASIONAL_ROUTINES = ("yawn", "clear_throat")
+
+    # On a confirmed sensor approach the mode reacts with ONE of these Routines,
+    # chosen at random, before winding down (mirrors napping's startle response).
+    _AWAKE_APPROACH_REACTIONS = ("snuck_up", "brains", "hypnotic", "more_candy")
+
+    # Seconds to pause between ambient actions ("run ... separated by 30s
+    # pauses"). The pause is INTERRUPTIBLE: it is slept in small slices so a
+    # stop request or sensor approach ends it (and the mode) promptly rather
+    # than after a full 30s.
+    _AWAKE_PAUSE_SECONDS = 30
+    _AWAKE_PAUSE_POLL_S = 0.1
+
+    # Duration (seconds) of each ambient GESTURE in awake mode. An action runs
+    # to completion before the loop checks the sensor/stop again (motion is
+    # never cut mid-move), so keeping the ambient scans short bounds how long a
+    # sensor approach can wait: worst case ≈ this duration + poll interval,
+    # versus the gestures' ~10-15s defaults. Kept brief so an approach is
+    # noticed promptly while the figure still reads as idly looking around.
+    _AWAKE_GESTURE_DURATION_S = 6.0
 
     def awake(self, timeout_seconds=300):
-        """AWAKE mode: perform ambient Routines on a loop until interrupted.
+        """AWAKE mode: weighted ambient gestures/routines with 30s pauses.
 
         A Mode (per the animation vocabulary) is a continuous background
         behaviour that runs until interrupted. Awake mode is the active
         counterpart to napping: instead of resting, the figure performs a random
-        ambient "filler" Routine (see ``_AWAKE_ROUTINE_POOL`` — patrol via
-        ``vader_beaten``, and others TBD), then picks another, and so on, filling
+        ambient "filler" action, pauses ~30s, picks another, and so on, filling
         the time until a more deliberate action is wanted.
 
-        Interruption signals (checked BETWEEN whole routines so one is never cut
-        off mid-performance):
+        Each action is picked by WEIGHT from ``_AWAKE_AMBIENT_POOL`` so the
+        figure mostly just looks around and only occasionally does something
+        bigger:
 
+        - ``lookAroundRandom`` 70% — gesture, idle room scan (no audio).
+        - ``handVisor``        20% — gesture, hand-as-visor look-around (no audio).
+        - ``yawn`` / ``clearThroat`` 10% — the "occasional" bucket, an audio
+          Routine, split evenly between the two.
+
+        Gestures run via ``asyncio.run`` on their gesture-only ``_do_*``
+        coroutines; routines call their ``Animatronic`` method (which owns its
+        own audio + event loop). Consecutive actions are separated by an
+        INTERRUPTIBLE ~30s pause (``_awake_pause``).
+
+        Signals (checked BETWEEN whole actions and DURING the pause, never
+        mid-action, so a gesture/routine is never cut off part-way):
+
+        - **Sensor** (HC-SR04 in PRESENCE mode via ``_open_nap_sensor`` /
+          ``_poll_nap_sensor``): an object simply STANDING within the gate — no
+          approach motion required — does NOT end the mode; the figure runs ONE
+          random reaction Routine from ``_AWAKE_APPROACH_REACTIONS`` (``snuckUp``,
+          ``brains``, ``hypnotic``, ``moreCandy``) via
+          ``_awake_approach_reaction``, the detector latch is reset (so it fires
+          once per detected presence), and the ambient loop RESUMES. The mode
+          keeps running until the admin console stops it (or the timeout). A PIR
+          sensor can later replace the presence source with the same contract.
+        - **External stop** (``nap_signal``): the admin console sets this when
+          the operator stops the mode, or asks to run a routine/gesture or
+          toggle the mic in its place; the mode ends and exits so the servo lock
+          frees for the requested action. This is what makes a web action button
+          "arouse" the mode (see the animation-vocabulary Awake mode).
         - **Timeout** (``timeout_seconds``, default 300): the mode ends after the
-          current routine finishes.
-        - **Sensor** (HC-SR04 approach, reused from napping via
-          ``_open_nap_sensor`` / ``_poll_nap_sensor``): an approaching object
-          ends the mode. (Response TBD — for now it just winds down.)
-        - **External stop** (``nap_signal`` — e.g. the web app wants to run a
-          requested action): the mode ends and exits so the servo lock frees for
-          the requested action. This is what makes a web action button "arouse"
-          the mode (see the animation-vocabulary Awake mode).
+          current action finishes.
 
-        Unlike napping, this loop is SYNCHRONOUS: each routine it runs goes
-        through ``run_action_and_audio`` which calls ``asyncio.run`` internally,
-        so the loop itself must not be inside an event loop. It checks the three
-        interrupt signals between routines (all non-blocking: the sensor poll
-        reads a latched flag and the timeout is a monotonic deadline).
+        This loop is SYNCHRONOUS: routines go through ``run_action_and_audio`` /
+        the Performance_Framework (which call ``asyncio.run`` internally) and
+        gestures are driven with ``asyncio.run`` here, so the loop itself must
+        not be inside an event loop. All three interrupt checks are non-blocking
+        (the sensor poll reads a latched flag; the timeout is a monotonic
+        deadline).
 
         Runs INSIDE ``servo_lock()`` (taken by the CLI ``awake`` branch) for its
-        whole life, exactly like napping — the routines it calls use
-        ``run_action_and_audio`` which does NOT re-take the lock.
+        whole life, exactly like napping — the actions it runs do NOT re-take the
+        lock.
 
         Args:
             timeout_seconds: How long to stay awake before the timeout ends the
@@ -1150,12 +1337,17 @@ class Animatronic:
         # Clear any stale stop request from a previous Mode run so we start clean.
         nap_signal.clear_stop()
 
-        # Arm the proximity sensor (best-effort; the mode still runs and simply
-        # won't sensor-interrupt if the sensor can't be opened).
-        self._open_nap_sensor()
+        # Arm the proximity sensor in PRESENCE mode (best-effort): awake reacts
+        # to someone simply standing in front of the sensor, not only to a
+        # getting-closer trend. Publishes each reading (source "awake") for the
+        # live dashboard range gauge. (A PIR sensor can later replace this with
+        # the same present/absent contract.)
+        self._open_nap_sensor(source="awake", detect_mode="presence")
 
         print(f"[awake] entering awake mode (timeout {int(timeout_seconds)}s)")
         try:
+            # The loop reacts to sensor approaches inline (react + resume) and
+            # returns only when STOPPED by the admin console or the timeout.
             reason = self._run_awake_loop(timeout_seconds)
         except Exception as e:
             print(f"[awake] error during awake loop: {e}")
@@ -1175,35 +1367,169 @@ class Animatronic:
         self._close_nap_sensor()
         nap_signal.clear_stop()
 
-    def _run_awake_loop(self, timeout_seconds):
-        """Run random ambient Routines until interrupted; return the reason.
+    def _check_awake_interrupt(self, deadline):
+        """Return a loop-ENDING interrupt reason, or None to keep running.
 
-        Picks a random routine from ``_AWAKE_ROUTINE_POOL`` and runs it to
-        completion, then checks the stop/sensor/timeout signals before starting
-        another. Checking BETWEEN routines (never mid-performance) matches the
-        nap loop's between-cycles semantics.
+        Non-blocking. Only two things END awake mode: an external stop request
+        (``nap_signal`` — set by the admin console when it wants to stop the
+        mode or run a routine/gesture/mic in its place) and the timeout
+        deadline. A sensor approach does NOT end the mode; it is handled
+        separately by ``_poll_nap_sensor`` in the loop, which reacts and then
+        RESUMES the ambient loop.
+
+        Args:
+            deadline: ``time.monotonic()`` value at/after which the timeout fires.
+
+        Returns:
+            AWAKE_INTERRUPT_STOP, AWAKE_INTERRUPT_TIMEOUT, or ``None``.
+        """
+        if nap_signal.stop_requested():
+            return self.AWAKE_INTERRUPT_STOP
+        if time.monotonic() >= deadline:
+            return self.AWAKE_INTERRUPT_TIMEOUT
+        return None
+
+    def _awake_pause(self, deadline):
+        """Sleep the inter-action pause, returning early on any signal.
+
+        Implements the "separated by 30s pauses" gap between ambient actions,
+        but stays responsive: it sleeps in ``_AWAKE_PAUSE_POLL_S`` slices and
+        returns as soon as a signal is seen (~0.1s), rather than sitting out the
+        full 30s. Distinguishes the two kinds of signal for the caller:
+
+        - A loop-ENDING interrupt (stop/timeout) returns that reason so the loop
+          exits.
+        - A SENSOR approach returns ``AWAKE_INTERRUPT_SENSOR`` so the loop can
+          react (run a reaction routine) and then RESUME the pause/loop rather
+          than exit.
+
+        Args:
+            deadline: Monotonic timeout deadline, forwarded to the interrupt
+                check so the pause also ends when the awake timeout elapses.
+
+        Returns:
+            AWAKE_INTERRUPT_STOP / AWAKE_INTERRUPT_TIMEOUT (loop should exit),
+            AWAKE_INTERRUPT_SENSOR (react and resume), or ``None`` when the full
+            pause elapsed with no signal.
+        """
+        pause_until = time.monotonic() + self._AWAKE_PAUSE_SECONDS
+        while time.monotonic() < pause_until:
+            reason = self._check_awake_interrupt(deadline)
+            if reason is not None:
+                return reason
+            if self._poll_nap_sensor():
+                return self.AWAKE_INTERRUPT_SENSOR
+            time.sleep(self._AWAKE_PAUSE_POLL_S)
+        return None
+
+    def _pick_ambient_action(self):
+        """Pick the next ambient action by weight; return (kind, method_name).
+
+        Draws from ``_AWAKE_AMBIENT_POOL`` by relative weight (lookAroundRandom
+        70% / handVisor 20% / occasional 10%). The 10% "occasional" bucket then
+        splits evenly between the ``yawn`` and ``clearThroat`` Routines.
+
+        Returns:
+            A tuple ``(kind, method_name)`` where ``kind`` is ``"gesture"`` (a
+            gesture-only ``_do_*`` coroutine to drive via ``asyncio.run``) or
+            ``"routine"`` (an ``Animatronic`` routine method to call directly).
+        """
+        weights = [w for w, _ in self._AWAKE_AMBIENT_POOL]
+        names = [n for _, n in self._AWAKE_AMBIENT_POOL]
+        choice = random.choices(names, weights=weights, k=1)[0]
+        if choice == "_AWAKE_OCCASIONAL":
+            # Occasional bucket: an audio Routine (yawn or clearThroat).
+            return "routine", random.choice(self._AWAKE_OCCASIONAL_ROUTINES)
+        # The two ambient _do_* entries are gesture-only coroutines.
+        return "gesture", choice
+
+    def _run_awake_action(self, kind, name):
+        """Run one picked ambient action to completion.
+
+        Gestures are gesture-only ``_do_*`` coroutines driven via
+        ``asyncio.run`` (this loop is synchronous and not inside an event loop);
+        routines are ``Animatronic`` methods that manage their own audio + event
+        loop internally. Neither re-takes the servo lock — the awake mode
+        already holds it for its whole life.
+
+        Args:
+            kind: ``"gesture"`` or ``"routine"`` (from ``_pick_ambient_action``).
+            name: The coroutine name (gesture) or routine method name (routine).
+        """
+        if kind == "gesture":
+            asyncio.run(getattr(self, name)())
+        else:
+            getattr(self, name)()
+
+    def _run_awake_loop(self, timeout_seconds):
+        """Run weighted ambient actions with 30s pauses until stopped/timeout.
+
+        Each iteration: check the loop-ending interrupts, handle any pending
+        sensor approach, pick a weighted ambient action (mostly
+        ``lookAroundRandom``, occasionally ``handVisor`` or a
+        ``yawn``/``clearThroat`` routine — see ``_pick_ambient_action``), run it
+        to completion, then pause ~30s.
+
+        The mode ENDS only on an external stop (``nap_signal`` — the admin
+        console) or the timeout, checked BETWEEN whole actions and DURING the
+        pause (never mid-action, so a gesture/routine is never cut off).
+
+        A SENSOR approach does NOT end the mode: whenever one is confirmed
+        (before an action or during the pause) the figure runs ONE random
+        reaction routine (``_awake_approach_reaction``), the detector latch is
+        reset so a single approach fires once, and the ambient loop RESUMES.
+        Only the admin console (or the timeout) stops it.
 
         Args:
             timeout_seconds: Seconds after which the timeout interrupt fires.
 
         Returns:
-            One of AWAKE_INTERRUPT_TIMEOUT / AWAKE_INTERRUPT_SENSOR /
-            AWAKE_INTERRUPT_STOP.
+            AWAKE_INTERRUPT_STOP or AWAKE_INTERRUPT_TIMEOUT (the only two ways
+            the mode ends).
         """
         deadline = time.monotonic() + max(1, timeout_seconds)
         while True:
-            # Check interrupts BEFORE each routine so a fresh stop/sensor/timeout
-            # ends the mode promptly without starting another performance.
-            if nap_signal.stop_requested():
-                return self.AWAKE_INTERRUPT_STOP
-            if self._poll_nap_sensor():
-                return self.AWAKE_INTERRUPT_SENSOR
-            if time.monotonic() >= deadline:
-                return self.AWAKE_INTERRUPT_TIMEOUT
+            # End only on stop/timeout, checked before each action.
+            reason = self._check_awake_interrupt(deadline)
+            if reason is not None:
+                return reason
 
-            routine_name = random.choice(self._AWAKE_ROUTINE_POOL)
-            print(f"[awake] performing: {routine_name}")
-            getattr(self, routine_name)()
+            # A pending sensor approach: react, reset the latch, then resume.
+            if self._poll_nap_sensor():
+                self._awake_approach_reaction()
+                self._reset_nap_sensor()
+                continue
+
+            kind, name = self._pick_ambient_action()
+            print(f"[awake] performing {kind}: {name}")
+            self._run_awake_action(kind, name)
+
+            # Pause ~30s between actions, reacting promptly to any signal.
+            reason = self._awake_pause(deadline)
+            if reason == self.AWAKE_INTERRUPT_SENSOR:
+                # Sensor fired mid-pause: react and RESUME the loop (do not end).
+                self._awake_approach_reaction()
+                self._reset_nap_sensor()
+                continue
+            if reason is not None:
+                return reason  # stop or timeout ends the mode
+
+    def _awake_approach_reaction(self):
+        """React to a sensor approach with ONE random reaction Routine.
+
+        Chosen at random from ``_AWAKE_APPROACH_REACTIONS`` (``snuckUp``,
+        ``brains``, ``hypnotic``, ``moreCandy``) — the figure "notices" the
+        approaching visitor and performs a reaction before the mode winds down,
+        mirroring how napping runs ``_startle`` on a sensor wake.
+
+        Runs INSIDE the awake mode, which already holds the servo lock, so it
+        must NOT re-acquire it: these routines use ``run_action_and_audio`` /
+        the Performance_Framework, neither of which takes the lock. Each returns
+        to rest on its own, and the caller's ``_safe_rest`` is a final backstop.
+        """
+        reaction = random.choice(self._AWAKE_APPROACH_REACTIONS)
+        print(f"[awake] approach detected -> reacting with routine: {reaction}")
+        getattr(self, reaction)()
 
     # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
@@ -1275,6 +1601,22 @@ class Animatronic:
         duration = self._audio_duration_seconds(self.music[26])  # awakened.wav
         await mv.awaken(duration=duration)
 
+    async def _do_look_around_random(self):
+        # Gesture-only (no audio): idly scan the room, then return to rest. Run
+        # with no idle lead-in so awake mode's ambient loop starts it promptly.
+        # Kept SHORT (see _AWAKE_GESTURE_DURATION_S) so the loop returns to a
+        # sensor/stop check point frequently — a long single action can't be
+        # interrupted mid-move, so shorter actions = snappier reactions.
+        mv = Movements("Animatronic")
+        await mv.look_around_random(duration=self._AWAKE_GESTURE_DURATION_S)
+
+    async def _do_hand_visor(self):
+        # Gesture-only (no audio): raise a hand as a visor and look around, then
+        # return to rest. No idle lead-in; kept short for responsiveness (see
+        # _do_look_around_random).
+        mv = Movements("Animatronic")
+        await mv.hand_visor(duration=self._AWAKE_GESTURE_DURATION_S)
+
 
 def main(args):
     """Dispatch --action to the corresponding Animatronic routine.
@@ -1307,6 +1649,7 @@ def main(args):
         # Performance-framework routines
         'brains':         a.brains,
         'hypnotic':       a.hypnotic,
+        'clearThroat':    a.clear_throat,
         'sleep':          a.snore,
         'moreCandy':      a.more_candy,
     }

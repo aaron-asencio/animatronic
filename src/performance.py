@@ -182,10 +182,26 @@ class PerformanceDefinition:
         player_options: Optional kwargs forwarded to the ``AudioPlayer`` (e.g.
             disable the jaw or envelope-driven eyes: ``{"drive_jaw": False,
             "drive_eyes": False}``). ``None`` (default) => default player
-            (jaw + envelope-driven eyes). Kept as the LAST field so existing
-            positional construction is unaffected. The dict is mutable, so the
+            (jaw + envelope-driven eyes). The dict is mutable, so the
             default is ``None`` (never a mutable default) and it is copied where
             it is consumed (``PlaybackController``).
+        followup_audio_files: Optional additional tracks played back-to-back
+            AFTER ``audio_file`` finishes, in the given order, on the same audio
+            thread with no gap (e.g. ``hypnotic`` plays ``in_my_power.wav``
+            immediately after ``hypnotic.wav``). Each entry is either a bare
+            filename (played with this definition's ``player_options``) or a
+            ``(filename, options)`` pair whose ``options`` override the
+            ``AudioPlayer`` kwargs for THAT track only -- e.g. keep the jaw
+            silent on the lead track but turn it on for a follow-on with
+            ``("in_my_power.wav", {"drive_jaw": True, "drive_eyes": False})``.
+            Each filename is resolved against the audio dir like ``audio_file``.
+            The performance's ``PlaybackController`` stays ``is_active()`` across
+            the whole chain, and its duration is the SUM of every track, so
+            looping movements keep running -- and their ``stop_loop_lead_seconds``
+            near-end cutoff fires against the end of the LAST track, not the
+            first. ``None`` (default) => a single-track performance, unchanged.
+            Kept as the LAST field so existing positional construction is
+            unaffected.
     """
 
     name: str
@@ -193,79 +209,148 @@ class PerformanceDefinition:
     steps: tuple[PerformanceStep, ...]
     gate: GateSpec | None = None
     player_options: dict | None = None
+    followup_audio_files: tuple | None = None
 
 
 class PlaybackController:
     """Bridges the thread-based ``AudioPlayer`` to the async performance runner.
 
-    A performance plays exactly one dialog track. This controller wraps the
-    pattern already used by ``Animatronic.run_action_and_audio``: build an
-    ``AudioPlayer`` and run its blocking ``play_audio_file`` in a ``daemon=True``
-    thread so the async gesture coroutines run alongside it (Requirement 5.1).
+    A performance plays one or more dialog tracks back-to-back. This controller
+    wraps the pattern already used by ``Animatronic.run_action_and_audio``:
+    build an ``AudioPlayer`` and run its blocking ``play_audio_file`` in a
+    ``daemon=True`` thread so the async gesture coroutines run alongside it
+    (Requirement 5.1). When more than one track is given, the same thread calls
+    ``play_audio_file`` once per track in order, so the tracks play with no gap
+    and the thread stays alive across the whole chain.
 
-    The track is started once and never restarted or switched between steps
+    The chain is started once and never restarted or switched between steps
     (Requirement 5.2). ``is_active()`` derives ``Playback_Active`` from the audio
     thread being alive; it is the single source of truth the runner's
     loop-until-audio check consults (Requirement 7.1), matching the behaviour of
     ``AudioPlayer``'s own blocking playback loop, which returns only once the
-    stream drains.
+    stream drains -- and, for a multi-track chain, only once the LAST track
+    drains. ``time_remaining`` / ``will_finish_within`` are computed against the
+    SUM of every track's duration, so a movement's near-end loop cutoff fires
+    relative to the end of the final track, not the first.
+
+    Per-track player options: a chain may play different tracks with DIFFERENT
+    ``AudioPlayer`` options -- e.g. ``hypnotic`` plays ``hypnotic.wav`` with the
+    jaw OFF and then ``in_my_power.wav`` with the jaw ON. Pass ``(path, options)``
+    pairs to vary options per track; a fresh ``AudioPlayer`` is built for each
+    track and the previous one is ``close()``d first so its GPIO pins (e.g. the
+    jaw motor) are released before the next player claims them.
 
     Args:
-        audio_path: Absolute path to the dialog ``.wav`` track to play.
-        player_options: Optional kwargs forwarded to the ``AudioPlayer``
-            constructor in ``start()`` (e.g. ``{"drive_jaw": False,
-            "drive_eyes": False}`` to silence the jaw and free the eye pin for a
-            separate blinker). ``None`` (default) => a default ``AudioPlayer``
-            (jaw + envelope-driven eyes). Copied on construction so a caller's
-            dict is never mutated.
+        audio_paths: The track(s) to play, in order. Accepts any of: a single
+            path string (the common single-track case); a sequence of path
+            strings (all played with ``player_options``); or a sequence of
+            ``(path, options)`` pairs, where ``options`` is a per-track
+            ``AudioPlayer`` kwargs dict (or ``None`` to use ``player_options``).
+            The forms may be mixed within one sequence.
+        player_options: Default kwargs forwarded to the ``AudioPlayer``
+            constructor for any track that does not supply its own (e.g.
+            ``{"drive_jaw": False, "drive_eyes": False}`` to silence the jaw and
+            free the eye pin for a separate blinker). ``None`` (default) => a
+            default ``AudioPlayer`` (jaw + envelope-driven eyes). Copied on
+            construction so a caller's dict is never mutated.
     """
 
-    def __init__(self, audio_path: str, player_options: dict | None = None) -> None:
-        self.audio_path = audio_path
+    def __init__(
+        self,
+        audio_paths: "str | tuple | list",
+        player_options: dict | None = None,
+    ) -> None:
         self.player_options = dict(player_options or {})
+
+        # Normalize the various accepted forms into a list of (path, options)
+        # tuples, one per track, played in order on one thread. A bare string
+        # (single track) or a sequence of bare strings use the default
+        # player_options; a (path, options) pair overrides them for that track.
+        def _normalize(entry):
+            if isinstance(entry, str):
+                return (entry, dict(self.player_options))
+            path, options = entry
+            return (path, dict(options) if options is not None else dict(self.player_options))
+
+        if isinstance(audio_paths, str):
+            self._tracks: list[tuple[str, dict]] = [_normalize(audio_paths)]
+        else:
+            self._tracks = [_normalize(entry) for entry in audio_paths]
+
+        # Ordered list of just the paths, for duration and debug output.
+        self.audio_paths: tuple[str, ...] = tuple(path for path, _ in self._tracks)
+        # Kept for debug/log messages and the idempotent-restart notice; the
+        # first track names the chain.
+        self.audio_path = self.audio_paths[0] if self.audio_paths else ""
         self._thread: threading.Thread | None = None
         self._start_monotonic: float | None = None
 
-        # Read the track's duration from the WAV header with the stdlib ``wave``
-        # module so the runner can tell how much audio is left (used only as an
-        # authoring/coordination aid for per-movement near-end loop cutoffs; it
-        # is NOT sample-accurate). Any failure -- unreadable/missing file, a
-        # non-WAV path, or a zero frame rate -- leaves ``_duration = None`` so
-        # callers fall back to the loop-until-inactive guard and never stop
-        # early. No audio hardware is imported here.
+        # Read each track's duration from the WAV header with the stdlib
+        # ``wave`` module and SUM them so the runner can tell how much audio is
+        # left across the whole chain (used only as an authoring/coordination
+        # aid for per-movement near-end loop cutoffs; it is NOT sample-accurate).
+        # Any failure on ANY track -- unreadable/missing file, a non-WAV path,
+        # or a zero frame rate -- leaves ``_duration = None`` so callers fall
+        # back to the loop-until-inactive guard and never stop early. No audio
+        # hardware is imported here.
         self._duration: float | None = None
         try:
-            with wave.open(audio_path, "rb") as wf:
-                frames = wf.getnframes()
-                rate = wf.getframerate()
-            if rate == 0:
-                raise ValueError("frame rate is zero")
-            self._duration = frames / rate
+            total = 0.0
+            for path in self.audio_paths:
+                with wave.open(path, "rb") as wf:
+                    frames = wf.getnframes()
+                    rate = wf.getframerate()
+                if rate == 0:
+                    raise ValueError(f"frame rate is zero for {path}")
+                total += frames / rate
+            self._duration = total
         except Exception as error:  # noqa: BLE001 - any failure ⇒ unknown duration
             self._duration = None
-            print(f"[performance] could not read audio duration for {audio_path}: {error}")
+            print(f"[performance] could not read audio duration for {self.audio_paths}: {error}")
 
-    def start(self) -> None:
-        """Start audio playback in a daemon thread (idempotent — starts once).
+    def _play_chain(self) -> None:
+        """Play every track in order on the calling thread, back-to-back.
 
-        Builds a fresh ``AudioPlayer`` and runs its blocking
-        ``play_audio_file`` on a ``daemon=True`` thread so it does not keep the
-        process alive on its own. Calling ``start()`` more than once is a no-op:
-        the single track is never restarted (Requirement 5.2).
+        Runs on the daemon audio thread. For each track it builds an
+        ``AudioPlayer`` with that track's own options and calls the blocking
+        ``play_audio_file``, so the next track begins the instant the previous
+        one drains -- no gap. Between tracks the finished player is ``close()``d
+        so any GPIO pin it held (e.g. the jaw motor) is released before the next
+        player is constructed; this is what lets consecutive tracks use
+        different ``drive_jaw`` / ``drive_eyes`` settings without a gpiozero
+        "pin already in use" clash. Because this method only returns once the
+        LAST track finishes, ``is_active()`` stays ``True`` across the whole
+        chain.
         """
-        if self._thread is not None:
-            print(f"[performance] audio already started; ignoring restart of {self.audio_path}")
-            return
-
         # Import here rather than at module load so the framework's pure
         # coordination logic (and its fake-controller tests) never pulls in the
         # hardware/audio stack.
         from audio_player import AudioPlayer
 
-        player = AudioPlayer(**self.player_options)
+        for path, options in self._tracks:
+            player = AudioPlayer(**options)
+            try:
+                print(f"[performance] playing audio: {path} (options={options})")
+                player.play_audio_file(path)
+            finally:
+                # Release this track's GPIO pins before the next player claims
+                # them, so a jaw-off track can be followed by a jaw-on one.
+                player.close()
+
+    def start(self) -> None:
+        """Start audio playback in a daemon thread (idempotent — starts once).
+
+        Runs the track chain on a ``daemon=True`` thread so it does not keep the
+        process alive on its own. Every track shares one ``AudioPlayer`` and is
+        played back-to-back by ``_play_chain``. Calling ``start()`` more than
+        once is a no-op: the chain is never restarted (Requirement 5.2).
+        """
+        if self._thread is not None:
+            print(f"[performance] audio already started; ignoring restart of {self.audio_path}")
+            return
+
         self._thread = threading.Thread(
-            target=player.play_audio_file,
-            args=(self.audio_path,),
+            target=self._play_chain,
             daemon=True,
         )
         # Record the monotonic start the moment the audio thread begins, so
@@ -273,7 +358,6 @@ class PlaybackController:
         # on the real (first) start, consistent with the idempotent guard above.
         self._start_monotonic = time.monotonic()
         self._thread.start()
-        print(f"[performance] playing audio: {self.audio_path}")
 
     def has_started(self) -> bool:
         """Return whether ``start()`` has been called (the track has begun).
@@ -459,15 +543,32 @@ class PerformanceRunner:
         Resolves ``definition.audio_file`` against ``self.audio_dir`` with
         ``os.path.join`` -- the same relative-filename-in-audio-dir convention
         the rest of the project uses -- and wraps it in a ``PlaybackController``.
-        The performance plays exactly one track, so exactly one controller is
-        built and it is started at most once (Requirement 5.1).
+        The performance plays one track, or -- when the definition declares
+        ``followup_audio_files`` -- that track followed by each follow-on track
+        back-to-back. Either way exactly one controller is built and started at
+        most once (Requirement 5.1); a multi-track chain still runs on a single
+        audio thread.
+
+        A follow-on entry may be a bare filename (played with the definition's
+        default ``player_options``) or a ``(filename, options)`` pair whose
+        ``options`` override the player options for THAT track only -- e.g.
+        ``hypnotic`` plays ``in_my_power.wav`` with ``{"drive_jaw": True}`` so
+        the jaw articulates on the follow-on track while the lead track keeps it
+        silent.
 
         Returns:
-            The controller for this performance's dialog track.
+            The controller for this performance's dialog track(s).
         """
-        audio_path = os.path.join(self.audio_dir, self.definition.audio_file)
+        # The lead track uses the definition's default player_options.
+        tracks: list = [os.path.join(self.audio_dir, self.definition.audio_file)]
+        for followup in self.definition.followup_audio_files or ():
+            if isinstance(followup, str):
+                tracks.append(os.path.join(self.audio_dir, followup))
+            else:
+                filename, options = followup
+                tracks.append((os.path.join(self.audio_dir, filename), options))
         return PlaybackController(
-            audio_path, player_options=self.definition.player_options
+            tracks, player_options=self.definition.player_options
         )
 
     async def _run_movement(

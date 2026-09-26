@@ -38,6 +38,7 @@ import urllib.error
 
 from servo_lock import is_locked
 import nap_signal
+import range_publish
 
 app = Flask(__name__)
 
@@ -64,10 +65,11 @@ ROUTINE_ACTIONS = {
     'startParty', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
     'torture', 'vaderBeaten', 'yodaFear', 'evilLaugh', 'vincentPrice',
     'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic', 'awaken',
+    'clearThroat',
 }
 
 MOVEMENT_ACTIONS = {
-    'wave', 'come', 'reachOut', 'yawnCover',
+    'wave', 'come', 'comeHere', 'beckon', 'reachOut', 'menacingReach', 'yawnCover',
     'nod', 'lookUp', 'lookAround', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
     'swivelHead', 'scan', 'shakeHead', 'no', 'smno',
     'waveAndSwivel', 'comeAndLook',
@@ -682,10 +684,121 @@ def status():
     })
 
 
+# ── Route: range sensor gauge ────────────────────────────────────────────────
+@app.route('/range', methods=['GET'])
+def range_reading():
+    """Return the latest HC-SR04 distance reading for the dashboard gauge.
+
+    Reads the shared reading published by whichever process currently owns the
+    sensor (a running mode, or this app's own poller). Returns ``distance_m``
+    (meters), ``distance_cm``, the publishing ``source``, and the reading
+    ``age_s``. When there is no fresh reading (sensor unavailable, or the read
+    got no echo), ``distance_m`` is ``null`` so the gauge can show "--".
+    """
+    gate_m = range_publish.get_gate_m()
+    reading = range_publish.read_latest()
+    if reading is None:
+        return jsonify({'distance_m': None, 'distance_cm': None,
+                        'source': None, 'age_s': None,
+                        'gate_m': gate_m})
+    meters = reading.get('distance_m')
+    return jsonify({
+        'distance_m': meters,
+        'distance_cm': None if meters is None else round(meters * 100, 1),
+        'source': reading.get('source'),
+        'age_s': round(reading.get('age_s', 0.0), 2),
+        'gate_m': gate_m,
+    })
+
+
+# ── Route: range sensor sensitivity (detection gate) ─────────────────────────
+@app.route('/range/sensitivity', methods=['POST'])
+def range_sensitivity():
+    """Set the detection gate (meters) used by the modes' presence/approach.
+
+    Body: JSON ``{"gate_m": <0.5..5.0>}``. The value is clamped and persisted to
+    the shared range config; a running mode's detector reads it live, so the
+    change takes effect without restarting the mode.
+    """
+    data = request.json or {}
+    try:
+        gate_m = float(data.get('gate_m'))
+    except (TypeError, ValueError):
+        return jsonify({'status': 'error', 'message': 'gate_m must be a number'}), 400
+    stored = range_publish.set_gate_m(gate_m)
+    if stored is None:
+        return jsonify({'status': 'error', 'message': 'could not store gate'}), 500
+    return jsonify({'status': 'success', 'gate_m': stored})
+
+
+# ── Range sensor gauge poller ────────────────────────────────────────────────
+# The HC-SR04 is a single GPIO device; only one process may open it at a time.
+# While a background Mode (napping/awake) runs, that process owns the sensor and
+# PUBLISHES readings via range_publish. When no mode is running, THIS web app
+# owns the sensor and publishes its own readings. Either way the dashboard reads
+# the shared file through /range. The poller below owns the sensor only when a
+# mode is not publishing, and releases the GPIO pins the moment a mode takes over
+# (so it never fights the mode process for the pins).
+RANGE_POLL_INTERVAL_S = 0.2
+_range_state = {'sensor': None}
+
+
+def _range_poll_loop():
+    """SOLE owner of the HC-SR04: read it and publish for the gauge + modes.
+
+    The web app is the one and only process that opens the range sensor, so
+    there is never GPIO contention over the pins. It reads every
+    ``RANGE_POLL_INTERVAL_S`` and publishes each reading (source ``"webapp"``)
+    via ``range_publish``. BOTH the dashboard gauge and the background Modes
+    (napping/awake) consume that shared reading — the Modes evaluate
+    approach/presence from the published distance rather than opening the sensor
+    themselves (see ``range_publish.PublishedReadingSensor``). This keeps the
+    gauge alive continuously (it never goes blank when a Mode starts) and lets a
+    Mode react to presence without fighting for the pins.
+
+    All hardware access is best-effort — if the sensor isn't wired or GPIO is
+    unavailable, the loop keeps retrying without crashing the app.
+    """
+    while True:
+        try:
+            # Open the sensor lazily and keep it for the app's lifetime.
+            if _range_state['sensor'] is None:
+                try:
+                    from range_sensor import RangeSensor
+                    _range_state['sensor'] = RangeSensor()
+                except Exception as e:
+                    # Not wired / no GPIO — try again shortly.
+                    print(f"[range] sensor unavailable: {e}")
+                    time.sleep(1.0)
+                    continue
+
+            try:
+                meters = _range_state['sensor'].distance_m()
+                # Label the reading with the MODE currently consuming it (awake
+                # / napping) so the gauge shows who's using the sensor, else
+                # 'idle' when no mode is running.
+                label = _active_proc['label'] if _active_proc['proc'] and \
+                    _active_proc['proc'].poll() is None else None
+                source = label if label in _MODE_LABELS else 'idle'
+                range_publish.publish(meters, source=source)
+            except Exception as e:
+                print(f"[range] read failed: {e}")
+                # Drop the sensor so a wedged device gets reopened next tick.
+                try:
+                    _range_state['sensor'].close()
+                except Exception:
+                    pass
+                _range_state['sensor'] = None
+        except Exception as e:
+            print(f"[range] poll loop error: {e}")
+        time.sleep(RANGE_POLL_INTERVAL_S)
+
+
 def _start_automation_threads():
     """Start the automation loops as daemon threads (die with the process)."""
     threading.Thread(target=_routine_loop, daemon=True).start()
     threading.Thread(target=_movement_loop, daemon=True).start()
+    threading.Thread(target=_range_poll_loop, daemon=True).start()
 
 
 if __name__ == '__main__':
