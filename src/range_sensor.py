@@ -93,6 +93,17 @@ DEFAULT_APPROACH_POLL_INTERVAL_S = 0.1
 DEFAULT_APPROACH_MIN_VALID_M = 0.03   # <= this reads as a no-echo glitch
 DEFAULT_APPROACH_MAX_STEP_M = 0.30    # a bigger single jump closer = spurious spike
 
+# --- Detection mode + presence defaults (used by ApproachDetector) ---
+# "approach" = fire on a sustained getting-closer trend (motion toward the
+# sensor). "presence" = fire whenever an object simply sits within the gate for
+# a couple of readings (no motion needed) — the natural fit for "someone is
+# standing in front of me", and the same contract a PIR sensor will satisfy.
+DEFAULT_DETECT_MODE = "approach"
+# Consecutive in-gate readings required to confirm PRESENCE. Two ~0.1 s reads
+# debounce a lone spurious short spike while still firing within ~0.2 s of
+# someone stepping in front.
+DEFAULT_PRESENCE_CONSECUTIVE = 2
+
 
 class RangeSensor:
     """HC-SR04 ultrasonic range sensor on the configured TRIG/ECHO pins.
@@ -226,8 +237,13 @@ class ApproachDetector:
                  max_distance=DEFAULT_MAX_DISTANCE_M,
                  poll_interval_s=DEFAULT_APPROACH_POLL_INTERVAL_S,
                  min_valid_m=DEFAULT_APPROACH_MIN_VALID_M,
-                 max_step_m=DEFAULT_APPROACH_MAX_STEP_M):
-        """Create an approach detector.
+                 max_step_m=DEFAULT_APPROACH_MAX_STEP_M,
+                 publish_source=None,
+                 detect_mode=DEFAULT_DETECT_MODE,
+                 presence_gate_m=None,
+                 presence_consecutive=DEFAULT_PRESENCE_CONSECUTIVE,
+                 gate_provider=None):
+        """Create an approach/presence detector.
 
         Args:
             sensor:          An existing ``RangeSensor`` to read from. If None,
@@ -251,7 +267,37 @@ class ApproachDetector:
             max_step_m:      A sample that jumps more than this much CLOSER than
                              the previous sample is treated as a spurious spike
                              and resets the streak (implausible for one poll).
+            publish_source:  When set to a label string (e.g. ``"awake"``), each
+                             reading is published via ``range_publish`` for the
+                             live dashboard gauge. When ``None`` (default)
+                             nothing is published, so a detector used purely for
+                             detection has no side effect on the shared file.
+            detect_mode:     ``"approach"`` (default) fires on a sustained
+                             getting-closer trend; ``"presence"`` fires whenever
+                             an object simply sits within ``presence_gate_m`` for
+                             ``presence_consecutive`` readings — no motion
+                             required. Presence is the right fit for "someone is
+                             standing in front of me" and is the contract a PIR
+                             sensor will later satisfy directly.
+            presence_gate_m: Distance in meters within which an object counts as
+                             "present" (presence mode). Defaults to ``gate_m``.
+            presence_consecutive: Consecutive in-range readings required to
+                             confirm presence (debounces a lone spike). Must be
+                             >= 1.
+            gate_provider:   Optional zero-arg callable returning the CURRENT
+                             gate distance in meters, re-read on every sample so
+                             a live sensitivity change (e.g. a dashboard slider)
+                             takes effect without recreating the detector. When
+                             set it overrides both ``gate_m`` and
+                             ``presence_gate_m`` per reading. ``None`` (default)
+                             keeps the fixed values passed above.
         """
+        self.publish_source = publish_source
+        self.detect_mode = detect_mode
+        self.presence_gate_m = gate_m if presence_gate_m is None else presence_gate_m
+        self.presence_consecutive = max(1, int(presence_consecutive))
+        self.gate_provider = gate_provider
+        self._present_streak = 0
         self._owns_sensor = sensor is None
         self.sensor = sensor if sensor is not None else RangeSensor(
             max_distance=max_distance)
@@ -294,6 +340,7 @@ class ApproachDetector:
         with self._lock:
             self._prev_m = None
             self._closer_steps = 0
+            self._present_streak = 0
             self._triggered = False
 
     def approaching(self):
@@ -312,6 +359,9 @@ class ApproachDetector:
         # concurrent triggered()/reset() call never waits on the hardware.
         distance = self.sensor.distance_m()
 
+        # Publish the raw reading for the live dashboard gauge (best-effort).
+        self._maybe_publish(distance)
+
         # ``why`` records how this sample was classified, for RANGE_SENSOR_DEBUG.
         why = None
         with self._lock:
@@ -324,10 +374,11 @@ class ApproachDetector:
                 return False
 
             # Outside the gate: ignore, and break any in-progress approach.
-            if distance > self.gate_m:
+            gate = self._live_gate(self.gate_m)
+            if distance > gate:
                 self._prev_m = None
                 self._closer_steps = 0
-                self._debug(distance, f"beyond gate({self.gate_m}) - reset")
+                self._debug(distance, f"beyond gate({gate}) - reset")
                 return False
 
             # First in-gate reading: nothing to compare against yet.
@@ -377,6 +428,83 @@ class ApproachDetector:
             self._debug(distance, f"{why} [streak={self._closer_steps}, prev={self._prev_m:.3f}]")
             return confirmed
 
+    def present(self):
+        """Take one reading and report whether an object is PRESENT within gate.
+
+        The presence counterpart to ``approaching()``: it fires when an object
+        simply sits within ``presence_gate_m`` for ``presence_consecutive``
+        readings in a row — NO motion required — so someone standing still in
+        front of the sensor triggers it (unlike ``approaching()``, which needs a
+        getting-closer trend). This is the natural "is someone there?" test and
+        the same contract a PIR sensor will later satisfy.
+
+        Debouncing: a no-echo glitch (``<= min_valid_m``) is IGNORED (neither
+        advances nor resets the streak), so a single dropped ping doesn't break
+        a real presence. A valid reading beyond the gate resets the streak.
+
+        Returns:
+            True on the reading that completes ``presence_consecutive`` in-gate
+            readings (latches ``triggered()``), else False.
+        """
+        distance = self.sensor.distance_m()
+        self._maybe_publish(distance)
+
+        with self._lock:
+            # No-echo glitch: ignore entirely so one dropped ping doesn't reset a
+            # genuine, sustained presence.
+            if distance <= self.min_valid_m:
+                self._debug(distance, f"presence GLITCH<=min_valid({self.min_valid_m})")
+                return False
+
+            gate = self._live_gate(self.presence_gate_m)
+            if distance <= gate:
+                self._present_streak += 1
+                confirmed = self._present_streak >= self.presence_consecutive
+                why = f"present (<= {gate}m)"
+                if confirmed:
+                    self._triggered = True
+                    why += "  ==> FIRE"
+                self._debug(distance, f"{why} [streak={self._present_streak}]")
+                return confirmed
+
+            # Valid reading beyond the gate: no one there — reset the streak.
+            self._present_streak = 0
+            self._debug(distance, f"absent (> {gate}m) - reset")
+            return False
+
+    def _live_gate(self, fallback):
+        """Return the current gate in meters (live provider, else ``fallback``).
+
+        Consults ``gate_provider`` when one was supplied so a runtime
+        sensitivity change is honoured on every sample; otherwise returns the
+        fixed value passed at construction. A provider error falls back too.
+        """
+        if self.gate_provider is None:
+            return fallback
+        try:
+            m = self.gate_provider()
+            return fallback if m is None else float(m)
+        except Exception:
+            return fallback
+
+    def _maybe_publish(self, distance):
+        """Publish a raw reading for the dashboard gauge (best-effort).
+
+        Shared by ``approaching()`` and ``present()``. Only publishes when a
+        ``publish_source`` label was set, so a detector used purely for
+        detection has no side effect on the shared reading file. A no-echo
+        glitch (~0.0 m) is published as ``None`` so the gauge shows "--" rather
+        than a bogus 0. Never raises into the poll loop.
+        """
+        if self.publish_source is None:
+            return
+        try:
+            import range_publish
+            shown = None if distance <= self.min_valid_m else distance
+            range_publish.publish(shown, source=self.publish_source)
+        except Exception:
+            pass
+
     def _debug(self, distance, note):
         """Append one classified reading to the debug log when enabled.
 
@@ -398,12 +526,13 @@ class ApproachDetector:
     def start_polling(self):
         """Start a daemon thread that samples the sensor and latches approaches.
 
-        The thread calls ``approaching()`` every ``poll_interval_s`` seconds;
-        once an approach is confirmed it sets a latched flag that ``triggered()``
-        reports without touching the hardware. Idempotent: a second call while
-        already polling is a no-op. The thread is a daemon, so it never blocks
-        interpreter shutdown, but call ``stop_polling()`` (or ``close()``) to end
-        it cleanly and release the sensor.
+        The thread samples every ``poll_interval_s`` seconds using the
+        mode-appropriate classifier (``approaching()`` or ``present()`` per
+        ``detect_mode``); once a trigger is confirmed it sets a latched flag that
+        ``triggered()`` reports without touching the hardware. Idempotent: a
+        second call while already polling is a no-op. The thread is a daemon, so
+        it never blocks interpreter shutdown, but call ``stop_polling()`` (or
+        ``close()``) to end it cleanly and release the sensor.
         """
         if self._thread is not None and self._thread.is_alive():
             return
@@ -420,7 +549,12 @@ class ApproachDetector:
         """
         while not self._stop_event.is_set():
             try:
-                self.approaching()
+                # Sample via the mode-appropriate classifier. Both publish the
+                # reading and latch triggered() on confirmation.
+                if self.detect_mode == "presence":
+                    self.present()
+                else:
+                    self.approaching()
             except Exception as e:
                 print(f"range_sensor: background poll read failed: {e}")
             # Wait returns immediately if stop is set, so shutdown is prompt.

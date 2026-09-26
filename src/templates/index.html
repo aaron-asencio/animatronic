@@ -85,6 +85,36 @@
     #toast.err { border-color: #ff5c5c; color: #ff9c9c; }
     .hint { font-size: 0.78rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
 
+    /* Range sensor gauge — white numbers on a black readout, green on change */
+    .range-gauge {
+      display: inline-flex; align-items: baseline; gap: 8px;
+      background: #000; border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 14px; margin-bottom: 16px;
+    }
+    .range-gauge .range-label {
+      font-size: 0.7rem; letter-spacing: 0.12em; color: var(--muted);
+    }
+    .range-gauge .range-value {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 1.6rem; font-weight: 700; color: #ffffff; /* white by default */
+      font-variant-numeric: tabular-nums; min-width: 3.2ch; text-align: right;
+      transition: color 0.6s ease;   /* fade back to white after a change */
+    }
+    .range-gauge .range-value.changed { color: var(--ok); transition: none; } /* green immediately */
+    .range-gauge .range-unit { font-size: 0.85rem; color: var(--muted); }
+    .range-gauge .range-src { font-size: 0.72rem; color: var(--ok); margin-left: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+
+    /* Sensor sensitivity slider row */
+    .range-sens {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 14px; margin-bottom: 16px; max-width: 420px;
+    }
+    .range-sens label { font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
+    .range-sens input[type=range] { flex: 1; accent-color: var(--accent); }
+    .range-sens .val { color: var(--accent); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+    .range-sens .range-unit { font-size: 0.8rem; color: var(--muted); }
+
     /* Busy banner shown while a routine is running */
     #busy-banner {
       display: none; align-items: center; gap: 10px;
@@ -136,6 +166,28 @@
     <span class="dot">●</span> <span id="mic-status">mic: unknown</span>
     &nbsp;|&nbsp; <span id="servo-status">servos: idle</span>
     &nbsp;|&nbsp; last: <span id="last-action">idle</span>
+  </div>
+
+  <!-- Range sensor gauge: live HC-SR04 distance. White numbers on black; the
+       number flashes green whenever the reading changes. The source label shows
+       which MODE is using the sensor (awake / napping), blank when idle. -->
+  <div class="range-gauge" title="Live distance reported by the HC-SR04 sensor">
+    <span class="range-label">RANGE</span>
+    <span class="range-value" id="range-value">--</span>
+    <span class="range-unit">cm</span>
+    <span class="range-src" id="range-src"></span>
+  </div>
+
+  <!-- Sensor sensitivity: detection gate in meters. The mode triggers on an
+       object within this distance; lower = must be closer, higher = reacts from
+       farther. Takes effect live (a running mode reads it each poll). -->
+  <div class="range-sens" title="How close an object must be to trigger a mode reaction">
+    <label for="range-sens">Sensor range</label>
+    <input type="range" id="range-sens" min="0.5" max="5.0" step="0.1" value="3.0"
+           oninput="document.getElementById('v-range-sens').textContent = (+this.value).toFixed(1)"
+           onchange="setSensitivity(+this.value)">
+    <span class="val" id="v-range-sens">3.0</span>
+    <span class="range-unit">m</span>
   </div>
 
   <div id="busy-banner">
@@ -787,6 +839,69 @@
       pollTimer = setTimeout(pollStatus, ms);
     }
     pollStatus();
+
+    // ── Range sensor gauge poll ──────────────────────────────────────────────
+    // Polls /range frequently and shows the distance in cm. Numbers are white
+    // by default (see CSS) and flash GREEN whenever the displayed value changes,
+    // then fade back to white. "--" is shown when there's no fresh reading.
+    let _lastRangeText = null;
+    let _rangeGreenTimer = null;
+    let _sensInit = false;      // initialize the slider from the server once
+    function renderRange(data) {
+      const el = document.getElementById('range-value');
+      const srcEl = document.getElementById('range-src');
+      if (!el) return;
+      let text;
+      if (!data || data.distance_cm === null || data.distance_cm === undefined) {
+        text = '--';
+      } else {
+        text = Math.round(data.distance_cm).toString();
+      }
+      // Show the MODE currently using the sensor (awake / napping). Hide it when
+      // idle (or a plain webapp read) — the request was to show only the mode.
+      if (srcEl) {
+        const src = data && data.source;
+        srcEl.textContent = (src && src !== 'idle' && src !== 'webapp') ? src : '';
+      }
+      // Initialize the sensitivity slider from the server's stored gate ONCE,
+      // so a refresh reflects the persisted value (not the HTML default).
+      if (!_sensInit && data && typeof data.gate_m === 'number') {
+        const s = document.getElementById('range-sens');
+        if (s && s !== document.activeElement) {
+          s.value = data.gate_m;
+          document.getElementById('v-range-sens').textContent = (+data.gate_m).toFixed(1);
+        }
+        _sensInit = true;
+      }
+      // Flash green only on an actual change of the shown number.
+      if (text !== _lastRangeText) {
+        el.textContent = text;
+        el.classList.add('changed');          // green, no transition
+        clearTimeout(_rangeGreenTimer);
+        // Next frame, drop the class so the CSS color transition fades it back
+        // to white over ~0.6s, giving a brief green highlight on each change.
+        _rangeGreenTimer = setTimeout(() => el.classList.remove('changed'), 120);
+        _lastRangeText = text;
+      }
+    }
+    async function pollRange() {
+      try {
+        const res = await fetch('/range');
+        renderRange(await res.json());
+      } catch (e) {
+        /* sensor may be unavailable; leave the last value */
+      }
+      setTimeout(pollRange, 300);   // ~3 Hz: responsive without hammering
+    }
+    pollRange();
+
+    // ── Sensor sensitivity (detection gate, meters) ──────────────────────────
+    async function setSensitivity(gate_m) {
+      const data = await post('/range/sensitivity', null, {gate_m});
+      if (data && data.status === 'success') {
+        toast('Sensor range: ' + (+data.gate_m).toFixed(1) + ' m');
+      }
+    }
   </script>
 </body>
 </html>
