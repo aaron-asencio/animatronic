@@ -26,7 +26,7 @@ Usage:
     # then open http://<pi-ip>:8000/ in a browser
 """
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 import subprocess
 import threading
 import random
@@ -57,6 +57,20 @@ CONTROLLER = os.path.join(PROJECT_DIR, 'controller.py')
 # The mic controller (PyAudio stream + effects engine) runs separately on 5000.
 MIC_CONTROLLER_URL = 'http://localhost:5000'
 
+# The Camera_Service (non-root camera capture + detection pipeline) runs
+# separately on 8001, bound to loopback on the Pi (see camera_service.py
+# HTTP_PORT). The control panel proxies its read-only views (Live_Feed MJPEG,
+# detections, status). Camera routes are strictly READ-ONLY — they issue NO
+# servo command (Req 2.7).
+CAMERA_SERVICE_URL = 'http://localhost:8001'
+
+# Base directory for selectable detector models. Any route that accepts a value
+# which becomes a filesystem path (e.g. a selectable detector `model` name) must
+# resolve it under this base and confirm it does not escape — see
+# `_validate_within_base` (Req 9.4, 9.5). Kept in ONE place so Pi-specific paths
+# are not scattered through the code (see code-security steering).
+MODELS_DIR = os.path.join(PROJECT_DIR, 'models')
+
 # ── Allowlists ───────────────────────────────────────────────────────────────
 # Only actions in these sets may be dispatched. This is the security boundary:
 # nothing from the request is ever interpolated into a shell — we pass a fixed
@@ -65,7 +79,7 @@ ROUTINE_ACTIONS = {
     'startParty', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
     'torture', 'vaderBeaten', 'yodaFear', 'evilLaugh', 'vincentPrice',
     'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic', 'awaken',
-    'clearThroat',
+    'clearThroat', 'coughLong', 'coughMedium', 'burp', 'fart',
 }
 
 MOVEMENT_ACTIONS = {
@@ -75,6 +89,21 @@ MOVEMENT_ACTIONS = {
     'waveAndSwivel', 'comeAndLook',
     'reachAndLook', 'patrol', 'handVisor',
 }
+
+# Tracking Mode allowlist. Tracking is launched via animatronic.py like any
+# other action, so its name is gated the same way as routines/movements: the
+# only permitted value is the fixed 'tracking' action. This is the security
+# boundary for the /tracking route — the request's path value is checked against
+# this set before any subprocess is spawned, and the action is passed as a
+# separate, fixed argv entry (never interpolated into a shell) (Req 9.1-9.3).
+TRACKING_ACTIONS = {'tracking'}
+
+# IR control modes. The only permitted values for a `POST /camera/ir` request
+# (which becomes an IR mode name, Req 10.3). Kept here with the other allowlists
+# as the single source of truth so the camera-IR route (added by task 13.1) can
+# gate its incoming mode against this fixed set via `_validate_allowlist` before
+# proxying anything to Camera_Service.
+IR_MODES = {'on', 'off', 'auto'}
 
 VOICE_STYLES = ['natural', 'demon', 'ghost', 'robot', 'possessed']
 VOICE_EFFECTS = ['pitch', 'distortion', 'echo', 'reverb', 'tremolo',
@@ -163,6 +192,37 @@ def run_awake(timeout_seconds):
            f'--awake-timeout={int(timeout_seconds)}']
     print(f"[awake] {' '.join(cmd)}")
     # Fresh run: clear any stale stop request so the mode doesn't exit at once.
+    nap_signal.clear_stop()
+    return subprocess.Popen(cmd, cwd=PROJECT_DIR)
+
+
+def run_tracking(scan_timeout_seconds=None):
+    """Launch animatronic.py --action=tracking (the Tracking MODE).
+
+    Mirrors run_napping/run_awake: a fixed VENV_PYTHON + ANIMATRONIC path and a
+    fixed ``--action=tracking`` passed as separate argv entries (never a shell),
+    so nothing from the request is ever interpolated into a command string
+    (Req 9.3). Unlike the other Modes, Tracking is Gesture-like toward the mic
+    Stream — it carries no audio and never drives the jaw motor (Req 6.2/6.3),
+    so the caller does NOT auto-stop the mic.
+
+    Args:
+        scan_timeout_seconds: Optional Scan_Sweep reacquire timeout to forward
+            as ``--scan-timeout`` (an int; animatronic.py clamps it to 1-120).
+            ``None`` omits the flag so animatronic.py uses its own default.
+
+    Returns:
+        The spawned subprocess.Popen.
+    """
+    cmd = [VENV_PYTHON, ANIMATRONIC, '--action=tracking']
+    # Optional tuning flags are forwarded only as separate, validated argv
+    # entries — kept as ints here (coerced by the route) and never as shell
+    # text. animatronic.py owns the real clamp (1-120); this just forwards it.
+    if scan_timeout_seconds is not None:
+        cmd.append(f'--scan-timeout={int(scan_timeout_seconds)}')
+    print(f"[tracking] {' '.join(cmd)}")
+    # Fresh run: clear any stale stop request so the mode doesn't exit at once
+    # (same as run_napping/run_awake).
     nap_signal.clear_stop()
     return subprocess.Popen(cmd, cwd=PROJECT_DIR)
 
@@ -280,10 +340,14 @@ def _stop_mic():
     return not _mic_is_streaming()
 
 
-# Labels of the background Modes (napping, awake) that hold the servo lock and
-# respond to the nap_signal cross-process stop. A web-requested action preempts
-# any of these (see _preempt_mode_if_running).
-_MODE_LABELS = ('napping', 'awake')
+# Labels of the background Modes (napping, awake, tracking) that hold a servo
+# lock and respond to the nap_signal cross-process stop. A web-requested action
+# preempts any of these (see _preempt_mode_if_running). 'tracking' is a Mode
+# too: it runs open-endedly and winds down on the same nap_signal stop, so when
+# a Routine/Movement is requested it is preempted like napping/awake. (Tracking
+# only holds the Neck_Group, so an arm-only Gesture can coexist with it — that
+# concurrency is handled by the per-group servo lock, not here.)
+_MODE_LABELS = ('napping', 'awake', 'tracking')
 
 
 def _preempt_mode_if_running(wait_seconds=15):
@@ -436,6 +500,120 @@ def _proxy(method, path, json_body=None):
     except urllib.error.URLError as e:
         return {'status': 'error',
                 'message': f'mic controller unreachable at {MIC_CONTROLLER_URL}: {e.reason}'}, 502
+
+
+# ── Camera_Service proxy helper ──────────────────────────────────────────────
+def _camera_proxy(path):
+    """Forward a GET to Camera_Service (8001) and return (json, status).
+
+    The JSON twin of :func:`_proxy`, but targeting Camera_Service instead of the
+    mic controller. Camera routes are strictly READ-ONLY — this helper only ever
+    issues a GET and never a servo command (Req 2.7). Used for the small JSON
+    endpoints (``/detections``, ``/status``); the MJPEG ``/stream`` is handled
+    separately by :func:`_camera_stream` so it can pass the multipart body
+    through instead of JSON-decoding it.
+
+    If Camera_Service is unreachable, returns a 502 with a "camera unavailable"
+    message so the panel can show that status while all other controls stay
+    usable (Req 2.5).
+
+    Args:
+        path: The Camera_Service path to GET (e.g. ``/status``, ``/detections``).
+
+    Returns:
+        A ``(body, status)`` tuple: the decoded JSON (or an error dict) and the
+        HTTP status code (502 when Camera_Service is unreachable).
+    """
+    url = f'{CAMERA_SERVICE_URL}{path}'
+    try:
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = resp.read().decode('utf-8')
+            try:
+                return json.loads(body), resp.status
+            except ValueError:
+                return {'status': 'error', 'message': 'non-JSON response'}, resp.status
+    except urllib.error.HTTPError as e:
+        # Camera_Service responded with a 4xx/5xx — surface its JSON body if any.
+        try:
+            return json.loads(e.read().decode('utf-8')), e.code
+        except Exception:
+            return {'status': 'error', 'message': f'HTTP {e.code}'}, e.code
+    except urllib.error.URLError as e:
+        return {'status': 'error', 'camera': 'unavailable',
+                'message': f'camera unavailable at {CAMERA_SERVICE_URL}: {e.reason}'}, 502
+
+
+# ── Path-value validation helpers (Req 9.4, 9.5, 10.3) ───────────────────────
+# SAFETY: any value from a request that becomes a filesystem path is a path
+# traversal boundary. These two pure helpers are the only sanctioned way to gate
+# such a value — a route either (a) matches the value against an explicit
+# allowlist of permitted names, or (b) resolves the value under a designated
+# base dir and confirms the real path does not escape it. Both reject on failure
+# WITHOUT reading or writing anything, so the caller can return an "invalid
+# value" response and touch no path. They are deliberately dependency-free and
+# side-effect-free so they are directly unit/property testable (Property 19).
+def _validate_allowlist(value, allowed_set):
+    """Return ``value`` iff it is a member of ``allowed_set``, else ``None``.
+
+    The simplest path-value gate: when the set of legal names is known up front
+    (e.g. IR modes ``on``/``off``/``auto``, Req 10.3), the value is only ever
+    one of those exact strings and nothing is derived into a path at all. Pure:
+    reads/writes no filesystem path.
+
+    Args:
+        value: The request-supplied value to check (any type; only exact
+            membership matters).
+        allowed_set: The explicit allowlist of permitted values.
+
+    Returns:
+        ``value`` when it is in ``allowed_set``; otherwise ``None`` (reject).
+    """
+    return value if value in allowed_set else None
+
+
+def _validate_within_base(value, base_dir):
+    """Resolve ``value`` under ``base_dir`` and return the real path iff it stays
+    inside ``base_dir``; otherwise return ``None`` (reject).
+
+    This is the traversal boundary for a value that becomes a filesystem path
+    (e.g. a selectable detector ``model`` name, Req 9.4/9.5). The value is
+    joined onto ``base_dir`` and fully resolved with ``os.path.realpath`` (which
+    collapses ``..`` segments and follows symlinks), then compared against the
+    resolved base using ``os.path.commonpath``. Any value that escapes — a
+    traversal sequence like ``../../etc/passwd``, an absolute path like
+    ``/etc/passwd`` (``os.path.join`` discards the base when the second arg is
+    absolute, so the escape is still caught by the containment check), or a
+    symlink pointing outside — resolves outside the base and is rejected.
+
+    The function performs NO read or write of the resolved path: resolution is
+    purely lexical/`lstat`-level via ``realpath``, so a rejected value never
+    opens a file. The caller must still only read/write the returned path when
+    the result is not ``None``.
+
+    Args:
+        value: The request-supplied value to turn into a path under ``base_dir``.
+        base_dir: The designated base directory the resolved path must stay in.
+
+    Returns:
+        The resolved real path (a ``str``) when it is inside ``base_dir``;
+        otherwise ``None`` (reject — read/write nothing).
+    """
+    # A non-string or empty value can never be a valid path name — reject.
+    if not isinstance(value, str) or value == '':
+        return None
+    base_real = os.path.realpath(base_dir)
+    # os.path.join discards base_real when `value` is absolute; the containment
+    # check below still rejects it, so an absolute input cannot escape.
+    candidate = os.path.realpath(os.path.join(base_real, value))
+    try:
+        # commonpath raises ValueError on mixed drives/relative-abs mixes; treat
+        # any such oddity as an escape (reject) rather than letting it through.
+        if os.path.commonpath([base_real, candidate]) == base_real:
+            return candidate
+    except ValueError:
+        return None
+    return None
 
 
 # ── Routes: page ─────────────────────────────────────────────────────────────
@@ -606,6 +784,83 @@ def awake(state):
     return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
 
 
+# ── Route: tracking mode ─────────────────────────────────────────────────────
+def launch_tracking(scan_timeout_seconds=None):
+    """Serialised launch of the Tracking MODE subprocess.
+
+    Mirrors ``launch_napping``/``launch_awake``: check-and-spawn under
+    ``_launch_lock`` and track the process in ``_active_proc`` (label
+    ``tracking``) so the busy check, preemption, and force-stop all see it.
+    Refuses if the servos are already busy. No watchdog is attached — like the
+    other Modes, Tracking runs open-endedly (until a stop signal or its own
+    Scan_Sweep timeout), so the GESTURE_TIMEOUT backstop would wrongly kill it.
+
+    Unlike ``launch_napping``/``launch_awake``, this does NOT auto-stop the mic:
+    Tracking carries no audio and never touches the jaw motor, so it is
+    Gesture-like toward the live mic Stream and the two can run at the same time
+    (Req 6.2/6.3). The ``'tracking'`` label is in ``_MODE_LABELS``, so a later
+    Routine/Movement request preempts it via ``_preempt_mode_if_running``.
+
+    Args:
+        scan_timeout_seconds: Optional Scan_Sweep reacquire timeout forwarded to
+            ``run_tracking`` as an int ``--scan-timeout`` flag. ``None`` lets
+            animatronic.py use its own default.
+
+    Returns:
+        (ok, message). ok=False means the servos were busy.
+    """
+    with _launch_lock:
+        # NOTE: deliberately no mic auto-stop here (see docstring, Req 6.3).
+        if _gesture_busy():
+            active = _active_proc['label'] or 'another process'
+            return False, f'Servos busy — {active} is still running.'
+        proc = run_tracking(scan_timeout_seconds)
+        _active_proc['proc'] = proc
+        _active_proc['label'] = 'tracking'
+        _last_action['value'] = 'tracking'
+        return True, 'tracking started'
+
+
+@app.route('/tracking/<state>', methods=['POST'])
+def tracking(state):
+    """Start or stop the Tracking MODE.
+
+    - ``start``: validate against the ``TRACKING_ACTIONS`` allowlist (Req
+      9.1/9.2), then launch Tracking (optional JSON ``{"scan_timeout":
+      <seconds>}`` forwarded to animatronic.py, which clamps it to 1-120). A
+      Mode runs until interrupted; it is NOT given a GESTURE_TIMEOUT watchdog.
+      Because Tracking is Gesture-like toward the mic Stream it does not stop a
+      live mic.
+    - ``stop``: ask a running Tracking Mode to wind down via the cross-process
+      stop signal; it recenters the Neck_Group, releases the lock, and exits.
+
+    An unknown ``state`` returns 400 and launches no subprocess.
+    """
+    if state == 'start':
+        # Allowlist gate: 'tracking' is the only permitted action name, checked
+        # before any subprocess is spawned (Req 9.1/9.2).
+        if 'tracking' not in TRACKING_ACTIONS:
+            return jsonify({'status': 'error',
+                            'message': 'tracking action not permitted'}), 400
+        data = request.json or {}
+        scan_timeout = data.get('scan_timeout')
+        if scan_timeout is not None:
+            try:
+                scan_timeout = int(scan_timeout)
+            except (TypeError, ValueError):
+                return jsonify({'status': 'error',
+                                'message': 'scan_timeout must be an integer'}), 400
+        ok, message = launch_tracking(scan_timeout)
+        if not ok:
+            return jsonify({'status': 'busy', 'message': message}), 409
+        return jsonify({'status': 'success', 'message': message})
+    if state == 'stop':
+        # Signal the mode to wind down; it releases the lock and exits itself.
+        nap_signal.request_stop()
+        return jsonify({'status': 'success', 'message': 'tracking stop requested'})
+    return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
+
+
 # ── Routes: mic stream (proxied) ─────────────────────────────────────────────
 @app.route('/mic/<state>', methods=['POST'])
 def mic(state):
@@ -682,6 +937,183 @@ def status():
         'servos_busy': _gesture_busy(),
         'mic': mic_body,
     })
+
+
+# ── Routes: camera (read-only proxy to Camera_Service) ───────────────────────
+# These three routes expose Camera_Service's Live_Feed, detections, and status
+# through the control panel. They are strictly READ-ONLY: each only ever issues
+# a GET to Camera_Service and NEVER a servo command (Req 2.7). If Camera_Service
+# is unreachable the proxy returns 502 so the panel can show "camera
+# unavailable" while every other control stays usable (Req 2.5).
+def _camera_stream():
+    """Stream Camera_Service's MJPEG Live_Feed straight through to the browser.
+
+    Unlike :func:`_camera_proxy`, the Live_Feed is a long-lived
+    ``multipart/x-mixed-replace`` response that must NOT be buffered or
+    JSON-decoded — it is passed through chunk-by-chunk from Camera_Service's
+    ``/stream`` so the browser's ``<img>`` renders frames as they arrive. The
+    upstream multipart content-type is preserved so the boundary matches.
+
+    If Camera_Service is unreachable, a 502 JSON "camera unavailable" is
+    returned instead of a broken stream, so the panel stays usable (Req 2.5).
+
+    Returns:
+        A streaming Flask ``Response`` carrying the upstream MJPEG, or a
+        ``(json, 502)`` tuple when Camera_Service cannot be reached.
+    """
+    url = f'{CAMERA_SERVICE_URL}/stream'
+    # Forward the overlay toggle (?overlay=1) to Camera_Service unchanged.
+    if request.args.get('overlay') == '1':
+        url += '?overlay=1'
+    try:
+        req = urllib.request.Request(url, method='GET')
+        # Open the upstream stream; do NOT use a `with` block / context manager
+        # here — the connection must stay open for the life of the generator
+        # below, which reads from it lazily as the browser consumes frames.
+        upstream = urllib.request.urlopen(req, timeout=5)
+    except urllib.error.URLError as e:
+        print(f"[camera] stream unavailable: {e.reason}")
+        return jsonify({'status': 'error', 'camera': 'unavailable',
+                        'message': f'camera unavailable at {CAMERA_SERVICE_URL}: '
+                                   f'{e.reason}'}), 502
+
+    content_type = upstream.headers.get(
+        'Content-Type', 'multipart/x-mixed-replace; boundary=frame')
+
+    def _passthrough():
+        """Yield upstream MJPEG bytes until the client or upstream disconnects."""
+        try:
+            while True:
+                chunk = upstream.read(4096)
+                if not chunk:
+                    break
+                yield chunk
+        except Exception as e:
+            print(f"[camera] stream ended: {e}")
+        finally:
+            upstream.close()
+
+    return Response(_passthrough(), mimetype=content_type)
+
+
+@app.route('/camera/stream', methods=['GET'])
+def camera_stream():
+    """Read-only Live_Feed passthrough from Camera_Service (MJPEG)."""
+    return _camera_stream()
+
+
+@app.route('/camera/detections', methods=['GET'])
+def camera_detections():
+    """Read-only proxy of Camera_Service's latest detections (JSON)."""
+    body, code = _camera_proxy('/detections')
+    return jsonify(body), code
+
+
+@app.route('/camera/status', methods=['GET'])
+def camera_status():
+    """Read-only proxy of Camera_Service's status (JSON) for the panel.
+
+    Lets the panel render a "camera unavailable" indicator (502 from the proxy)
+    and a "stalled feed" indicator from ``last_frame_age_s`` (Req 2.5, 2.6).
+    """
+    body, code = _camera_proxy('/status')
+    return jsonify(body), code
+
+
+def _camera_proxy_post(path, json_body):
+    """Forward a POST to Camera_Service (8001) and return (json, status).
+
+    The POST twin of :func:`_camera_proxy`. Used by camera routes that set a
+    value on Camera_Service (e.g. selecting a detector model). Like the GET
+    proxy it returns a 502 "camera unavailable" when Camera_Service cannot be
+    reached, so the panel stays usable (Req 2.5).
+
+    Args:
+        path: The Camera_Service path to POST (e.g. ``/model``).
+        json_body: The JSON-serialisable request body to send.
+
+    Returns:
+        A ``(body, status)`` tuple: decoded JSON (or an error dict) and the HTTP
+        status code (502 when Camera_Service is unreachable).
+    """
+    url = f'{CAMERA_SERVICE_URL}{path}'
+    try:
+        payload = json.dumps(json_body or {}).encode('utf-8')
+        req = urllib.request.Request(
+            url, data=payload, method='POST',
+            headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = resp.read().decode('utf-8')
+            try:
+                return json.loads(body), resp.status
+            except ValueError:
+                return {'status': 'error', 'message': 'non-JSON response'}, resp.status
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read().decode('utf-8')), e.code
+        except Exception:
+            return {'status': 'error', 'message': f'HTTP {e.code}'}, e.code
+    except urllib.error.URLError as e:
+        return {'status': 'error', 'camera': 'unavailable',
+                'message': f'camera unavailable at {CAMERA_SERVICE_URL}: {e.reason}'}, 502
+
+
+@app.route('/camera/model', methods=['POST'])
+def camera_model():
+    """Select the detector model Camera_Service loads, by file name.
+
+    SAFETY (path traversal boundary, Req 9.4/9.5): the request ``model`` value
+    becomes a filesystem path (the model file Camera_Service loads), so it is
+    validated with :func:`_validate_within_base` against ``MODELS_DIR`` BEFORE
+    anything is read, written, or forwarded. A value that escapes the base dir —
+    a traversal sequence (``../``), an absolute path, or an out-of-base
+    symlink — resolves outside ``MODELS_DIR`` and is rejected with an "invalid
+    value" response; no path is touched and nothing is proxied.
+
+    On success the request is forwarded to Camera_Service, which owns the actual
+    model load. We forward only the validated base name (never the resolved
+    absolute path) so Camera_Service re-resolves it under its own models dir.
+
+    Body: JSON ``{"model": "<model-file-name>"}``.
+    """
+    data = request.json or {}
+    model = data.get('model')
+    resolved = _validate_within_base(model, MODELS_DIR)
+    if resolved is None:
+        # Reject: read/write nothing, forward nothing (Req 9.5).
+        print(f"[camera] rejected invalid model value: {model!r}")
+        return jsonify({'status': 'error', 'message': 'invalid value'}), 400
+    # Forward only the validated name; Camera_Service re-resolves under its base.
+    body, code = _camera_proxy_post('/model', {'model': os.path.basename(resolved)})
+    return jsonify(body), code
+
+
+@app.route('/camera/ir', methods=['POST'])
+def camera_ir():
+    """Set the IR_Illuminator mode on Camera_Service, by validated mode name.
+
+    SAFETY (Req 9.4/10.3): the request ``mode`` value is validated against the
+    fixed ``IR_MODES`` allowlist via :func:`_validate_allowlist` BEFORE anything
+    is forwarded. The IR illuminator itself is owned by the non-root
+    Camera_Service (Req 10); the Control_Panel only proxies the mode change. An
+    invalid mode is rejected with an "invalid value" response and nothing is
+    proxied to Camera_Service.
+
+    On a valid mode the request is forwarded to Camera_Service ``POST /ir``,
+    which applies it to the hardware (or degrades to "IR unavailable" if the
+    hardware is absent, Req 10.5). Like the other camera routes, an unreachable
+    Camera_Service surfaces as a 502 so the panel stays usable (Req 2.5).
+
+    Body: JSON ``{"mode": "<on|off|auto>"}``.
+    """
+    data = request.json or {}
+    mode = data.get('mode')
+    if _validate_allowlist(mode, IR_MODES) is None:
+        # Reject: forward nothing (Req 10.3, 9.5).
+        print(f"[camera] rejected invalid IR mode value: {mode!r}")
+        return jsonify({'status': 'error', 'message': 'invalid value'}), 400
+    body, code = _camera_proxy_post('/ir', {'mode': mode})
+    return jsonify(body), code
 
 
 # ── Route: range sensor gauge ────────────────────────────────────────────────

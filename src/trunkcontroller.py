@@ -192,6 +192,7 @@ class TrunkController:
     servos[constants.RT_SHOULDER_TILT]    = "RT_SHOULDER_TILT"
     servos[constants.RT_ELBOW_TILT]       = "RT_ELBOW_TILT"
     servos[constants.RT_ELBOW_ROTATOR]    = "RT_ELBOW_ROTATOR"
+    servos[constants.RT_WRIST_TILT]       = "RT_WRIST_TILT"
 
     # Neutral/center angle for the neck pan servo (degrees).
     NECK_CENTER = 90

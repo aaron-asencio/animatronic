@@ -158,6 +158,35 @@
     }
     @keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 
+    /* Camera Live_Feed — read-only MJPEG stream with a server-side overlay toggle */
+    .cam-stage {
+      position: relative; background: #000; border: 1px solid var(--border);
+      border-radius: 10px; overflow: hidden; margin-top: 12px;
+      min-height: 180px; display: flex; align-items: center; justify-content: center;
+    }
+    .cam-stage img {
+      display: block; width: 100%; height: auto; max-height: 70vh; object-fit: contain;
+    }
+    /* Overlay message (unavailable / stalled) shown INSTEAD of a broken image */
+    .cam-overlay {
+      display: none; flex-direction: column; align-items: center; gap: 6px;
+      color: var(--muted); font-size: 0.9rem; text-align: center; padding: 32px 16px;
+    }
+    .cam-overlay.show { display: flex; }
+    .cam-overlay .cam-icon { font-size: 2rem; }
+    .cam-overlay .cam-sub { font-size: 0.78rem; color: var(--muted); }
+    /* When an overlay message is up, hide the (broken) stream image */
+    .cam-stage.unavailable img, .cam-stage.stalled img { display: none; }
+    .cam-controls {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .cam-controls .cam-feed-state {
+      font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums;
+    }
+    .cam-controls .cam-feed-state .dot { color: var(--ok); }
+    .cam-controls .cam-feed-state.warn .dot { color: var(--accent); }
+    .cam-controls .cam-feed-state.down .dot { color: #ff5c5c; }
   </style>
 </head>
 <body>
@@ -204,6 +233,7 @@
     <button class="tab-btn" data-tab="automation">Automation</button>
     <button class="tab-btn" data-tab="napping">Napping</button>
     <button class="tab-btn" data-tab="awake">Awake</button>
+    <button class="tab-btn" data-tab="camera">Camera</button>
   </div>
 
   <!-- Persistent live-mic toggle: available from every tab -->
@@ -460,6 +490,40 @@
         ⏹ Stop awake
       </button>
       <span class="val" id="awake-status" style="color:var(--muted);"></span>
+    </div>
+  </div>
+
+  <!-- CAMERA -->
+  <div class="panel" id="camera">
+    <div class="section-title">Live camera feed</div>
+    <p class="hint" style="margin-top:0;">Read-only Live_Feed from the camera
+       service — this view issues no servo command. Enable the overlay to draw
+       detection bounding boxes on the feed (when detections are present).</p>
+
+    <div class="cam-controls">
+      <label class="switch" title="Draw detection bounding boxes over the feed (server-side overlay).">
+        <input type="checkbox" id="cam-overlay" onchange="setCameraOverlay(this.checked)">
+        <span class="slider-sw"></span>
+      </label>
+      <label for="cam-overlay" style="font-size:0.9rem;">Detection overlay</label>
+      <span class="cam-feed-state" id="cam-feed-state"><span class="dot">●</span> camera: unknown</span>
+    </div>
+
+    <!-- The <img> renders the MJPEG stream directly. When the camera is
+         unavailable or the feed stalls, the image is hidden and a status
+         overlay is shown instead of a broken stream (Req 2.5, 2.6). -->
+    <div class="cam-stage" id="cam-stage">
+      <img id="cam-feed" alt="Live camera feed">
+      <div class="cam-overlay" id="cam-unavailable">
+        <span class="cam-icon">📷</span>
+        <span>camera unavailable</span>
+        <span class="cam-sub">the camera service isn't reachable — other controls still work</span>
+      </div>
+      <div class="cam-overlay" id="cam-stalled">
+        <span class="cam-icon">⏸</span>
+        <span>stalled feed</span>
+        <span class="cam-sub">no new frames from the camera</span>
+      </div>
     </div>
   </div>
 
@@ -902,6 +966,103 @@
         toast('Sensor range: ' + (+data.gate_m).toFixed(1) + ' m');
       }
     }
+
+    // ── Camera Live_Feed + status indicators ─────────────────────────────────
+    // The <img> points at the read-only /camera/stream proxy. The overlay
+    // checkbox toggles ?overlay=1 so the camera service draws detection boxes
+    // server-side. A periodic /camera/status poll decides whether to show the
+    // live stream, a "camera unavailable" indicator (service unreachable / 502),
+    // or a "stalled feed" indicator (last_frame_age_s above the threshold) —
+    // always a status message instead of a broken image (Req 2.5, 2.6).
+    const CAM_STALL_THRESHOLD_S = 5;   // stalled if the newest frame is older than this
+
+    // Build the stream URL honoring the current overlay toggle. A cache-buster
+    // is added only when (re)starting the stream so toggling overlay forces the
+    // <img> to reconnect to the new URL.
+    function cameraStreamUrl() {
+      const overlay = document.getElementById('cam-overlay').checked;
+      return '/camera/stream' + (overlay ? '?overlay=1' : '') +
+             (overlay ? '&' : '?') + 't=' + Date.now();
+    }
+
+    // Start/stop pointing the <img> at the stream. We only load the stream while
+    // the camera tab is visible and the service is available, so a hidden or
+    // down camera doesn't hold an open MJPEG connection.
+    function setCameraFeed(on) {
+      const img = document.getElementById('cam-feed');
+      if (!img) return;
+      if (on) {
+        const url = cameraStreamUrl();
+        if (img.getAttribute('src') !== url) img.src = url;
+      } else if (img.getAttribute('src')) {
+        img.removeAttribute('src');
+      }
+    }
+
+    // Overlay toggle: re-point the stream so the server starts/stops drawing
+    // boxes. Only reconnects when the feed is actually live.
+    function setCameraOverlay(on) {
+      toast('Detection overlay: ' + (on ? 'ON' : 'OFF'));
+      if (_camStage === 'live') setCameraFeed(true);
+    }
+
+    // Reflect camera availability in the stage: 'live' shows the stream,
+    // 'unavailable' and 'stalled' hide it behind a status message.
+    let _camStage = null;
+    function setCameraStage(stage) {
+      const stageEl = document.getElementById('cam-stage');
+      const unavailable = document.getElementById('cam-unavailable');
+      const stalled = document.getElementById('cam-stalled');
+      const feedState = document.getElementById('cam-feed-state');
+      if (!stageEl) return;
+      _camStage = stage;
+      stageEl.classList.toggle('unavailable', stage === 'unavailable');
+      stageEl.classList.toggle('stalled', stage === 'stalled');
+      unavailable.classList.toggle('show', stage === 'unavailable');
+      stalled.classList.toggle('show', stage === 'stalled');
+      setCameraFeed(stage === 'live');
+      if (feedState) {
+        feedState.classList.toggle('warn', stage === 'stalled');
+        feedState.classList.toggle('down', stage === 'unavailable');
+        const label = stage === 'live' ? 'streaming'
+                    : stage === 'stalled' ? 'stalled'
+                    : 'unavailable';
+        feedState.innerHTML = '<span class="dot">●</span> camera: ' + label;
+      }
+    }
+
+    function cameraTabActive() {
+      const p = document.getElementById('camera');
+      return p && p.classList.contains('active');
+    }
+
+    async function pollCamera() {
+      // Only poll while the camera tab is open — no need to probe otherwise.
+      if (!cameraTabActive()) { setCameraFeed(false); setTimeout(pollCamera, 2000); return; }
+      try {
+        const res = await fetch('/camera/status');
+        let data = {};
+        try { data = await res.json(); } catch (e) {}
+        if (!res.ok || (data && data.camera === 'unavailable') || !data.camera_ok) {
+          // Service unreachable (502) or camera not OK → unavailable indicator.
+          setCameraStage('unavailable');
+        } else if (typeof data.last_frame_age_s === 'number' &&
+                   data.last_frame_age_s > CAM_STALL_THRESHOLD_S) {
+          // Frames have stopped flowing → stalled indicator (within ~5s).
+          setCameraStage('stalled');
+        } else if (data.last_frame_age_s === null || data.last_frame_age_s === undefined) {
+          // Camera OK but no frame produced yet → treat as stalled (not broken).
+          setCameraStage('stalled');
+        } else {
+          setCameraStage('live');
+        }
+      } catch (e) {
+        // Fetch failed outright → camera unavailable, never a broken image.
+        setCameraStage('unavailable');
+      }
+      setTimeout(pollCamera, 2000);   // poll every 2s so a stall shows within ~5s
+    }
+    pollCamera();
   </script>
 </body>
 </html>

@@ -442,7 +442,6 @@ class Movements:
             },
             steps=30, delay=0.02,
         )
-
     async def _yawn_cover_fold_up(self):
         """Fold the hand up in front of the mouth (yawn_cover's up-fold).
 
@@ -589,6 +588,74 @@ class Movements:
             if stack is not None:
                 await stack.aclose()
                 self._yawn_cover_stack = None
+
+    # --- yawn_cover gate variants ---------------------------------------- #
+    #
+    # The default ``yawn_cover_lead_in`` above opens the audio gate ~0.5s BEFORE
+    # the hand finishes folding (so clearThroat's clip leads the final settle).
+    # The two variants below reuse the SAME operator-verified cover pose,
+    # verified_pose_override, hold loop, and return -- they differ ONLY in WHEN
+    # the gate opens:
+    #
+    #   * ``yawn_cover_lead_in_settled``: opens the gate AFTER the fold fully
+    #     settles -- "gate audio until the hand reaches its final position".
+    #     Used by coughLong / coughMedium.
+    #   * ``yawn_cover_lead_in_gated``: opens the gate a fixed ``_YC_GATE_SHORT``
+    #     (250ms) after the routine begins while the fold runs underneath, so a
+    #     short clip (gurgle_burp.wav) starts promptly and the hand reaches the
+    #     mouth as it plays. Used by burp.
+    #
+    # Both pair with the existing ``yawn_cover_loop_body`` (its
+    # ``_await_pending_fold`` is a no-op when no fold task is pending, as with
+    # the settled variant) and ``yawn_cover_return``.
+
+    # Fixed short audio-gate delay for the ``burp`` routine: the cover-mouth
+    # movement supplies the gate, so its lead-in opens the gate this long after
+    # the routine begins while the fold continues underneath.
+    _YC_GATE_SHORT = 0.25
+
+    async def yawn_cover_lead_in_settled(self):
+        """Lead-in variant: fully fold the hand to the mouth, THEN open the gate.
+
+        Identical to ``yawn_cover_lead_in`` except the up-fold is AWAITED to
+        completion before this coroutine returns, so the framework opens the
+        audio gate only once the hand has reached its final cover position --
+        "gate audio until the hand reaches its final position". Opens the same
+        ``verified_pose_override`` on the per-adapter ``_yawn_cover_stack`` held
+        across lead-in -> loop -> return (``yawn_cover_return`` closes it). No
+        deferred fold task is created, so the paired ``yawn_cover_loop_body``'s
+        ``_await_pending_fold`` is a harmless no-op. Contains no audio logic;
+        owns head channels 0,1 and arm channels 4-7.
+        """
+        self._yawn_cover_stack = contextlib.AsyncExitStack()
+        self._yawn_cover_stack.enter_context(
+            TrunkController.verified_pose_override(self._YAWN_COVER_OVERRIDE))
+        # Center the head, then fold the hand fully up BEFORE returning, so the
+        # gate opens only once the hand has settled at the mouth.
+        await self._yawn_cover_center_head()
+        await self._yawn_cover_fold_up()
+
+    async def yawn_cover_lead_in_gated(self):
+        """Lead-in variant: open the gate ``_YC_GATE_SHORT`` (250ms) into the fold.
+
+        Like ``yawn_cover_lead_in`` it centers the head, launches the up-fold as
+        a background task (stored on ``self._yawn_cover_fold_task`` and finished
+        at the top of the first hold), and holds the same
+        ``verified_pose_override`` on ``_yawn_cover_stack``. It differs only in
+        gate timing: rather than returning ~0.5s before the fold ends, it returns
+        a FIXED ``_YC_GATE_SHORT`` seconds after the fold begins, so a short clip
+        (``gurgle_burp.wav``) starts ~250ms in and the hand reaches the mouth as
+        it plays. Contains no audio logic; owns head channels 0,1 and arm
+        channels 4-7.
+        """
+        self._yawn_cover_stack = contextlib.AsyncExitStack()
+        self._yawn_cover_stack.enter_context(
+            TrunkController.verified_pose_override(self._YAWN_COVER_OVERRIDE))
+        # Center the head, then start the fold WITHOUT awaiting it so the gate
+        # can open a fixed 250ms in, while the fold keeps running underneath.
+        await self._yawn_cover_center_head()
+        self._yawn_cover_fold_task = asyncio.ensure_future(self._yawn_cover_fold_up())
+        await asyncio.sleep(self._YC_GATE_SHORT)
 
     async def face_palm(self):
         """Face palm: head drops into the hand, shakes 3x in dismay, then recovers.

@@ -19,6 +19,16 @@ HEAD gestures (channels 0–1):
 COMPOSITE gestures (arm + head simultaneously):
     waveAndSwivel, waveAndSwivelSmooth,
     comeAndLook, reachAndLook, patrol
+
+Tracking Mode (NOT a controller gesture):
+    Head tracking is a camera-fed Mode, not an audio-free one-shot gesture, so
+    it is deliberately absent from this module's action_map. It needs the
+    Camera_Service (src/camera_service.py) running and acquires only the
+    Neck_Group lock. Run it from animatronic.py instead:
+        sudo python3 src/animatronic.py --action=tracking
+    (optional flags: --camera-url, --scan-timeout, --max-step, --deadband,
+    --conf). It cannot be exercised standalone from controller.py because the
+    gestures here are self-contained one-shots with no detection feed.
 """
 
 from movements import Movements

@@ -55,6 +55,8 @@ animatronic-v2/
 │       └── alsa/               # ALSA sound-card configuration
 ├── tests/                      # pytest suite (hypothesis property + unit tests)
 ├── audio/                      # WAV/MP3 files (deployed to ~/Music/ on the Pi)
+├── models/                     # Camera detector: coco_labels.txt (tracked) + *.tflite (gitignored)
+├── deploy/                     # Deployment assets (systemd unit for Camera_Service)
 ├── .venv/                      # Python virtualenv (repo root)
 ├── requirements.txt
 └── README.md
@@ -98,8 +100,11 @@ Key packages:
 | `adafruit-circuitpython-servokit` | 1.3.22 | PCA9685 servo driver ([docs](https://docs.circuitpython.org/projects/servokit/en/latest/)) |
 | `Adafruit-Blinka` | 8.66.2 | CircuitPython hardware abstraction for Linux ([docs](https://learn.adafruit.com/circuitpython-on-raspberrypi-linux)) |
 | `RPi.GPIO` | 0.7.1 | Raspberry Pi GPIO access |
-| `numpy` | 2.3.4 | Amplitude analysis for jaw-motor sync |
+| `numpy` | >=1.24,<2 | Amplitude analysis for jaw sync; pinned `<2` so the venv's numpy matches the apt `python3-picamera2` C-extension ABI (see [Camera vision](#camera-vision)) |
 | `PyAudio` | 0.2.14 | Audio file playback and mic streaming |
+| `tflite-runtime` | 2.14.0 | TFLite inference for the camera object detector |
+| `opencv-python-headless` | 4.11.0.86 | JPEG encode + overlay drawing for the camera feed (4.x for numpy-1.x compat) |
+| `picamera2` | apt (`python3-picamera2`) | Camera capture — NOT pip; provided by the OS, hence the venv is built `--system-site-packages` |
 
 ---
 
@@ -591,6 +596,112 @@ curl -X POST http://localhost:5000/effects \
 
 `GET /status` returns the current jaw config, effect config, and available
 styles.
+
+---
+
+## Camera vision
+
+An optional camera pipeline adds a live feed, on-device object/person detection,
+head tracking, and IR night operation. It runs as a **separate, non-root
+process** — `src/camera_service.py` — that owns the Raspberry Pi Camera Module 3
+(NoIR), and the web control panel proxies its views into the **Camera** tab.
+
+### Why the venv is built with `--system-site-packages`
+
+`picamera2` is not a pip package on Raspberry Pi OS (bookworm); it ships via apt
+as `python3-picamera2`, bound to the system `libcamera`. So the project venv is
+created with system site-packages visible:
+
+```bash
+python3 -m venv --system-site-packages .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Because the apt `picamera2` C-extensions (e.g. `simplejpeg`) are compiled against
+the **system numpy 1.x ABI**, `numpy` is pinned `<2` and `opencv-python-headless`
+to the 4.x line (5.x hard-requires numpy 2). Mixing numpy 2.x in the venv breaks
+`import picamera2` with a `numpy.dtype size changed` ABI error.
+
+### Enabling the camera on the Pi
+
+The sensor must be visible to libcamera first:
+
+```bash
+rpicam-hello --list-cameras      # should list the imx708 (Camera Module 3)
+```
+
+If it reports *No cameras available*, add the overlay to
+`/boot/firmware/config.txt` and reboot:
+
+```
+camera_auto_detect=0
+dtoverlay=imx708
+```
+
+### Detector model
+
+Detection uses a quantized **SSD-MobileNet v2 (COCO)** TFLite model with the
+80-class COCO label set. The model binary is **not** committed (it is gitignored,
+~6 MB); fetch it into `models/` from Google's Coral `test_data` repo:
+
+```bash
+mkdir -p models
+curl -fsSL -o models/ssd_mobilenet_v2_coco_quant_postprocess.tflite \
+  https://github.com/google-coral/test_data/raw/master/ssd_mobilenet_v2_coco_quant_postprocess.tflite
+curl -fsSL -o models/coco_labels.txt \
+  https://raw.githubusercontent.com/google-coral/test_data/master/coco_labels.txt
+```
+
+`models/coco_labels.txt` *is* tracked (it is small and the index mapping matters
+— index 0 is `person`). Any `models/*.tflite` is ignored.
+
+> Detection is **optional**: with no model configured, Camera_Service still
+> serves the live feed and head tracking; `/detections` is just empty.
+
+### Configuration (environment variables)
+
+`camera_service.py` reads these at startup:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CAMERA_MODEL_PATH` | *(unset)* | Path to the `.tflite` detector model. Unset = no detection. |
+| `CAMERA_LABELS_PATH` | *(unset)* | Path to the COCO labels file. |
+| `CAMERA_CONF_THRESHOLD` | `0.5` | Min confidence to report a detection, clamped `[0,1]`. Lower (e.g. `0.3`) surfaces more / smaller objects at the cost of more false positives. |
+
+### Running as a service (recommended)
+
+A systemd unit is provided at `deploy/camera-service.service` (runs as the
+non-root `aaron` user; model + labels + confidence baked in as `Environment=`).
+Install and start it:
+
+```bash
+sudo cp deploy/camera-service.service /etc/systemd/system/camera-service.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now camera-service          # start now + on every boot
+
+journalctl -u camera-service -f                     # follow logs
+curl -s http://127.0.0.1:8001/status                # {"camera_ok":true,"capturing":true,...}
+```
+
+After editing the unit (e.g. to change the model or threshold), re-copy it,
+`daemon-reload`, then `restart` — a plain `restart` reloads the OLD installed
+copy:
+
+```bash
+sudo cp deploy/camera-service.service /etc/systemd/system/camera-service.service
+sudo systemctl daemon-reload && sudo systemctl restart camera-service
+```
+
+Camera_Service binds **loopback only** (`127.0.0.1:8001`), so frames and
+detections never leave the device; the control panel on port 8000 proxies them.
+
+### Swapping detector models
+
+To try a different model, drop its `.tflite` in `models/`, point
+`CAMERA_MODEL_PATH` at it in the unit, and reinstall + restart (above). The code
+auto-identifies the SSD post-process outputs by tensor name, so any standard
+COCO SSD-MobileNet / EfficientDet-Lite export with the same label set is a
+drop-in. Tune `CAMERA_CONF_THRESHOLD` without touching code.
 
 ---
 

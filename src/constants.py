@@ -17,7 +17,8 @@ RT_SHOULDER_ROTATOR = 7  # Rotates the shoulder joint (raises/lowers the whole a
 RT_SHOULDER_TILT    = 6  # Tilts the shoulder forward/back
 RT_ELBOW_TILT       = 5  # Bends the elbow up/down
 RT_ELBOW_ROTATOR    = 4  # Rotates the forearm (wrist/palm orientation)
-
+RT_WRIST_TILT       = 3   # Bending the wrist so that the palm moves toward the inner side of the forearm
+ 
 # --- Head / neck (channels 0-1) ---
 NECK_PAN  = 0  # Left-right head rotation
 NECK_TILT = 1  # Up-down head tilt
@@ -31,6 +32,7 @@ servos[RT_SHOULDER_ROTATOR] = "RT_SHOULDER_ROTATOR"
 servos[RT_SHOULDER_TILT]    = "RT_SHOULDER_TILT"
 servos[RT_ELBOW_TILT]       = "RT_ELBOW_TILT"
 servos[RT_ELBOW_ROTATOR]    = "RT_ELBOW_ROTATOR"
+servos[RT_WRIST_TILT]       = "RT_WRIST_TILT"
 
 # Default center position (degrees) for the neck pan servo.
 # Used as the resting/neutral angle between movements.
@@ -39,6 +41,7 @@ NECK_CENTER = 90
 # --- GPIO pins (not PCA9685 servo channels) ---
 EYE_LIGHT_PIN = 6      # gpiozero LED — eye lights
 MOUTH_MOTOR_PIN = 15   # gpiozero DigitalOutputDevice — jaw motor (pin 18 no longer working)
+IR_ILLUMINATOR_PIN = 12  # gpiozero LED/OutputDevice — IR illuminator for NoIR night vision (Req 10)
 
 # HC-SR04 ultrasonic range sensor (gpiozero DistanceSensor).
 # TRIG is an output (fires the ping); ECHO is an input (times the return pulse).
@@ -65,6 +68,11 @@ RANGE_ECHO_PIN = 24    # HC-SR04 echo (input, via voltage divider)
 #     center  = 90  (head level)
 #     increase -> head lowers (chin toward chest)
 #     decrease -> head raises (chin up)
+#
+# RT_WRIST_TILT (channel 3) - wrist bend
+#   center = 90 = straight (hand inline with forearm)
+#   increase -> flexion (wrist bends hand towards underside of forearm) 230
+#   decrease -> extension (wrist bends hand back towards top of forearm)
 #
 # RT_ELBOW_TILT (channel 5) — elbow bend
 #     5 = straight (arm extended). LOCKED at 5 for now (see SAFE_LIMITS).
@@ -117,6 +125,7 @@ RANGE_ECHO_PIN = 24    # HC-SR04 echo (input, via voltage divider)
 SAFE_LIMITS = {
     NECK_PAN:            (5, 175),    # left-right head rotation: 90=center, ~85 deg each way (natural neck range)
     NECK_TILT:           (30, 160),   # up-down: 90=level, higher=chin down (160=chin-to-chest stop), lower=head up
+    RT_WRIST_TILT:       (10,230),    #
     RT_SHOULDER_ROTATOR: (0, 270),    # raise/lower whole arm: 0=arm at side, 270=arm ~170deg up (nearly straight up); increase=arm up. Electrical 0-270 maps to a ~170deg physical arc (gearing), which limits over-rotation and mitigates most shoulder tilt+rotator collision risk.
     RT_SHOULDER_TILT:    (45, 270),   # shoulder raise/lower: increase=raise arm from side (abduction), decrease=toward body (adduction); 135=arm straight out. Below ~45 risks body collision (depends on RT_SHOULDER_ROTATOR) — min 55 stays clear.
     RT_ELBOW_TILT:       (0, 160),     # elbow bend — TEMPORARILY widened to 0-90 for calibration/collision testing (was locked at 5=straight). Landmarks: 5=straight, 145=right angle, 210=full flexion. NOTE: elbow flexion is only collision-safe in certain shoulder positions — keep the arm clear of the body while testing this range.
@@ -129,10 +138,11 @@ SAFE_LIMITS = {
 REST_POSITIONS = {
     NECK_PAN:            90,   # centered
     NECK_TILT:           90,   # head level (new neutral after reseat)
+    RT_WRIST_TILT:       90,
     RT_SHOULDER_ROTATOR: 0,    # arm at side (within (0,270))
     RT_SHOULDER_TILT:    55,   # arm lowered toward side (within (55,245))
     RT_ELBOW_TILT:       5,    # elbow straight (within locked (5,5) range)
-    RT_ELBOW_ROTATOR:    150,  # forearm neutral — hand parallel to side
+    RT_ELBOW_ROTATOR:    150  # forearm neutral — hand parallel to side
 }
 
 
