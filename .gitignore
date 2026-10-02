@@ -110,12 +110,24 @@ path/
 *.log
 app.log
 
-# Servo mutual-exclusion lockfile (runtime, machine-local)
+# Servo mutual-exclusion lockfiles (runtime, machine-local): the whole-robot
+# lock and the per-group neck/arm locks.
 .servo.lock
+.servo.neck.lock
+src/.servo.neck.lock
+.servo.arm.lock
+src/.servo.arm.lock
 
 # Napping-mode stop-request sentinel (runtime, machine-local)
 .nap_stop
 src/.nap_stop
+
+# Range sensor runtime state (machine-local, written at runtime, not committed):
+# latest HC-SR04 distance reading and the detection-gate config.
+.range_reading
+src/.range_reading
+.range_config
+src/.range_config
 
 # Kinematic collision model: calibration backups (timestamped, machine-local)
 src/config/calibration.json.*.bak
