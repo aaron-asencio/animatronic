@@ -48,6 +48,52 @@ COOLDOWN_MAX = 600
 DEADBAND_FRAC_MIN = 0.0      # Req 4.4
 DEADBAND_FRAC_MAX = 0.5
 
+# Vertical aim fraction: WHERE inside the target's bbox the tracker aims
+# vertically, as a fraction of the box height from its TOP edge (y1). 0.0 aims
+# at the very top of the box, 0.5 at its geometric center, 1.0 at the bottom.
+# A full-body person box has its geometric center at the torso/waist, so aiming
+# there makes the head point BELOW the face (the "looking down" bias). Aiming
+# a bit above center (~0.35, upper-chest/head region) targets the face without
+# over-tilting toward the very top of the box (we track people, not birds).
+# Clamped to the whole box so the aim point always lies on the target.
+AIM_FRAC_H_MIN = 0.0
+AIM_FRAC_H_MAX = 1.0
+
+# Tracking-only neck-tilt geometry (degrees). These are SEPARATE from the global
+# constants.SAFE_LIMITS / REST_POSITIONS for NECK_TILT (which every head gesture
+# uses, where 90=level, range 30-160). On THIS physical build 90 is slightly
+# chin-up and ~105 is a level gaze at a standing person's face, so Tracking_Mode
+# uses its own center and a tight band constrained to roughly head height — it
+# tracks people, not the ceiling. Confining tilt to a narrow band around the
+# level-gaze center also prevents the head from pitching far enough to throw the
+# person out of the frame (closed-loop overshoot). Gestures are unaffected.
+# tilt_center_deg: the level-gaze tilt angle; the loop seeds and recenters here.
+# tilt_min_deg / tilt_max_deg: the band tracking clamps every tilt command into.
+TILT_CENTER_DEG_DEFAULT = 105.0
+TILT_MIN_DEG_DEFAULT = 100.0
+TILT_MAX_DEG_DEFAULT = 110.0
+# Hard safety envelope for these tracking tilt values: never allow a tracking
+# tilt angle outside the servo's own global SAFE_LIMITS for NECK_TILT (30-160).
+# The TrunkController.set_angle clamp is still the final authority on hardware;
+# this just keeps the config itself sane.
+TILT_ENVELOPE_MIN = 30.0
+TILT_ENVELOPE_MAX = 160.0
+
+# Proportional settle gain for the neck control loop. The per-update step is
+# proportional to the FRACTIONAL offset of the person from frame center:
+#   step_deg = settle_gain * (offset_px / half_frame_px) * max_step_deg
+# then capped at max_step_deg. This replaces the old bang-bang behavior (always
+# step the full max_step toward target), which overshot center and oscillated
+# left-right / up-down without ever settling. With a proportional step the head
+# moves fast when the person is far off-center and eases to a stop as it nears
+# center, so the gaze settles. gain 1.0 reaches max_step at the frame edge;
+# lower gain = gentler/slower approach (more damping, less overshoot). Clamped
+# to a sane [0.05, 1.0] range. 0.7 keeps a responsive follow while staying below
+# 1.0 so it still damps toward center instead of overshooting into a limit cycle.
+SETTLE_GAIN_DEFAULT = 0.7
+SETTLE_GAIN_MIN = 0.05
+SETTLE_GAIN_MAX = 1.0
+
 PERSON_LABEL = "person"
 IR_MODES = ("on", "off", "auto")
 DEFAULT_IR_MODE = "auto"
@@ -196,6 +242,29 @@ class TrackingConfig:
             width, clamped to ``[0.0, 0.5]`` (Req 4.4).
         deadband_frac_h: Vertical deadband half-width as a fraction of frame
             height, clamped to ``[0.0, 0.5]`` (Req 4.4).
+        aim_frac_h: Where inside the target bbox the tracker aims vertically, as
+            a fraction of box height from the top edge; clamped to ``[0.0, 1.0]``
+            (0.0 = top, 0.5 = geometric center, 1.0 = bottom). Default 0.35 aims
+            at the upper-chest/head region on a full-body person box so the head
+            tilts up to the face without over-reaching toward the top of the box.
+        tilt_center_deg: Tracking-only "level gaze" NECK_TILT angle; the loop
+            seeds and recenters the neck here instead of the global rest (90).
+            Default 105 (level on this build). Clamped to the servo envelope
+            ``[30, 160]`` and then into ``[tilt_min_deg, tilt_max_deg]``.
+        tilt_min_deg: Lower bound of the tracking tilt band (head highest).
+            Default 100. Clamped to the servo envelope ``[30, 160]``.
+        tilt_max_deg: Upper bound of the tracking tilt band (head lowest).
+            Default 110. Clamped to the servo envelope and kept >= tilt_min_deg.
+            Tracking clamps every tilt command to ``[tilt_min_deg, tilt_max_deg]``
+            so the head stays at head height and cannot pitch the person out of
+            frame. This band is independent of the global SAFE_LIMITS gestures
+            use.
+        settle_gain: Proportional control gain for the neck step. The per-update
+            step is ``settle_gain * (offset / half_frame) * max_step_deg``,
+            capped at ``max_step_deg``; clamped to ``[0.05, 1.0]`` (default 0.5).
+            Lower = gentler, more damped approach (less overshoot); higher =
+            snappier. Replaces fixed full-step motion so the gaze settles instead
+            of oscillating.
         max_step_deg: Maximum neck angle change per update, clamped to
             ``[1, 30]`` degrees (Req 5.6).
         scan_timeout_s: Scan_Sweep reacquire timeout, clamped to ``[1, 120]``
@@ -211,9 +280,14 @@ class TrackingConfig:
     capture_fps: int = 15
     stream_fps: int = 10
     conf_threshold: float = 0.5
-    deadband_frac_w: float = 0.05
-    deadband_frac_h: float = 0.05
-    max_step_deg: float = 5.0
+    deadband_frac_w: float = 0.08
+    deadband_frac_h: float = 0.08
+    aim_frac_h: float = 0.35
+    tilt_center_deg: float = TILT_CENTER_DEG_DEFAULT
+    tilt_min_deg: float = TILT_MIN_DEG_DEFAULT
+    tilt_max_deg: float = TILT_MAX_DEG_DEFAULT
+    settle_gain: float = SETTLE_GAIN_DEFAULT
+    max_step_deg: float = 8.0
     scan_timeout_s: int = 10
     ir_mode: str = DEFAULT_IR_MODE
     ir_ambient_threshold: float = DEFAULT_IR_AMBIENT_THRESHOLD
@@ -243,6 +317,28 @@ class TrackingConfig:
         )
         self.deadband_frac_h = float(
             _clamp(self.deadband_frac_h, DEADBAND_FRAC_MIN, DEADBAND_FRAC_MAX)
+        )
+        self.aim_frac_h = float(
+            _clamp(self.aim_frac_h, AIM_FRAC_H_MIN, AIM_FRAC_H_MAX)
+        )
+
+        # Tracking tilt band: clamp each value into the servo envelope [30, 160],
+        # ensure max >= min, then clamp the center into the resulting band so the
+        # loop seeds/recenters inside the band it will also clamp commands to.
+        tmin = _clamp(self.tilt_min_deg, TILT_ENVELOPE_MIN, TILT_ENVELOPE_MAX)
+        tmax = _clamp(self.tilt_max_deg, TILT_ENVELOPE_MIN, TILT_ENVELOPE_MAX)
+        if tmax < tmin:
+            # Swap rather than silently collapse so a reversed pair still yields
+            # a usable (if narrow) band instead of an empty one.
+            tmin, tmax = tmax, tmin
+        self.tilt_min_deg = float(tmin)
+        self.tilt_max_deg = float(tmax)
+        self.tilt_center_deg = float(
+            _clamp(self.tilt_center_deg, self.tilt_min_deg, self.tilt_max_deg)
+        )
+
+        self.settle_gain = float(
+            _clamp(self.settle_gain, SETTLE_GAIN_MIN, SETTLE_GAIN_MAX)
         )
         self.max_step_deg = float(
             _clamp(self.max_step_deg, MAX_STEP_DEG_MIN, MAX_STEP_DEG_MAX)
