@@ -110,8 +110,13 @@ path/
 *.log
 app.log
 
-# Servo mutual-exclusion lockfile (runtime, machine-local)
+# Servo mutual-exclusion lockfiles (runtime, machine-local): the whole-robot
+# lock and the per-group neck/arm locks.
 .servo.lock
+.servo.neck.lock
+src/.servo.neck.lock
+.servo.arm.lock
+src/.servo.arm.lock
 
 # Napping-mode stop-request sentinel (runtime, machine-local)
 .nap_stop
