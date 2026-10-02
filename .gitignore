@@ -117,6 +117,13 @@ app.log
 .nap_stop
 src/.nap_stop
 
+# Range sensor runtime state (machine-local, written at runtime, not committed):
+# latest HC-SR04 distance reading and the detection-gate config.
+.range_reading
+src/.range_reading
+.range_config
+src/.range_config
+
 # Kinematic collision model: calibration backups (timestamped, machine-local)
 src/config/calibration.json.*.bak
 # Collision-model preview renders and probe disagreement logs
