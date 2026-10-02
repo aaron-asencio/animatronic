@@ -1882,6 +1882,11 @@ class Animatronic:
         deadband=None,
         conf=None,
         scan_timeout=None,
+        aim_frac=None,
+        tilt_center=None,
+        tilt_min=None,
+        tilt_max=None,
+        settle_gain=None,
         routine_map=None,
         action_map=None,
     ):
@@ -1941,6 +1946,29 @@ class Animatronic:
             scan_timeout: Scan_Sweep reacquire timeout in seconds; forwarded to
                 ``TrackingConfig.scan_timeout_s`` (clamped to [1, 120]) for use
                 by task 10.2. ``None`` uses the default (10 s).
+            aim_frac: Vertical aim point within the target bbox as a fraction of
+                its height from the top edge; forwarded to
+                ``TrackingConfig.aim_frac_h`` (clamped to [0.0, 1.0]). ``None``
+                uses the default (0.35 = upper chest/head region), which
+                corrects the downward bias of aiming at a full-body box's
+                torso-level geometric center without over-tilting toward the top
+                of the box. Use 0.5 for the old center-of-box behavior.
+            tilt_center: Tracking-only level-gaze NECK_TILT angle; forwarded to
+                ``TrackingConfig.tilt_center_deg``. ``None`` uses the default
+                (105, level on this build). The loop seeds and winds down the
+                neck here instead of the global rest 90.
+            tilt_min: Lower bound (head highest) of the tracking tilt band;
+                forwarded to ``TrackingConfig.tilt_min_deg``. ``None`` uses the
+                default (100).
+            tilt_max: Upper bound (head lowest) of the tracking tilt band;
+                forwarded to ``TrackingConfig.tilt_max_deg``. ``None`` uses the
+                default (110). Tracking clamps every tilt command into
+                ``[tilt_min, tilt_max]`` so the head stays at head height and
+                cannot pitch the person out of frame.
+            settle_gain: Proportional control gain; forwarded to
+                ``TrackingConfig.settle_gain`` (clamped to [0.05, 1.0]). ``None``
+                uses the default (0.5). Lower = gentler/more damped approach
+                (less overshoot/oscillation); higher = snappier.
             routine_map: The ``DetectionRoutineMap`` evaluated each loop
                 iteration to decide whether a detection condition should trigger
                 a Routine (Req 7.2, 7.5, 7.8). ``None`` builds the seed-default
@@ -1975,6 +2003,16 @@ class Animatronic:
             cfg_kwargs["conf_threshold"] = conf
         if scan_timeout is not None:
             cfg_kwargs["scan_timeout_s"] = scan_timeout
+        if aim_frac is not None:
+            cfg_kwargs["aim_frac_h"] = aim_frac
+        if tilt_center is not None:
+            cfg_kwargs["tilt_center_deg"] = tilt_center
+        if tilt_min is not None:
+            cfg_kwargs["tilt_min_deg"] = tilt_min
+        if tilt_max is not None:
+            cfg_kwargs["tilt_max_deg"] = tilt_max
+        if settle_gain is not None:
+            cfg_kwargs["settle_gain"] = settle_gain
         cfg = TrackingConfig(**cfg_kwargs)
 
         # Build the trigger allowlist + Detection_Routine_Map. These default to
@@ -2009,7 +2047,7 @@ class Animatronic:
             # helper already recenters in its own finally, but this is the final
             # backstop if asyncio.run itself raised before/after that path.
             print(f"[tracking] error during tracking loop: {e}")
-            self._recenter_neck()
+            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
             pending_trigger = None
         finally:
             # Clear the stop signal on exit so the next Mode starts clean and the
@@ -2097,11 +2135,20 @@ class Animatronic:
         """
         trunk = Movements.trunkController
 
-        # Track the commanded neck angles locally, seeded from REST_POSITIONS,
-        # so next_neck_targets gets a stable cur_pan/cur_tilt without a hardware
-        # read-back.
+        # Track the commanded neck angles locally so next_neck_targets gets a
+        # stable cur_pan/cur_tilt without a hardware read-back. Pan seeds from
+        # the global rest (90 = centered). Tilt seeds from the TRACKING tilt
+        # center (cfg.tilt_center_deg, the level-gaze angle for a standing
+        # person's face on this build — NOT the global rest 90), so tracking
+        # starts aimed at head height and stays within its tilt band.
         cur_pan = float(constants.REST_POSITIONS[constants.NECK_PAN])
-        cur_tilt = float(constants.REST_POSITIONS[constants.NECK_TILT])
+        cur_tilt = float(cfg.tilt_center_deg)
+
+        # Drive the neck to the tracking start pose up front so the first
+        # command works from the real level-gaze center rather than wherever the
+        # neck happened to rest (every write clamped by set_angle).
+        trunk.set_angle(constants.NECK_PAN, cur_pan)
+        cur_tilt = trunk.set_angle(constants.NECK_TILT, cur_tilt)
 
         reason = self.NAP_INTERRUPT_STOP
         pending_trigger = None
@@ -2162,7 +2209,9 @@ class Animatronic:
                     continue
 
                 offset = compute_offset(target, frame_w, frame_h, cfg)
-                targets = next_neck_targets(offset, cur_pan, cur_tilt, cfg)
+                targets = next_neck_targets(
+                    offset, cur_pan, cur_tilt, cfg, frame_w, frame_h
+                )
 
                 # Apply each target through set_angle (SAFE_LIMITS clamp, Req
                 # 5.5) — the only hardware write, scoped to Neck_Group channels
@@ -2185,7 +2234,8 @@ class Animatronic:
             # For a trigger this is the "release the Neck_Group BEFORE the
             # Routine drives jaw/audio" wind-down (Req 7.7): the recenter happens
             # here, and main() releases the lock before dispatching the Routine.
-            self._recenter_neck()
+            # Tilt winds down to the tracking level-gaze center, not global rest.
+            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
 
         return reason, pending_trigger
 
@@ -2341,23 +2391,41 @@ class Animatronic:
             await asyncio.sleep(self._SCAN_STEP_PERIOD_S)
 
     @staticmethod
-    def _recenter_neck():
-        """Drive ONLY the Neck_Group channels to ``REST_POSITIONS``.
+    def _recenter_neck(tilt_angle=None):
+        """Drive ONLY the Neck_Group channels to their resting pan/tilt.
 
         Used by Tracking_Mode on wind-down (stop request) and on any error so
-        the neck returns to its resting pan/tilt. Writes go through
-        ``TrunkController.set_angle`` so each angle is clamped to
-        ``SAFE_LIMITS`` (Req 5.5), and ONLY the Neck_Group channels
-        (``NECK_PAN``/``NECK_TILT``) are touched — never an arm channel that a
+        the neck returns to a known pose. Pan always returns to the global rest
+        (``REST_POSITIONS[NECK_PAN]`` = 90, centered). Tilt returns to
+        ``tilt_angle`` when given — Tracking_Mode passes its tracking tilt
+        center (``cfg.tilt_center_deg``, the level-gaze angle) so the head winds
+        down to head height rather than the global rest 90 (which is chin-up on
+        this build). When ``tilt_angle`` is None it falls back to the global
+        ``REST_POSITIONS[NECK_TILT]``.
+
+        Writes go through ``TrunkController.set_angle`` so each angle is clamped
+        to the global ``SAFE_LIMITS`` (Req 5.5) — the hardware clamp is always
+        the final authority — and ONLY the Neck_Group channels
+        (``NECK_PAN``/``NECK_TILT``) are touched, never an arm channel a
         concurrent Gesture may own (Req 5.8, 6.11). Never raises (recovery path).
+
+        Args:
+            tilt_angle: NECK_TILT angle to return to; defaults to the global
+                ``REST_POSITIONS[NECK_TILT]`` when None.
         """
         trunk = Movements.trunkController
-        for channel in (constants.NECK_PAN, constants.NECK_TILT):
-            rest_angle = constants.REST_POSITIONS.get(channel)
-            if rest_angle is None:
+        rest_targets = {
+            constants.NECK_PAN: constants.REST_POSITIONS.get(constants.NECK_PAN),
+            constants.NECK_TILT: (
+                tilt_angle if tilt_angle is not None
+                else constants.REST_POSITIONS.get(constants.NECK_TILT)
+            ),
+        }
+        for channel, angle in rest_targets.items():
+            if angle is None:
                 continue
             try:
-                trunk.set_angle(channel, rest_angle)
+                trunk.set_angle(channel, angle)
             except Exception as e:
                 name = constants.servos.get(channel, f"ch{channel}")
                 print(f"[tracking] could not recenter {name}: {e}")
@@ -2601,6 +2669,11 @@ def main(args):
                     deadband=args.deadband,
                     conf=args.conf,
                     scan_timeout=args.scan_timeout,
+                    aim_frac=args.aim_frac,
+                    tilt_center=args.tilt_center,
+                    tilt_min=args.tilt_min,
+                    tilt_max=args.tilt_max,
+                    settle_gain=args.settle_gain,
                     action_map=action_map,
                 )
             # The `with` block has now exited: the Neck_Group lock is RELEASED
@@ -2692,6 +2765,37 @@ if __name__ == '__main__':
     parser.add_argument('--conf', dest='conf', type=float, default=None,
                         help='Tracking mode: detector confidence threshold, '
                              'clamped to 0.0-1.0 (default: 0.5). Only used with '
+                             '--action=tracking.')
+    parser.add_argument('--aim-frac', dest='aim_frac', type=float, default=None,
+                        help='Tracking mode: vertical aim point within the '
+                             'target box as a fraction of its height from the '
+                             'top edge, clamped to 0.0-1.0 (default: 0.35 = aim '
+                             'at the upper chest/head; 0.5 = box center). Lower '
+                             'values raise the head; raise toward 0.5 to lower '
+                             'it. Only used with --action=tracking.')
+    parser.add_argument('--tilt-center', dest='tilt_center', type=float,
+                        default=None,
+                        help='Tracking mode: level-gaze NECK_TILT angle the '
+                             'head seeds/winds down to, within [30,160] and the '
+                             'tilt band (default: 105 = level on this build; '
+                             'global rest 90 is chin-up). Only used with '
+                             '--action=tracking.')
+    parser.add_argument('--tilt-min', dest='tilt_min', type=float, default=None,
+                        help='Tracking mode: lowest NECK_TILT value (head '
+                             'highest) tracking may command, within [30,160] '
+                             '(default: 100). Only used with --action=tracking.')
+    parser.add_argument('--tilt-max', dest='tilt_max', type=float, default=None,
+                        help='Tracking mode: highest NECK_TILT value (head '
+                             'lowest) tracking may command, within [30,160] '
+                             '(default: 110). Tracking clamps tilt to '
+                             '[tilt-min, tilt-max] so the head stays at head '
+                             'height. Only used with --action=tracking.')
+    parser.add_argument('--settle-gain', dest='settle_gain', type=float,
+                        default=None,
+                        help='Tracking mode: proportional control gain, clamped '
+                             'to 0.05-1.0 (default: 0.5). Lower = gentler, more '
+                             'damped approach that settles without bopping back '
+                             'and forth; higher = snappier. Only used with '
                              '--action=tracking.')
     parser.add_argument('--camera-url', dest='camera_url', default=DEFAULT_CAMERA_URL,
                         help='Tracking mode: base URL of Camera_Service '
