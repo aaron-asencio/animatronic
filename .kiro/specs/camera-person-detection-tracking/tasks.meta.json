@@ -1,0 +1,507 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Add verified vision dependencies to `requirements.txt` (bookworm / aarch64 / Python 3.11)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872351432
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872375797
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872592495
+      }
+    ],
+    "1.2 Create `src/vision_models.py` with the feature's data models": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872353600
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872376427
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872594151
+      }
+    ],
+    "2.1 Refactor `src/servo_lock.py` into per-group locks": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872354000
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872377797
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872595150
+      }
+    ],
+    "2.2 Implement multi-group atomic acquisition and rest-on-release": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872354505
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872603182
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872806472
+      }
+    ],
+    "2.3 Add backward-compatible whole-robot `servo_lock()`": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872354945
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872830479
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872993162
+      }
+    ],
+    "3. Checkpoint — lock + models": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872355188
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873000868
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873014490
+      }
+    ],
+    "4.1 Create `src/camera_service.py` capture loop + latest-frame buffer": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872355930
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872604183
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872809057
+      }
+    ],
+    "5.1 Add Camera_Service HTTP interface (`/stream`, `/status`)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872356503
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873035712
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873386721
+      }
+    ],
+    "5.2 Add read-only camera routes to `src/webapp.py`": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872356757
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873395383
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873536932
+      }
+    ],
+    "5.3 Add Live_Feed view + status indicators to the control-panel UI": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872357030
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873545207
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873903263
+      }
+    ],
+    "6.1 Create `src/detector.py` (TFLite COCO SSD-MobileNet)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872357295
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873037217
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873384434
+      }
+    ],
+    "6.2 Implement Edge TPU delegate with CPU fallback": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872357584
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873396330
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873538347
+      }
+    ],
+    "6.3 Wire Detector into Camera_Service `/detections`": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872357989
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873546174
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873904169
+      }
+    ],
+    "7.1 Create `src/tracking_controller.py` selection + offset": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872358438
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873038037
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873383219
+      }
+    ],
+    "8.1 Implement `next_neck_targets` direction mapping + smoothing": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872358823
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873397520
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873539183
+      }
+    ],
+    "9. Checkpoint — perception + tracking math": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872359299
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873910485
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873927917
+      }
+    ],
+    "10.1 Add a camera-service client + `Animatronic.tracking(...)` loop": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872359763
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873933735
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874556790
+      }
+    ],
+    "10.2 Implement leave-frame Scan_Sweep with configurable timeout": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872360154
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874557061
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874752486
+      }
+    ],
+    "10.3 Register `tracking` in `action_map` + CLI flags": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872360560
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874753881
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874895002
+      }
+    ],
+    "11.1 Add `TRACKING_ACTIONS` allowlist + `/tracking/<state>` route": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872361218
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874903385
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875060797
+      }
+    ],
+    "11.2 Add path-value validation for model/config-name routes": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872361529
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875065440
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875501074
+      }
+    ],
+    "12.1 Create `src/detection_routine_map.py` with arbitration + cooldown": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872361984
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874903608
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875062197
+      }
+    ],
+    "12.2 Wire triggering into Tracking_Mode with allowlist dispatch + yield": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872362436
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875066238
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875499943
+      }
+    ],
+    "13.1 Implement IR control with auto-switch hysteresis + graceful degrade": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872362839
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875510169
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875848811
+      }
+    ],
+    "14. Final checkpoint — full feature wiring": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872363309
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875858601
+      },
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790876478349
+      }
+    ],
+    "1. Dependencies and data models (shared foundation)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872594660
+      }
+    ],
+    "4. Build Step 1 — Camera capture (Camera_Service capture loop)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872809408
+      }
+    ],
+    "2. Per-channel-group servo lock refactor (safety-critical, unblocks Step 5/6)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790872993721
+      }
+    ],
+    "7. Build Step 4 — Person position detection (Tracking_Controller pure math)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873383841
+      }
+    ],
+    "8. Build Step 5 — Head tracking (neck command mapping + smoothing)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873539752
+      }
+    ],
+    "5. Build Step 2 — Live feed in the control panel": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873903812
+      }
+    ],
+    "6. Build Step 3 — Person and object detection": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790873904608
+      }
+    ],
+    "10. Tracking_Mode — `tracking` action in `animatronic.py` (Req 6)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790874895397
+      }
+    ],
+    "12. Build Step 6 — Detection-triggered Routines (Detection_Routine_Map)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875500390
+      }
+    ],
+    "11. webapp Tracking Mode route + path validation (Req 9)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875501584
+      }
+    ],
+    "13. IR night operation inside Camera_Service (Req 10)": [
+      {
+        "executionId": "98a9571e-2ab7-4b63-b57d-dc09873c4a42",
+        "chatSessionId": "sess_31a6f739-0e37-4b22-adec-2ebdcfb56636",
+        "timestamp": 1790875849349
+      }
+    ]
+  }
+}

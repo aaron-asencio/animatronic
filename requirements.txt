@@ -27,8 +27,15 @@ gpiozero==2.0.1
 # Audio playback and mic streaming (AudioPlayer, AudioStreamer)
 PyAudio==0.2.14
 
-# Numerical processing (amplitude analysis for jaw motor sync)
-numpy==2.3.4
+# Numerical processing (amplitude analysis for jaw motor sync).
+# PINNED TO 1.x (NOT 2.x) ON PURPOSE: the apt `python3-picamera2` stack and its
+# C deps (e.g. simplejpeg) are compiled against the system numpy 1.24 ABI, and
+# Camera_Service imports picamera2 from system site-packages (the venv is built
+# with --system-site-packages). A venv numpy 2.x triggers
+# "numpy.dtype size changed" ABI errors inside picamera2. No project code uses
+# numpy-2-only APIs, so 1.x is sufficient everywhere. Keep <2 until the Pi OS
+# image ships a picamera2/simplejpeg built against numpy 2.
+numpy>=1.24,<2
 
 # Web control UI (micwebcontroller)
 flask==3.1.3
@@ -42,3 +49,47 @@ yourdfpy==0.0.60
 trimesh==5.1.0
 # Optional preview extra (headless-safe; only needed for `--preview` rendering)
 matplotlib==3.11.1
+
+# ---------------------------------------------------------------------------
+# Vision: camera person detection & tracking
+# ---------------------------------------------------------------------------
+# IMPORTANT: these vision pins are specific to the verified target —
+# Debian 12 (bookworm) / aarch64 / CPython 3.11 (Raspberry Pi 4B, venv 3.11.2).
+# They MUST be re-verified if the Pi OS image or the Python version changes
+# (wheel tags below are cp311/aarch64-specific).
+#
+# numpy is pinned above (numpy>=1.24,<2 — see the note there on the picamera2
+# ABI constraint) and satisfies the vision deps; the pins below work on numpy 1.x.
+
+# Detector runtime (CPU) — TFLite COCO SSD-MobileNet inference.
+# Default choice: tflite-runtime 2.14.0 is the only 3.11 release and has a
+# verified cp311/aarch64 wheel (cp311-cp311-manylinux_2_34_aarch64). It uses
+# the classic `from tflite_runtime.interpreter import Interpreter` API that
+# detector.py references.
+tflite-runtime==2.14.0
+# ALTERNATIVE (future-proof LiteRT successor, pick ONE — not both):
+# ai-edge-litert==2.2.0  # API: `from ai_edge_litert.interpreter import Interpreter`
+#   One-line import difference in detector.py; swap the pin + import together.
+
+# Overlay rendering (headless) — server-side bounding-box / label drawing for
+# the Live_Feed overlay. Headless build (no GUI/X deps).
+# PINNED TO 4.x (NOT 5.x): opencv-python-headless 5.0.0.93 hard-requires
+# numpy>=2, which conflicts with the numpy<2 pin forced by picamera2's ABI
+# (see the numpy note above). 4.11.0.86 is the latest 4.x that works on
+# numpy 1.x; verified cp37-abi3 aarch64 wheel.
+opencv-python-headless==4.11.0.86
+
+# NOT a pip dependency — picamera2 (Camera_Service) ---------------------------
+# picamera2 is NOT installed via pip on bookworm; it is provided by apt as
+# `python3-picamera2` (bound to the system libcamera) and is already installed
+# on the Pi. Do NOT add picamera2 here.
+# Camera_Service must therefore run against an interpreter that CAN import the
+# apt-provided picamera2. Pick one:
+#   (a) recreate the project venv with `--system-site-packages`, OR
+#   (b) run Camera_Service with the system `python3` that has python3-picamera2.
+
+# OPTIONAL — Edge TPU (Coral) -------------------------------------------------
+# Deliberately kept OUT of the pinned requirements: pycoral has no official
+# 3.11 aarch64 wheel and libedgetpu comes from Google's apt repo. The design
+# makes Edge TPU optional with CPU fallback, so ship CPU-only (above) and treat
+# Coral as a later, separately-documented add-on.

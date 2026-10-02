@@ -1,0 +1,73 @@
+[Unit]
+# Camera_Service — non-root camera capture + detection HTTP service for the
+# animatronic control panel. Owns the Pi Camera Module 3 (NoIR), serves the
+# loopback-only MJPEG /stream, /status, and /detections on 127.0.0.1:8001 that
+# webapp.py proxies into the "Camera" tab.
+Description=Animatronic Camera_Service (camera capture + detection, :8001)
+# Camera stack comes up via libcamera; nothing here hard-depends on it, but we
+# prefer to start after the network and basic multi-user targets are ready.
+After=network-online.target
+Wants=network-online.target
+# Restart rate limit (unit-level): if the service fails >5 times in 60s
+# (e.g. camera cable pulled), stop retrying and surface the failure.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Run as the normal user (NOT root): Camera_Service is deliberately unprivileged.
+# `aaron` is already in the video/gpio/i2c groups, which is all it needs for the
+# camera and the IR illuminator (GPIO 12). Keeping root out of this process is
+# the privilege-separation the design calls for.
+User=aaron
+Group=aaron
+# Supplementary groups the camera + IR GPIO need, made explicit so the unit does
+# not silently depend on the login shell's group set.
+SupplementaryGroups=video gpio i2c
+
+WorkingDirectory=/home/aaron/workspace/animatronic-v2
+
+# IMPORTANT: use the venv interpreter LITERALLY (do not resolve the symlink).
+# The venv was built with --system-site-packages so this interpreter sees both
+# the pip-pinned deps (opencv-python-headless, tflite-runtime, numpy<2) AND the
+# apt-provided picamera2. Resolving to /usr/bin/python3.11 would bypass the
+# venv site-packages and break imports.
+ExecStart=/home/aaron/workspace/animatronic-v2/.venv/bin/python3 src/camera_service.py
+
+# --- Optional: enable on-device person/object detection ---------------------
+# Camera_Service runs detector-less by default (live feed + tracking still work).
+# Detection ENABLED: CPU TFLite SSD-MobileNet v1 (COCO), 300x300 quantized,
+# 4-output post-process — verified to load and run under the venv. CPU-only
+# (use_edge_tpu defaults false); the Detector degrades Edge TPU -> CPU anyway.
+# To disable detection again, comment these two lines and restart the service.
+Environment=CAMERA_MODEL_PATH=/home/aaron/workspace/animatronic-v2/models/ssd_mobilenet_v2_coco_quant_postprocess.tflite
+Environment=CAMERA_LABELS_PATH=/home/aaron/workspace/animatronic-v2/models/coco_labels.txt
+# Detector confidence threshold (0.0-1.0). Lower surfaces more / smaller
+# objects (e.g. scissors, cup) at the cost of more false positives;
+# unset uses the TrackingConfig default (0.5). 0.3 is a good starting point
+# for a 300x300 SSD-MobileNet v1 on the NoIR camera.
+Environment=CAMERA_CONF_THRESHOLD=0.3
+
+# Restart policy: keep the feed up. If the camera init fails (e.g. cable
+# knocked loose), the process exits non-zero; systemd will retry a few times
+# then back off rather than hammering a dead camera.
+Restart=on-failure
+RestartSec=5
+
+# Logs go to the journal: `journalctl -u camera-service -f`
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=camera-service
+
+# --- Light hardening (safe for a hardware-touching service) -----------------
+# NoNewPrivileges is safe since the service never needs to escalate.
+NoNewPrivileges=true
+# Hardening kept intentionally light: this service touches GPIO (/dev/gpiomem,
+# /sys) for the IR illuminator and the camera via libcamera, and aggressive
+# sandboxing (e.g. ProtectSystem=strict, ProtectKernelTunables) can block those.
+# NoNewPrivileges + PrivateTmp are safe and sufficient here.
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

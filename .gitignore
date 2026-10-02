@@ -128,3 +128,13 @@ commands.txt
 
 # FX mic recordings (runtime output, machine-local)
 audio/live_mic_*.wav
+
+
+# Vision detector model binaries (large, fetched from the Coral test_data repo;
+# not source -- see README "Camera vision" for the download command). The COCO
+# labels file (models/coco_labels.txt) IS tracked; only the .tflite weights are
+# ignored.
+models/*.tflite
+
+# prebuild backups
+.venv.old.*

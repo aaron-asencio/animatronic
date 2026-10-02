@@ -29,7 +29,7 @@ USAGE
   # Probe below the current safe min to find the real jam point (CAREFUL):
   sudo .venv/bin/python3 calibrate.py --channel 1 --angle 10 --unsafe --step-delay 0.15
 
-  # Channels: 0=NECK_PAN 1=NECK_TILT 4=RT_ELBOW_ROTATOR 5=RT_ELBOW_TILT
+  # Channels: 0=NECK_PAN 1=NECK_TILT 3=RT_WRIST_TILT 4=RT_ELBOW_ROTATOR 5=RT_ELBOW_TILT
   #           6=RT_SHOULDER_TILT 7=RT_SHOULDER_ROTATOR
 """
 

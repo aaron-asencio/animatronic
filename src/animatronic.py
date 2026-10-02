@@ -26,7 +26,7 @@ Note on asyncio:
 from movements import Movements
 from audio_player import AudioPlayer
 from audio_streamer import AudioStreamer
-from servo_lock import servo_lock, ServoBusyError, BUSY_EXIT_CODE
+from servo_lock import servo_lock, group_lock, NECK_GROUP, ServoBusyError, BUSY_EXIT_CODE
 from performance import (
     ConcurrentGroup,
     GateSpec,
@@ -38,6 +38,9 @@ from performance import (
 import nap_signal
 import constants
 from range_sensor import ApproachDetector
+from vision_models import Detection, TrackingConfig
+from tracking_controller import select_target, compute_offset, next_neck_targets
+from detection_routine_map import DetectionRoutineMap
 import asyncio
 import threading
 import argparse
@@ -45,7 +48,124 @@ import random
 import sys
 import os
 import time
+import json
+import urllib.request
+import urllib.error
 import wave
+
+
+# Default Camera_Service base URL. Camera_Service (src/camera_service.py) is a
+# separate non-root process that owns the camera/detector and exposes detections
+# over localhost-only HTTP (never leaves the device, Req 9.7). Tracking_Mode is
+# only a READER of that service — it issues no camera command.
+DEFAULT_CAMERA_URL = "http://localhost:8001"
+
+
+class CameraClient:
+    """Thin read-only HTTP client for Camera_Service ``GET /detections``.
+
+    Tracking_Mode polls this to get the latest frame's Detections. It uses only
+    the stdlib ``urllib`` (no new dependency on the Pi), mirroring the webapp's
+    ``_proxy`` pattern, and parses the Camera_Service JSON
+    ``{frame_id, width, height, ts, detections:[{label, score, x1, y1, x2, y2,
+    is_person}, ...]}`` into ``vision_models.Detection`` objects plus the frame
+    dimensions the Tracking_Controller math needs.
+
+    The client is a pure consumer: it reads detections and never issues any
+    servo or camera command. A short timeout keeps the Tracking_Mode loop
+    responsive (so it can meet the 500 ms update budget, Req 5.7) even when
+    Camera_Service is slow or unreachable.
+
+    Attributes:
+        base_url: Camera_Service base URL (default ``http://localhost:8001``).
+        timeout: Per-request timeout in seconds.
+    """
+
+    def __init__(self, base_url=DEFAULT_CAMERA_URL, timeout=0.4):
+        """Build a Camera_Service client.
+
+        Args:
+            base_url: Base URL of Camera_Service. Defaults to
+                ``http://localhost:8001`` (configurable so a non-default host/
+                port can be passed from the CLI in task 10.3).
+            timeout: Per-request HTTP timeout in seconds. Kept well under the
+                500 ms tracking-update budget so a slow/unreachable service does
+                not stall the neck loop.
+        """
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def get_detections(self):
+        """Fetch the latest frame's Detections from Camera_Service.
+
+        Issues ``GET {base_url}/detections`` and parses the JSON payload into
+        ``Detection`` objects. On any failure (service unreachable, HTTP error,
+        malformed/non-JSON body) it fails soft: it ``print()``s the problem and
+        returns an empty detection list with zero frame dimensions, so the
+        Tracking_Mode loop treats the frame as "no person seen" (which triggers
+        the Scan_Sweep / hold path) rather than crashing.
+
+        Returns:
+            A tuple ``(detections, frame_w, frame_h)`` where ``detections`` is a
+            list of ``vision_models.Detection`` and ``frame_w`` / ``frame_h`` are
+            the reported frame dimensions in pixels (0 when unavailable).
+        """
+        url = f"{self.base_url}/detections"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = resp.read().decode("utf-8")
+            payload = json.loads(body)
+        except urllib.error.URLError as e:
+            print(f"[tracking] camera unreachable at {self.base_url}: {e.reason}")
+            return [], 0, 0
+        except (ValueError, UnicodeDecodeError) as e:
+            print(f"[tracking] camera returned non-JSON detections: {e}")
+            return [], 0, 0
+
+        return self._parse_payload(payload)
+
+    @staticmethod
+    def _parse_payload(payload):
+        """Parse a ``/detections`` JSON payload into Detections + frame size.
+
+        Tolerant of missing/odd fields so a single bad entry can't crash the
+        loop: non-dict payloads yield no detections, and any detection entry
+        that can't be coerced to the ``Detection`` shape is skipped with a
+        ``print()``. ``is_person`` is derived from the ``Detection`` label (its
+        ``is_person`` property), so a mislabeled JSON ``is_person`` flag can't
+        make a non-``person`` box drive tracking.
+
+        Args:
+            payload: The decoded JSON object from Camera_Service.
+
+        Returns:
+            A tuple ``(detections, frame_w, frame_h)``.
+        """
+        if not isinstance(payload, dict):
+            print(f"[tracking] unexpected detections payload type: {type(payload)}")
+            return [], 0, 0
+
+        frame_w = int(payload.get("width", 0) or 0)
+        frame_h = int(payload.get("height", 0) or 0)
+
+        detections = []
+        for raw in payload.get("detections", []) or []:
+            try:
+                detections.append(
+                    Detection(
+                        label=str(raw["label"]),
+                        score=float(raw["score"]),
+                        x1=int(raw["x1"]),
+                        y1=int(raw["y1"]),
+                        x2=int(raw["x2"]),
+                        y2=int(raw["y2"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as e:
+                print(f"[tracking] skipping malformed detection {raw!r}: {e}")
+
+        return detections, frame_w, frame_h
 
 
 class Animatronic:
@@ -97,6 +217,11 @@ class Animatronic:
         'awakened.wav',            # 26  (awaken groggy "just woke up" reaction)
         'in_my_power.wav',         # 27  (hypnotic follow-on: "in my power")
         'clear_throat.wav',        # 28  (clearThroat: hand-to-mouth throat clear)
+        'cough_long.wav',          # 29  (coughLong: cover-mouth cough, long)
+        'cough_medium.wav',        # 30  (coughMedium: cover-mouth cough, medium)
+        'gurgle_burp.wav',         # 31  (burp: cover-mouth burp lead track)
+        'excuseme_sb.wav',         # 32  (burp/fart follow-on: "excuse me")
+        'fart.wav',                # 33  (fart: lead track, no cover)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -806,6 +931,192 @@ class Animatronic:
         )
 
         asyncio.run(PerformanceRunner(CLEAR_THROAT, mv, audio_dir).run())
+
+    # --- Cover-mouth bodily-noise routines ------------------------------- #
+
+    def _run_cover_mouth_settled(self, audio_file, *, name):
+        """Cover the mouth, gate audio until the hand settles, then play a clip.
+
+        Shared implementation for the ``coughLong`` / ``coughMedium`` routines.
+        Like ``clearThroat`` it drives the phased ``yawn_cover`` adapters through
+        the Performance_Framework, reusing yawn_cover's exact operator-verified
+        hand-to-mouth pose and its verified_pose_override -- but it uses the
+        SETTLED lead-in (``yawn_cover_lead_in_settled``) so the audio gate opens
+        only once the hand has reached its final cover position ("gate audio
+        until the hand reaches final position"), rather than ~0.5s early.
+
+        * ``yawn_cover_lead_in_settled`` centers the head and folds the hand
+          fully up BEFORE opening the gate (``supplies_gate=True``), so the clip
+          starts the instant the hand covers the mouth.
+        * ``yawn_cover_loop_body`` HOLDS the hand at the mouth while the clip
+          plays (``loop_for_audio=True``); ``stop_loop_lead_seconds=0.9`` starts
+          the lower ~0.9s before the clip ends so the ~1.1s lower overlaps the
+          tail.
+        * ``yawn_cover_return`` lowers the hand to rest and releases the override.
+
+        The single movement owns head channels {0,1} and arm channels {4,5,6,7};
+        with no concurrent movement the group is trivially channel-disjoint. A
+        single ``Movements`` instance backs the phase callables so they share one
+        ``TrunkController``; the runner is launched with ``asyncio.run`` at the
+        top of the call stack.
+
+        Args:
+            audio_file: Filename of the cough clip in the resolved audio dir.
+            name: Performance/gate name (also the single movement's name).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        definition = PerformanceDefinition(
+            name=name,
+            audio_file=audio_file,
+            # The hand-to-mouth reach supplies the gate: audio starts the moment
+            # the lead-in completes, i.e. once the hand has SETTLED at the mouth.
+            gate=GateSpec(movement_name=name),
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,   # HOLD the hand until the clip ends
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name=name,
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                                constants.RT_SHOULDER_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_ELBOW_TILT,
+                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                            }),
+                            lead_in=mv.yawn_cover_lead_in_settled,  # fold fully, THEN gate
+                            loop_body=mv.yawn_cover_loop_body,       # hold while audio plays
+                            do_return=mv.yawn_cover_return,          # lower hand at end
+                            supplies_gate=True,                      # opens the audio gate
+                            # Stop holding ~0.9s before the clip ends so the hand
+                            # starts lowering that much sooner (the ~1.1s lower
+                            # then overlaps the tail of the audio).
+                            stop_loop_lead_seconds=0.9,
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(definition, mv, audio_dir).run())
+
+    def cough_long(self):
+        """"Cough (long)" — cover the mouth, then cough once the hand arrives.
+
+        Runs the Cover-Mouth gesture; the audio is GATED until the hand reaches
+        its final cover position, then ``cough_long.wav`` plays while the hand is
+        held at the mouth. See ``_run_cover_mouth_settled`` for the mechanics.
+        """
+        self._run_cover_mouth_settled(self.music[29], name="coughLong")  # cough_long.wav
+
+    def cough_medium(self):
+        """"Cough (medium)" — cover the mouth, then cough once the hand arrives.
+
+        Runs the Cover-Mouth gesture; the audio is GATED until the hand reaches
+        its final cover position, then ``cough_medium.wav`` plays while the hand
+        is held at the mouth. See ``_run_cover_mouth_settled`` for the mechanics.
+        """
+        self._run_cover_mouth_settled(self.music[30], name="coughMedium")  # cough_medium.wav
+
+    def burp(self):
+        """"Burp" — cover the mouth, burp, then an "excuse me" follow-on.
+
+        Driven by the Performance_Framework with the phased ``yawn_cover``
+        adapters (same operator-verified cover pose + override as ``clearThroat``
+        and the coughs), but with a FIXED 250ms audio gate rather than
+        gating until the hand settles:
+
+        * ``yawn_cover_lead_in_gated`` centers the head and starts the up-fold,
+          then opens the gate 250ms in (``supplies_gate=True``) while the fold
+          finishes underneath -- so ``gurgle_burp.wav`` starts promptly and the
+          hand reaches the mouth as the burp plays.
+        * Audio is a TWO-TRACK chain: ``gurgle_burp.wav`` then ``excuseme_sb.wav``
+          played back-to-back with no gap (``followup_audio_files``). The
+          ``PlaybackController`` stays ``is_active()`` across BOTH tracks and its
+          duration is their SUM, so the hand stays at the mouth through the burp
+          AND the "excuse me", then lowers.
+        * ``yawn_cover_loop_body`` HOLDS the hand at the mouth across the chain;
+          ``yawn_cover_return`` lowers the hand and releases the override.
+
+        The single movement owns head channels {0,1} and arm channels {4,5,6,7}
+        (trivially disjoint with no concurrent movement). A single ``Movements``
+        instance backs the phase callables; launched with ``asyncio.run`` at the
+        top of the call stack.
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        BURP = PerformanceDefinition(
+            name="burp",
+            audio_file=self.music[31],  # gurgle_burp.wav
+            # "excuse me" plays back-to-back immediately after the burp on the
+            # same audio thread, so the hand stays at the mouth across both and
+            # the near-end cutoff fires against the end of excuseme_sb.wav.
+            followup_audio_files=(self.music[32],),  # excuseme_sb.wav
+            # Cover-mouth movement supplies a fixed 250ms gate (not hand-arrival).
+            gate=GateSpec(movement_name="burp"),
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,   # HOLD the hand across both tracks
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="burp",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                                constants.RT_SHOULDER_ROTATOR,
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_ELBOW_TILT,
+                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                            }),
+                            lead_in=mv.yawn_cover_lead_in_gated,  # 250ms gate + fold
+                            loop_body=mv.yawn_cover_loop_body,     # hold while audio plays
+                            do_return=mv.yawn_cover_return,        # lower hand at end
+                            supplies_gate=True,                    # opens the audio gate
+                            stop_loop_lead_seconds=0.9,
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(BURP, mv, audio_dir).run())
+
+    def fart(self):
+        """"Fart" — fart first, THEN cover the mouth and say "excuse me".
+
+        A TWO-PHASE routine, because the fart happens BEFORE the cover-mouth
+        gesture (unlike the coughs/burp, where audio plays while the hand is
+        already at the mouth):
+
+        1. Play ``fart.wav`` to completion with NO movement -- a blocking
+           ``AudioPlayer`` on this thread, closed afterward so its jaw/eye pins
+           are released before the Performance below claims them.
+        2. Run the Cover-Mouth gesture via the Performance_Framework with the
+           SETTLED lead-in, so ``excuseme_sb.wav`` is GATED until the hand reaches
+           its final cover position -- same mechanics as the coughs
+           (``yawn_cover_lead_in_settled`` -> hold -> ``yawn_cover_return``).
+
+        The two audio phases never overlap, so there is no jaw-motor / audio
+        contention. The whole routine runs inside the caller's servo lock; the
+        Performance run does not take the lock itself. Launched with
+        ``asyncio.run`` at the top of the call stack (phase 2's runner).
+        """
+        # Phase 1: fart.wav alone, no movement. Blocking playback on this thread;
+        # close() releases the jaw/eye pins before phase 2's players claim them.
+        fart_path = os.path.join(self._resolve_audio_dir(), self.music[33])  # fart.wav
+        player = AudioPlayer()
+        try:
+            print(f"[fart] playing {fart_path} (no cover yet)")
+            player.play_audio_file(fart_path)
+        finally:
+            player.close()
+
+        # Phase 2: cover the mouth and, once the hand settles, say "excuse me".
+        self._run_cover_mouth_settled(self.music[32], name="fart")  # excuseme_sb.wav
 
     def snore(self):
         """"Snore" audio — jerky heavy-head drop gates the snore, then sleep.
@@ -1532,6 +1843,587 @@ class Animatronic:
         getattr(self, reaction)()
 
     # ------------------------------------------------------------------ #
+    # Tracking — a MODE (continuous head-tracking of a person until stopped) #
+    # ------------------------------------------------------------------ #
+
+    # Target cadence for the tracking loop: a neck update is issued within
+    # 500 ms of a new detection (Req 5.7). We poll + command well under that
+    # budget so the end-to-end detect->command latency stays inside 500 ms.
+    _TRACKING_LOOP_PERIOD_S = 0.1
+
+    # Tracking_Mode exit reason for the leave-frame Scan_Sweep timing out
+    # (Req 6.10): no person reacquired within cfg.scan_timeout_s, so the Mode
+    # recenters and yields to the previously active Mode.
+    TRACKING_INTERRUPT_SCAN_TIMEOUT = "scan-timeout"
+
+    # Tracking_Mode exit reason for a detection-triggered Routine (Req 7.2, 7.7):
+    # a Detection_Routine_Map rule fired and its action is in the action_map
+    # allowlist. The Mode winds down (recenters neck, releases the Neck_Group)
+    # BEFORE the triggered Routine drives jaw/audio, so the Routine and
+    # Tracking_Mode never own the Neck_Group simultaneously. The chosen rule is
+    # carried back to main() as a pending trigger, dispatched only AFTER the
+    # Neck_Group lock is released.
+    TRACKING_INTERRUPT_TRIGGER = "trigger"
+
+    # Scan_Sweep tuning. The sweep pans NECK_PAN across its SAFE_LIMITS range in
+    # fixed-size incremental steps, each written through set_angle (so each is
+    # clamped) with a short asyncio.sleep between steps for smooth motion. The
+    # cadence is deliberately slower than the tracking loop (a deliberate
+    # "surveillance" sweep, cf. TrunkController.slow_scan's 0.05s/deg) while
+    # still polling /detections and nap_signal often enough to reacquire a
+    # person or wind down on a stop request within ~1s.
+    _SCAN_STEP_DEG = 2.0        # pan increment per sweep step (degrees)
+    _SCAN_STEP_PERIOD_S = 0.05  # delay between sweep steps (seconds)
+
+    def tracking(
+        self,
+        camera_url=DEFAULT_CAMERA_URL,
+        max_step=None,
+        deadband=None,
+        conf=None,
+        scan_timeout=None,
+        routine_map=None,
+        action_map=None,
+    ):
+        """TRACKING mode: pan/tilt the neck to follow a detected person.
+
+        A Mode (per the animation vocabulary) is a continuous background
+        behaviour that runs until interrupted. Tracking_Mode reads Detections
+        from Camera_Service, selects the Target_Person, and drives the Neck_Group
+        (channels ``NECK_PAN``/``NECK_TILT``) to reduce the person's Offset from
+        Frame_Center — a closed feedback loop (Req 6.1). It carries NO audio and
+        never drives the jaw motor (Req 6.2), so toward a live mic Stream it
+        behaves like a Gesture: it touches only neck channels and does not
+        interrupt the Stream (Req 6.3).
+
+        Lock model (IMPORTANT — differs from napping/awake): napping and awake
+        hold the WHOLE-ROBOT ``servo_lock()`` (every group), acquired by their
+        ``main()`` dispatch branch. Tracking must instead hold ONLY the
+        ``NECK_GROUP`` lock so an arm-only Gesture (disjoint Arm_Group channels
+        4-7) can run concurrently (Req 6.6). Consistent with how napping()/awake()
+        rely on ``main()``'s ``servo_lock()`` wrapper, this method does NOT take
+        any lock itself — ``main()`` is responsible for wrapping the call in
+        ``with group_lock(NECK_GROUP):`` (added in task 10.3). Keeping the lock
+        in ``main()`` mirrors the existing Modes and lets a hardware-free caller
+        (tests) run the loop without touching the lock files.
+
+        Wind-down (Req 6.4, 6.5): like napping/awake the loop watches the
+        cross-process ``nap_signal``. When the web app requests a Routine/Act (or
+        presses any action button) it sets ``nap_signal``; the loop sees the stop
+        request, recenters the Neck_Group to ``REST_POSITIONS`` and exits within
+        1 second so the Neck_Group lock frees for the Routine. The same recenter+
+        exit happens on ANY loop error, so the neck is never left energized at an
+        offset.
+
+        Leave-frame Scan_Sweep (Req 6.7-6.10): when ``select_target`` returns no
+        Target_Person the loop runs ``_run_scan_sweep`` — a slow pan of
+        ``NECK_PAN`` across its ``SAFE_LIMITS`` range (every command through
+        ``set_angle``) that keeps polling ``/detections``. If a person reappears
+        mid-sweep the sweep stops immediately and normal tracking resumes; if
+        ``cfg.scan_timeout_s`` elapses with no reacquire the loop recenters to
+        ``REST_POSITIONS`` and exits, yielding to the previously active Mode.
+
+        Args:
+            camera_url: Base URL of Camera_Service. Default
+                ``http://localhost:8001`` (CLI flag ``--camera-url`` in task
+                10.3).
+            max_step: Max neck angle change per update in degrees; forwarded to
+                ``TrackingConfig.max_step_deg`` (clamped to [1, 30]). ``None``
+                uses the ``TrackingConfig`` default (5 deg).
+            deadband: Center Deadband half-width as a fraction of the frame on
+                both axes; forwarded to ``TrackingConfig`` deadband fracs
+                (clamped to [0.0, 0.5]). ``None`` uses the default (0.05).
+            conf: Detector confidence threshold; forwarded to
+                ``TrackingConfig.conf_threshold`` (clamped to [0.0, 1.0]).
+                ``None`` uses the default (0.5). (Camera_Service already filters
+                by its own threshold; carried here so 10.3's CLI flag has a home
+                and future client-side filtering can use it.)
+            scan_timeout: Scan_Sweep reacquire timeout in seconds; forwarded to
+                ``TrackingConfig.scan_timeout_s`` (clamped to [1, 120]) for use
+                by task 10.2. ``None`` uses the default (10 s).
+            routine_map: The ``DetectionRoutineMap`` evaluated each loop
+                iteration to decide whether a detection condition should trigger
+                a Routine (Req 7.2, 7.5, 7.8). ``None`` builds the seed-default
+                map (``person -> wave``, ``person+dog -> walkYourDog``).
+            action_map: The dispatch allowlist (``camelCase`` action name ->
+                method) used to VALIDATE a triggered action before it is ever
+                dispatched (Req 7.6, 9.1-9.3). ``None`` builds the default via
+                ``build_action_map``. A triggered action absent from this map is
+                rejected (printed, no dispatch).
+
+        Returns:
+            An optional "pending trigger" ``dict`` when a ``Detection_Routine_Map``
+            rule fired AND its action is in ``action_map``: ``{"action": <name>,
+            "rule": <DetectionRule>, "routine_map": <DetectionRoutineMap>}``. The
+            caller (``main()``) must dispatch ``action`` ONLY AFTER releasing the
+            Neck_Group lock, so the triggered Routine and Tracking_Mode never own
+            the Neck_Group simultaneously (Req 7.7), then call
+            ``routine_map.mark_completed(rule, time.monotonic())`` to start the
+            rule's cooldown. Returns ``None`` for every other wind-down (external
+            stop, Scan_Sweep timeout, error): nothing further to dispatch.
+        """
+        # Build the TrackingConfig from the provided params, letting the
+        # dataclass defaults fill any that are None and its __post_init__ clamp
+        # every value into its documented safe range.
+        cfg_kwargs = {}
+        if max_step is not None:
+            cfg_kwargs["max_step_deg"] = max_step
+        if deadband is not None:
+            cfg_kwargs["deadband_frac_w"] = deadband
+            cfg_kwargs["deadband_frac_h"] = deadband
+        if conf is not None:
+            cfg_kwargs["conf_threshold"] = conf
+        if scan_timeout is not None:
+            cfg_kwargs["scan_timeout_s"] = scan_timeout
+        cfg = TrackingConfig(**cfg_kwargs)
+
+        # Build the trigger allowlist + Detection_Routine_Map. These default to
+        # the single-source-of-truth action_map and the seed rules so a plain
+        # `--action=tracking` run still arbitrates/validates triggers; callers
+        # (tests) may inject their own. The action_map is ONLY used to validate
+        # a triggered name — tracking() never dispatches a Routine itself (that
+        # happens in main() after the Neck_Group lock is released, Req 7.7).
+        if action_map is None:
+            action_map = self.build_action_map()
+        if routine_map is None:
+            routine_map = DetectionRoutineMap()
+
+        # Clear any stale stop request from a previous Mode run so we start clean
+        # (mirrors napping/awake).
+        nap_signal.clear_stop()
+
+        client = CameraClient(base_url=camera_url)
+        print(f"[tracking] entering tracking mode (camera {client.base_url})")
+
+        pending_trigger = None
+
+        # Run the async loop here at the TOP of the call stack (like
+        # _run_nap_loop) — never inside a running event loop, no watchdog.
+        try:
+            reason, pending_trigger = asyncio.run(
+                self._run_tracking_loop(client, cfg, routine_map, action_map)
+            )
+            print(f"[tracking] {reason} interrupt -> wound down")
+        except Exception as e:
+            # Any loop error: recenter the neck and exit cleanly. The loop
+            # helper already recenters in its own finally, but this is the final
+            # backstop if asyncio.run itself raised before/after that path.
+            print(f"[tracking] error during tracking loop: {e}")
+            self._recenter_neck()
+            pending_trigger = None
+        finally:
+            # Clear the stop signal on exit so the next Mode starts clean and the
+            # requesting web-app action can proceed once the Neck_Group lock frees.
+            nap_signal.clear_stop()
+
+        # Hand any fired-and-validated trigger back to the caller (main()) to
+        # dispatch AFTER the Neck_Group lock is released (Req 7.7). The neck has
+        # already been recentered + will be released by main()'s context manager
+        # before the Routine runs.
+        return pending_trigger
+
+    async def _run_tracking_loop(self, client, cfg, routine_map=None, action_map=None):
+        """Drive the neck to track a person until interrupted; return the reason.
+
+        The loop, each iteration (Req 6.1, 5.7):
+
+        1. ``client.get_detections()`` — GET the latest frame's Detections +
+           frame size from Camera_Service.
+        2. ``select_target`` — pick the single Target_Person (largest bbox,
+           center tie-break).
+        3. ``compute_offset`` — signed pixel Offset of the Target_Person from
+           Frame_Center, zeroed inside the Deadband.
+        4. ``next_neck_targets`` — map the Offset to the next ``NECK_PAN`` /
+           ``NECK_TILT`` target angles (direction + per-update step cap).
+        5. ``TrunkController.set_angle`` on channels 0,1 — the ONLY hardware
+           write, which clamps each commanded angle to ``SAFE_LIMITS`` (Req 5.5).
+           Writes are restricted to the Neck_Group channels (Req 5.8, 6.11).
+
+        It carries no audio and never touches the jaw motor (Req 6.2). When
+        ``select_target`` returns no Target_Person the loop begins a leave-frame
+        Scan_Sweep via ``_run_scan_sweep`` (Req 6.7): a slow ``NECK_PAN`` pan
+        that reacquires a reappearing person (Req 6.9) or, after
+        ``cfg.scan_timeout_s`` with no reacquire, recenters and ends the Mode so
+        it yields to the previously active Mode (Req 6.10).
+
+        Detection-triggered Routines (Req 7.2, 7.6, 7.7): each iteration also
+        feeds the frame's detections to ``routine_map.select_action(...)``. When
+        a rule fires, its action is validated against ``action_map`` (the
+        allowlist) BEFORE anything else happens:
+
+        * **In the allowlist:** the loop records the chosen action+rule as a
+          pending trigger and breaks, so the ``finally`` recenters the
+          Neck_Group and main() can release the Neck_Group lock BEFORE
+          dispatching the Routine — Tracking and the Routine never co-own the
+          Neck_Group (Req 7.7). Tracking_Mode itself issues NO subprocess/servo
+          command for the Routine; it only yields.
+        * **Not in the allowlist:** the name is rejected — it is ``print()``ed,
+          NO subprocess/servo command runs, and tracking simply continues
+          (Req 7.6, 9.1-9.3). The name is never passed to ``getattr``/``eval``/
+          shell; validation is a plain ``in`` membership test on the dict.
+
+        Current neck angles are tracked LOCALLY (starting from
+        ``REST_POSITIONS``) to feed ``next_neck_targets``' ``cur_pan`` /
+        ``cur_tilt`` rather than reading them back from the servo, so the math is
+        deterministic and independent of hardware read-back. Each applied target
+        updates the local state, and the actual written (post-clamp) angle from
+        ``set_angle`` is used so the local state tracks what the hardware was
+        actually commanded.
+
+        Interruption is checked at the TOP of each iteration via ``nap_signal``
+        (Req 6.4, 6.5). On a stop request OR any error, the ``finally`` block
+        recenters the Neck_Group to ``REST_POSITIONS`` so the loop winds down and
+        releases cleanly within 1 second.
+
+        Args:
+            client: A ``CameraClient`` for ``GET /detections``.
+            cfg: The ``TrackingConfig`` tuning (deadband, max step, etc.).
+            routine_map: The ``DetectionRoutineMap`` evaluated each iteration to
+                decide whether a detection condition triggers a Routine. ``None``
+                disables triggering (plain tracking only).
+            action_map: The dispatch allowlist used to validate a triggered
+                action name (Req 7.6). ``None`` disables triggering.
+
+        Returns:
+            A ``(reason, pending_trigger)`` tuple. ``reason`` is one of
+            ``NAP_INTERRUPT_STOP`` (``nap_signal`` stop),
+            ``TRACKING_INTERRUPT_SCAN_TIMEOUT`` (Scan_Sweep timeout, Req 6.10),
+            or ``TRACKING_INTERRUPT_TRIGGER`` (a Detection_Routine_Map rule fired
+            with an allowlisted action, Req 7.2/7.7). ``pending_trigger`` is
+            ``None`` for stop/timeout, and for a trigger is a ``dict``
+            ``{"action", "rule", "routine_map"}`` the caller dispatches AFTER the
+            Neck_Group lock is released. Every reason winds the Mode down (the
+            ``finally`` recenters the Neck_Group) so it yields the Neck_Group.
+        """
+        trunk = Movements.trunkController
+
+        # Track the commanded neck angles locally, seeded from REST_POSITIONS,
+        # so next_neck_targets gets a stable cur_pan/cur_tilt without a hardware
+        # read-back.
+        cur_pan = float(constants.REST_POSITIONS[constants.NECK_PAN])
+        cur_tilt = float(constants.REST_POSITIONS[constants.NECK_TILT])
+
+        reason = self.NAP_INTERRUPT_STOP
+        pending_trigger = None
+        try:
+            while True:
+                # Check the external stop signal at the top of each iteration so
+                # a Routine/Act request winds us down within ~1s (Req 6.4, 6.5).
+                if nap_signal.stop_requested():
+                    reason = self.NAP_INTERRUPT_STOP
+                    break
+
+                detections, frame_w, frame_h = client.get_detections()
+
+                # Without valid frame dimensions the offset math is undefined;
+                # treat as "no person" and hold (the 10.2 Scan_Sweep hook).
+                if frame_w <= 0 or frame_h <= 0:
+                    await asyncio.sleep(self._TRACKING_LOOP_PERIOD_S)
+                    continue
+
+                # Detection-triggered Routines (Req 7.2, 7.6, 7.7). Evaluate the
+                # map on the SAME detections used for tracking, BEFORE the
+                # tracking/scan branch, so a condition (e.g. person+dog) fires
+                # whether we are actively tracking or about to scan. A fired rule
+                # whose action is allowlisted winds the Mode down so main() can
+                # dispatch the Routine only after releasing the Neck_Group.
+                pending_trigger = self._evaluate_trigger(
+                    detections, routine_map, action_map
+                )
+                if pending_trigger is not None:
+                    reason = self.TRACKING_INTERRUPT_TRIGGER
+                    break
+
+                target = select_target(detections, frame_w, frame_h)
+
+                if target is None:
+                    # No Target_Person: begin the leave-frame Scan_Sweep
+                    # (Req 6.7). It pans NECK_PAN across the safe range looking
+                    # for a person, stopping the instant one reappears (Req 6.9)
+                    # or when cfg.scan_timeout_s elapses with no reacquire
+                    # (Req 6.10). It keeps NECK_PAN's local angle consistent and
+                    # returns it so cur_pan tracks the last written angle.
+                    reacquired, cur_pan = await self._run_scan_sweep(
+                        client, cfg, trunk, cur_pan
+                    )
+                    if reacquired is None:
+                        # External stop requested mid-sweep (nap_signal) — wind
+                        # down like the top-of-loop check (Req 6.4, 6.5).
+                        reason = self.NAP_INTERRUPT_STOP
+                        break
+                    if not reacquired:
+                        # Scan timeout with no person: end the Mode so it yields
+                        # to the previously active Mode (Req 6.10). The finally
+                        # block recenters the Neck_Group to REST_POSITIONS.
+                        reason = self.TRACKING_INTERRUPT_SCAN_TIMEOUT
+                        break
+                    # A person reappeared: resume normal tracking on the next
+                    # iteration, which re-reads /detections and commands the neck.
+                    continue
+
+                offset = compute_offset(target, frame_w, frame_h, cfg)
+                targets = next_neck_targets(offset, cur_pan, cur_tilt, cfg)
+
+                # Apply each target through set_angle (SAFE_LIMITS clamp, Req
+                # 5.5) — the only hardware write, scoped to Neck_Group channels
+                # only (Req 5.8, 6.11). Update the local angle to the actually
+                # written (post-clamp) value.
+                if constants.NECK_PAN in targets:
+                    cur_pan = trunk.set_angle(
+                        constants.NECK_PAN, targets[constants.NECK_PAN]
+                    )
+                if constants.NECK_TILT in targets:
+                    cur_tilt = trunk.set_angle(
+                        constants.NECK_TILT, targets[constants.NECK_TILT]
+                    )
+
+                await asyncio.sleep(self._TRACKING_LOOP_PERIOD_S)
+        finally:
+            # Recenter the Neck_Group to REST_POSITIONS on stop OR error so the
+            # neck is never left energized at an offset, and the lock frees to a
+            # known-safe pose within 1s (Req 6.4, 6.11, 5.5 clamp preserved).
+            # For a trigger this is the "release the Neck_Group BEFORE the
+            # Routine drives jaw/audio" wind-down (Req 7.7): the recenter happens
+            # here, and main() releases the lock before dispatching the Routine.
+            self._recenter_neck()
+
+        return reason, pending_trigger
+
+    def _evaluate_trigger(self, detections, routine_map, action_map):
+        """Evaluate the Detection_Routine_Map and allowlist-gate the result.
+
+        Pure glue between the (logic-only) ``DetectionRoutineMap`` and the
+        ``action_map`` allowlist (Req 7.2, 7.6, 9.1-9.3). It asks the map which
+        rule — if any — should fire for this frame's detections, then validates
+        the chosen rule's action against ``action_map`` with a plain ``in``
+        membership test. It performs NO dispatch and issues NO subprocess/servo
+        command; it only decides whether a trigger is pending.
+
+        Allowlist enforcement (the security boundary):
+
+        * A chosen action present in ``action_map`` becomes a pending trigger the
+          caller later dispatches (after releasing the Neck_Group, Req 7.7).
+        * A chosen action ABSENT from ``action_map`` is REJECTED: the rejected
+          name is ``print()``ed, nothing is dispatched, and ``None`` is returned
+          so tracking continues (Req 7.6). The name is never passed to
+          ``getattr``/``eval``/``exec``/shell — only membership-tested.
+
+        Args:
+            detections: The current frame's Detections.
+            routine_map: The ``DetectionRoutineMap`` to evaluate. ``None``
+                disables triggering (returns ``None``).
+            action_map: The dispatch allowlist to validate against. ``None``
+                disables triggering (returns ``None``).
+
+        Returns:
+            A ``{"action", "rule", "routine_map"}`` dict when a rule fired and
+            its action is allowlisted, else ``None``.
+        """
+        if routine_map is None or action_map is None:
+            return None
+
+        rule = routine_map.select_action(detections, time.monotonic())
+        if rule is None:
+            return None
+
+        # Allowlist gate (Req 7.6, 9.1-9.3): membership test ONLY — never
+        # getattr/eval/exec/shell on the externally-derived action name.
+        if rule.action not in action_map:
+            print(
+                f"[tracking] REJECTED detection-triggered action "
+                f"'{rule.action}': not in action_map allowlist - no Routine "
+                f"dispatched, no servo/subprocess command run (Req 7.6)"
+            )
+            return None
+
+        print(
+            f"[tracking] detection trigger -> '{rule.action}' is allowlisted; "
+            f"winding down Tracking_Mode to release the Neck_Group before the "
+            f"Routine runs (Req 7.7)"
+        )
+        return {"action": rule.action, "rule": rule, "routine_map": routine_map}
+
+    async def _run_scan_sweep(self, client, cfg, trunk, cur_pan):
+        """Pan NECK_PAN across its safe range to reacquire a lost person.
+
+        The leave-frame Scan_Sweep (Req 6.7-6.10). Builds on the deliberate
+        surveillance pan of ``TrunkController.slow_scan`` but is driven here as
+        an incremental ``set_angle`` sweep so it can interleave detection polling
+        and ``nap_signal`` checks between every step. Starting from the current
+        pan angle it steps toward one ``NECK_PAN`` safe-range endpoint, then
+        reverses to the other, bouncing between the endpoints until one of three
+        things happens:
+
+        * **Reacquire (Req 6.9):** ``select_target`` finds a person on a polled
+          frame — the sweep stops immediately and the caller resumes tracking
+          that person as the Target_Person.
+        * **Timeout (Req 6.10):** ``cfg.scan_timeout_s`` elapses since the sweep
+          began with no reacquire — the sweep ends and the caller recenters the
+          Neck_Group to ``REST_POSITIONS`` and yields to the previously active
+          Mode.
+        * **Stop:** ``nap_signal`` requests a stop — the sweep ends so the Mode
+          winds down within ~1 s (Req 6.4, 6.5).
+
+        Every neck write goes through ``TrunkController.set_angle`` so each
+        commanded angle is clamped to ``constants.SAFE_LIMITS`` (Req 6.8), and
+        ONLY ``NECK_PAN`` is driven — no tilt, no arm, no jaw/audio. The sweep is
+        bounded strictly within the ``NECK_PAN`` ``SAFE_LIMITS`` range (the
+        configurable scan range), stepping ``_SCAN_STEP_DEG`` degrees per
+        ``_SCAN_STEP_PERIOD_S`` with an ``asyncio.sleep`` between steps so it
+        stays async-friendly.
+
+        Args:
+            client: A ``CameraClient`` for ``GET /detections``.
+            cfg: The ``TrackingConfig`` tuning; ``cfg.scan_timeout_s`` bounds the
+                sweep (clamped to [1, 120], default 10).
+            trunk: The shared ``TrunkController`` (writes via ``set_angle``).
+            cur_pan: The current ``NECK_PAN`` angle (degrees) to sweep from.
+
+        Returns:
+            A ``(reacquired, pan_angle)`` tuple:
+
+            * ``(True, pan_angle)`` — a person reappeared; ``pan_angle`` is the
+              last written ``NECK_PAN`` angle (resume tracking).
+            * ``(False, pan_angle)`` — the scan timed out with no reacquire;
+              ``pan_angle`` is the last written angle (caller recenters + yields).
+            * ``(None, pan_angle)`` — an external stop was requested mid-sweep;
+              caller winds down.
+        """
+        pan_min, pan_max = constants.SAFE_LIMITS[constants.NECK_PAN]
+        print(
+            f"[tracking] no person -> Scan_Sweep across NECK_PAN "
+            f"[{pan_min}, {pan_max}] (timeout {cfg.scan_timeout_s}s)"
+        )
+
+        # Clamp the starting angle into the safe band so the first step is
+        # well-defined, and pick an initial direction that heads toward the
+        # nearer endpoint's opposite so we cover the range (bounce at the ends).
+        pan = max(pan_min, min(pan_max, float(cur_pan)))
+        # Head toward the farther endpoint first for the widest initial sweep.
+        increasing = (pan - pan_min) <= (pan_max - pan)
+
+        start = time.monotonic()
+        while True:
+            # Wind down promptly on an external stop request (Req 6.4, 6.5).
+            if nap_signal.stop_requested():
+                return None, pan
+
+            # Timeout with no reacquire -> end the sweep (Req 6.10).
+            if (time.monotonic() - start) >= cfg.scan_timeout_s:
+                print("[tracking] Scan_Sweep timed out -> recenter + yield")
+                return False, pan
+
+            # Poll for a reappearing person; stop the sweep the instant one is
+            # found (Req 6.9).
+            detections, frame_w, frame_h = client.get_detections()
+            if frame_w > 0 and frame_h > 0:
+                if select_target(detections, frame_w, frame_h) is not None:
+                    print("[tracking] Scan_Sweep reacquired a person -> track")
+                    return True, pan
+
+            # Advance one bounded step, reversing at either safe-range endpoint.
+            if increasing:
+                pan += self._SCAN_STEP_DEG
+                if pan >= pan_max:
+                    pan = float(pan_max)
+                    increasing = False
+            else:
+                pan -= self._SCAN_STEP_DEG
+                if pan <= pan_min:
+                    pan = float(pan_min)
+                    increasing = True
+
+            # Write through set_angle (SAFE_LIMITS clamp, Req 6.8); keep the
+            # local angle consistent with the actually written (post-clamp)
+            # value. Only NECK_PAN is touched (Neck_Group, no tilt/arm/jaw).
+            pan = trunk.set_angle(constants.NECK_PAN, pan)
+
+            await asyncio.sleep(self._SCAN_STEP_PERIOD_S)
+
+    @staticmethod
+    def _recenter_neck():
+        """Drive ONLY the Neck_Group channels to ``REST_POSITIONS``.
+
+        Used by Tracking_Mode on wind-down (stop request) and on any error so
+        the neck returns to its resting pan/tilt. Writes go through
+        ``TrunkController.set_angle`` so each angle is clamped to
+        ``SAFE_LIMITS`` (Req 5.5), and ONLY the Neck_Group channels
+        (``NECK_PAN``/``NECK_TILT``) are touched — never an arm channel that a
+        concurrent Gesture may own (Req 5.8, 6.11). Never raises (recovery path).
+        """
+        trunk = Movements.trunkController
+        for channel in (constants.NECK_PAN, constants.NECK_TILT):
+            rest_angle = constants.REST_POSITIONS.get(channel)
+            if rest_angle is None:
+                continue
+            try:
+                trunk.set_angle(channel, rest_angle)
+            except Exception as e:
+                name = constants.servos.get(channel, f"ch{channel}")
+                print(f"[tracking] could not recenter {name}: {e}")
+
+    def build_action_map(self):
+        """Build the dispatch allowlist of ``camelCase`` action name -> method.
+
+        This is the SINGLE SOURCE OF TRUTH for which Routine/Mode action names
+        are dispatchable. ``main()`` uses it to route ``--action``, and
+        Tracking_Mode's detection trigger uses the SAME map to validate a
+        ``Detection_Routine_Map`` action before dispatching it (Req 7.1, 7.6,
+        9.1-9.3). Keeping one builder means a name is dispatchable from the
+        detection trigger if and only if it is dispatchable from the CLI — there
+        is exactly one allowlist, never two that can drift apart.
+
+        The map is the security boundary: only names present as keys here are
+        ever dispatched, and dispatch is always ``action_map[name]()`` (a direct
+        dict lookup of a bound method) — an externally supplied name is NEVER
+        passed to ``getattr``/``eval``/``exec`` or a shell (Req 9.3).
+
+        Note that an action a ``DetectionRule`` references (e.g. the seed
+        ``wave`` / ``walkYourDog``) is NOT guaranteed to be a key here; the
+        trigger path treats any name missing from this map as rejected (Req 7.6).
+
+        Returns:
+            A dict mapping each ``camelCase`` action name to the bound
+            ``Animatronic`` method that performs it.
+        """
+        return {
+            # Wave routines
+            'startParty':     self.start_party,
+            # Beckon routines
+            'waiting':        self.waiting,
+            'exorcist':       self.exorcist,
+            'vaderFather':    self.vader_father,
+            'torture':        self.torture,
+            'yodaFear':       self.yoda_fear,
+            # Patrol / ambient
+            'krusty':         self.krusty,
+            'vaderBeaten':    self.vader_beaten,
+            # Reaction
+            'blah':           self.blah,
+            # New routines
+            'evilLaugh':      self.evil_laugh,
+            'vincentPrice':   self.vincent_price,
+            'yawn':           self.yawn,
+            'snuckUp':        self.snuck_up,
+            'awaken':         self.awaken,
+            # Performance-framework routines
+            'brains':         self.brains,
+            'hypnotic':       self.hypnotic,
+            'clearThroat':    self.clear_throat,
+            'coughLong':      self.cough_long,
+            'coughMedium':    self.cough_medium,
+            'burp':           self.burp,
+            'fart':           self.fart,
+            'sleep':          self.snore,
+            'moreCandy':      self.more_candy,
+            # Tracking Mode — camelCase key kept in the allowlist for parity with
+            # the webapp's dispatch, but dispatched by main()'s dedicated branch
+            # (NOT the generic servo_lock() path) because it takes only the
+            # Neck_Group lock. See the 'tracking' branch in main().
+            'tracking':       self.tracking,
+        }
+
+    # ------------------------------------------------------------------ #
     # Private gesture coroutines (called by run_action_and_audio)         #
     # ------------------------------------------------------------------ #
 
@@ -1618,6 +2510,61 @@ class Animatronic:
         await mv.hand_visor(duration=self._AWAKE_GESTURE_DURATION_S)
 
 
+def _dispatch_detection_trigger(action_map, pending_trigger):
+    """Dispatch a detection-triggered Routine AFTER the Neck_Group is released.
+
+    Called by ``main()`` only once the ``group_lock(NECK_GROUP)`` context has
+    exited, so Tracking_Mode no longer owns the Neck_Group when the Routine runs
+    (Req 7.7). The Routine (e.g. ``wave``, ``walkYourDog``) needs the whole robot
+    — neck + arm + jaw/audio — so it is run under the whole-robot
+    ``servo_lock()`` exactly like a CLI-dispatched Routine.
+
+    The action name was already allowlist-validated inside Tracking_Mode
+    (``_evaluate_trigger``), but it is re-validated here with a plain ``in``
+    membership test before dispatch as a defensive second gate — dispatch is
+    always a direct ``action_map[name]()`` lookup, never ``getattr``/``eval``/
+    shell (Req 7.6, 9.1-9.3). After the Routine completes, the rule's cooldown is
+    started via ``routine_map.mark_completed`` so the same condition cannot
+    immediately re-fire (Req 7.8).
+
+    Args:
+        action_map: The dispatch allowlist (single source of truth).
+        pending_trigger: The ``{"action", "rule", "routine_map"}`` dict returned
+            by ``Animatronic.tracking``.
+    """
+    action = pending_trigger["action"]
+    rule = pending_trigger["rule"]
+    routine_map = pending_trigger["routine_map"]
+
+    # Defensive re-check at the dispatch boundary (Req 7.6, 9.1-9.3). Should
+    # never fail (tracking() already gated it) but we never dispatch a name that
+    # isn't an explicit allowlist key.
+    if action not in action_map:
+        print(
+            f"[tracking] REJECTED detection-triggered action '{action}' at "
+            f"dispatch: not in action_map allowlist - nothing run (Req 7.6)"
+        )
+        return
+
+    print(f"[tracking] dispatching detection-triggered Routine '{action}' "
+          f"(Neck_Group already released, Req 7.7)")
+    try:
+        # Whole-robot lock for the Routine (neck + arm + jaw/audio). The
+        # Neck_Group lock Tracking held is already released, so this acquires
+        # cleanly. Fail fast if some other process grabbed the servos in the gap.
+        with servo_lock():
+            action_map[action]()
+    except ServoBusyError:
+        print("Servos busy - could not run detection-triggered Routine. "
+              "Skipping.")
+        return
+    finally:
+        # Start the rule's cooldown measured from Routine completion (Req 7.8),
+        # whether the Routine ran or was skipped busy, so a busy miss doesn't
+        # hammer the servos every frame.
+        routine_map.mark_completed(rule, time.monotonic())
+
+
 def main(args):
     """Dispatch --action to the corresponding Animatronic routine.
 
@@ -1626,35 +2573,47 @@ def main(args):
     """
     a = Animatronic()
 
-    action_map = {
-        # Wave routines
-        'startParty':     a.start_party,
-        # Beckon routines
-        'waiting':        a.waiting,
-        'exorcist':       a.exorcist,
-        'vaderFather':    a.vader_father,
-        'torture':        a.torture,
-        'yodaFear':       a.yoda_fear,
-        # Patrol / ambient
-        'krusty':         a.krusty,
-        'vaderBeaten':    a.vader_beaten,
-        # Reaction
-        'blah':           a.blah,
-        # New routines
-        'evilLaugh':      a.evil_laugh,
-        'vincentPrice':   a.vincent_price,
-        'yawn':           a.yawn,
-        'snuckUp':        a.snuck_up,
-        'awaken':         a.awaken,
-        # Performance-framework routines
-        'brains':         a.brains,
-        'hypnotic':       a.hypnotic,
-        'clearThroat':    a.clear_throat,
-        'sleep':          a.snore,
-        'moreCandy':      a.more_candy,
-    }
+    # Single source of truth for the dispatch allowlist (Req 7.1, 9.1-9.3). Both
+    # CLI dispatch below AND the Tracking_Mode detection trigger validate against
+    # THIS map, so a name is dispatchable from a detection trigger iff it is
+    # dispatchable from the CLI — there is exactly one allowlist.
+    action_map = a.build_action_map()
 
-    if args.action in action_map:
+    if args.action == 'tracking':
+        # Tracking is a MODE, but UNLIKE napping/awake it must NOT hold the
+        # whole-robot servo_lock(). It writes only the Neck_Group (channels 0-1),
+        # so it acquires ONLY the Neck_Group lock via group_lock(NECK_GROUP).
+        # This lets an arm-only Gesture (disjoint Arm_Group channels 4-7) run
+        # concurrently (Req 6.6). The call is still allowlist-gated: 'tracking'
+        # is an explicit key in action_map above and this is an explicit branch —
+        # args.action is never passed to getattr/eval/shell. It runs until
+        # interrupted (nap_signal stop request or a Scan_Sweep timeout). Fail
+        # fast if the Neck_Group is already in use.
+        pending_trigger = None
+        try:
+            with group_lock(NECK_GROUP):
+                # Pass the SAME action_map allowlist in so the detection trigger
+                # validates against it (Req 7.6). tracking() returns a pending
+                # trigger (or None); it never dispatches the Routine itself.
+                pending_trigger = a.tracking(
+                    camera_url=args.camera_url,
+                    max_step=args.max_step,
+                    deadband=args.deadband,
+                    conf=args.conf,
+                    scan_timeout=args.scan_timeout,
+                    action_map=action_map,
+                )
+            # The `with` block has now exited: the Neck_Group lock is RELEASED
+            # and the neck was recentered inside tracking()'s wind-down. Only
+            # NOW — with Tracking no longer owning the Neck_Group — do we dispatch
+            # a detection-triggered Routine, so the Routine and Tracking_Mode
+            # never own the Neck_Group simultaneously (Req 7.7).
+            if pending_trigger is not None:
+                _dispatch_detection_trigger(action_map, pending_trigger)
+        except ServoBusyError:
+            print("Neck group busy - another routine is already running. Aborting.")
+            sys.exit(BUSY_EXIT_CODE)
+    elif args.action in action_map:
         # SAFETY: hold the system-wide servo lock for the whole routine so no
         # other process can drive the servos at the same time. Two concurrent
         # routines can stall a servo against a mechanical block, causing it to
@@ -1712,6 +2671,32 @@ if __name__ == '__main__':
                         default=300,
                         help='Awake mode: seconds before the timeout ends the '
                              'mode (default: 300). Only used with --action=awake.')
+    # Tracking Mode flags (only used with --action=tracking). TrackingConfig
+    # clamps every numeric value into its documented safe range, so argparse
+    # only needs sensible types here; a None default means "use the
+    # TrackingConfig default" (so the dataclass owns the real default).
+    parser.add_argument('--scan-timeout', dest='scan_timeout', type=int,
+                        default=10,
+                        help='Tracking mode: Scan_Sweep reacquire timeout in '
+                             'seconds, clamped to 1-120 (default: 10). Only '
+                             'used with --action=tracking.')
+    parser.add_argument('--max-step', dest='max_step', type=int, default=None,
+                        help='Tracking mode: max neck angle change per update '
+                             'in degrees, clamped to 1-30 (default: 5). Only '
+                             'used with --action=tracking.')
+    parser.add_argument('--deadband', dest='deadband', type=float, default=None,
+                        help='Tracking mode: center deadband half-width as a '
+                             'fraction of the frame on both axes, clamped to '
+                             '0.0-0.5 (default: 0.05). Only used with '
+                             '--action=tracking.')
+    parser.add_argument('--conf', dest='conf', type=float, default=None,
+                        help='Tracking mode: detector confidence threshold, '
+                             'clamped to 0.0-1.0 (default: 0.5). Only used with '
+                             '--action=tracking.')
+    parser.add_argument('--camera-url', dest='camera_url', default=DEFAULT_CAMERA_URL,
+                        help='Tracking mode: base URL of Camera_Service '
+                             f'(default: {DEFAULT_CAMERA_URL}). Only used with '
+                             '--action=tracking.')
     args = parser.parse_args()
     print(args.action)
     main(args)
