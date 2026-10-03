@@ -1977,8 +1977,11 @@ class Movements:
     async def beckon(self):
         """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.
 
-        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
-                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
+        Channels (authoritative owned set {3,4,5,6,7}): RT_WRIST_TILT (3),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7). The curl flexes RT_WRIST_TILT (ch 3)
+                  to 170 on each curl-in stroke, so the wrist is part of the
+                  owned set.
 
         Hardware-measured beckon pose (arm closest to the body): shoulder
         rotator=90 (lifts the arm), shoulder tilt=55, elbow rotator=270, elbow

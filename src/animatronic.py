@@ -567,48 +567,76 @@ class Animatronic:
         mv = Movements("Animatronic")
         audio_dir = self._resolve_audio_dir()
 
-        BRAINS = PerformanceDefinition(
+        BRAINS = self._brains_performance(mv, scan=False)
+
+        asyncio.run(PerformanceRunner(BRAINS, mv, audio_dir).run())
+
+    def _brains_performance(self, mv, scan=False):
+        """Build the ``brains`` ``PerformanceDefinition`` (standalone or scan).
+
+        The standalone routine (``scan=False``) runs ``menacing_reach`` (arm
+        channels 4-7) concurrently with ``look_around_random`` (neck channels
+        0-1), both looping for ``brains.wav`` with audio ungated at t=0 — zero
+        behaviour change from the pre-factored ``brains``.
+
+        The scan variant (``scan=True``) is arm-only: it drops the neck
+        ``look_around_random`` ``MovementSpec`` so the group owns ONLY the arm
+        channels {4,5,6,7}, leaving the neck free for the scan tracker to drive.
+        Audio stays ungated (``gate=None``).
+
+        Args:
+            mv: The shared ``Movements`` instance backing every phase callable so
+                the arm and neck adapters share one ``TrunkController``.
+            scan: When ``True``, build the arm-only scan variant (neck
+                ``MovementSpec`` omitted). Defaults to ``False`` (standalone).
+
+        Returns:
+            The assembled ``PerformanceDefinition``.
+        """
+        arm_spec = MovementSpec(
+            name="menacing_reach",
+            owned_channels=frozenset({
+                constants.RT_SHOULDER_ROTATOR,
+                constants.RT_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+            }),
+            lead_in=mv.menacing_reach_lead_in,      # reach out
+            loop_body=mv.menacing_reach_loop_body,  # one menace swing
+            do_return=mv.menacing_reach_return,     # retract
+            supplies_gate=False,
+            # Stop starting new swings once brains.wav (~15.2s)
+            # is within 4s of ending, so the last swing plus the
+            # ~40%-faster retract finish before the audio does.
+            stop_loop_lead_seconds=4.0,
+        )
+        neck_spec = MovementSpec(
+            name="look_around_random",
+            owned_channels=frozenset({
+                constants.NECK_PAN,
+                constants.NECK_TILT,          # 0,1
+            }),
+            lead_in=None,                     # starts at t=0
+            loop_body=mv.look_scan_loop_body, # one random glance
+            do_return=mv.look_scan_return,    # neck to center
+            supplies_gate=False,
+        )
+
+        # Scan variant: arm-only, so the neck stays free for the tracker. The
+        # group owns ONLY {4,5,6,7}; the neck MovementSpec is dropped.
+        movements = (arm_spec,) if scan else (arm_spec, neck_spec)
+
+        return PerformanceDefinition(
             name="brains",
             audio_file=self.music[20],  # brains.wav — ~15.2 s
             gate=None,                  # ungated: audio starts at t=0
             steps=(
                 PerformanceStep(
                     loop_for_audio=True,
-                    group=ConcurrentGroup(movements=(
-                        MovementSpec(
-                            name="menacing_reach",
-                            owned_channels=frozenset({
-                                constants.RT_SHOULDER_ROTATOR,
-                                constants.RT_SHOULDER_TILT,
-                                constants.RT_ELBOW_TILT,
-                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
-                            }),
-                            lead_in=mv.menacing_reach_lead_in,      # reach out
-                            loop_body=mv.menacing_reach_loop_body,  # one menace swing
-                            do_return=mv.menacing_reach_return,     # retract
-                            supplies_gate=False,
-                            # Stop starting new swings once brains.wav (~15.2s)
-                            # is within 4s of ending, so the last swing plus the
-                            # ~40%-faster retract finish before the audio does.
-                            stop_loop_lead_seconds=4.0,
-                        ),
-                        MovementSpec(
-                            name="look_around_random",
-                            owned_channels=frozenset({
-                                constants.NECK_PAN,
-                                constants.NECK_TILT,          # 0,1
-                            }),
-                            lead_in=None,                     # starts at t=0
-                            loop_body=mv.look_scan_loop_body, # one random glance
-                            do_return=mv.look_scan_return,    # neck to center
-                            supplies_gate=False,
-                        ),
-                    )),
+                    group=ConcurrentGroup(movements=movements),
                 ),
             ),
         )
-
-        asyncio.run(PerformanceRunner(BRAINS, mv, audio_dir).run())
 
     def more_candy(self):
         """"More candy" audio — jittery sugar-rush shakes, audio-synced.
@@ -762,61 +790,7 @@ class Animatronic:
         mv = Movements("Animatronic")
         audio_dir = self._resolve_audio_dir()
 
-        HYPNOTIC = PerformanceDefinition(
-            name="hypnotic",
-            audio_file=self.music[21],  # hypnotic.wav — ~5.05 s
-            # in_my_power.wav (~7.02 s) plays back-to-back immediately after
-            # hypnotic.wav on the same audio thread, so the arm/head/eyes keep
-            # going across BOTH tracks (~12.07 s total) and the arm's near-end
-            # cutoff below fires against the end of in_my_power.wav, not hypnotic.
-            # Per-track options: the jaw is ON for in_my_power.wav (so the mouth
-            # articulates on this line) but eyes stay OFF -- the ambient blinker
-            # owns EYE_LIGHT_PIN, so re-enabling envelope eyes here would clash.
-            followup_audio_files=(
-                (self.music[27], {"drive_jaw": True, "drive_eyes": False}),
-            ),
-            # Head sway supplies the gate: its lead-in sleeps 100ms before
-            # completing, so audio starts ~100ms after the routine begins.
-            gate=GateSpec(movement_name="hyp_head_sway"),
-            # Jaw silent; AudioPlayer does NOT claim the eye pin so the ambient
-            # blinker (below) can own EYE_LIGHT_PIN without a clash.
-            player_options={"drive_jaw": False, "drive_eyes": False},
-            steps=(
-                PerformanceStep(
-                    loop_for_audio=True,
-                    group=ConcurrentGroup(movements=(
-                        MovementSpec(
-                            name="hypnotic_arm",
-                            owned_channels=frozenset({
-                                constants.RT_SHOULDER_ROTATOR,
-                                constants.RT_SHOULDER_TILT,
-                                constants.RT_ELBOW_TILT,
-                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
-                            }),
-                            lead_in=mv.hypnotic_arm_lead_in,      # reach out (t=0)
-                            loop_body=mv.hypnotic_arm_loop_body,  # one sway
-                            do_return=mv.hypnotic_arm_return,     # retract
-                            supplies_gate=False,
-                            # hypnotic.wav is short (~5.05s); stop starting new
-                            # sways within 1.5s of the end so the last sway (~1s)
-                            # plus the ~40%-faster retract (~0.8s) finish in time.
-                            stop_loop_lead_seconds=1.5,
-                        ),
-                        MovementSpec(
-                            name="hyp_head_sway",
-                            owned_channels=frozenset({
-                                constants.NECK_PAN,
-                                constants.NECK_TILT,          # 0,1
-                            }),
-                            lead_in=mv.hyp_scan_lead_in,      # 100ms gate + center
-                            loop_body=mv.hyp_scan_loop_body,  # one gentle glance
-                            do_return=mv.hyp_scan_return,     # neck to center
-                            supplies_gate=True,               # opens the audio gate
-                        ),
-                    )),
-                ),
-            ),
-        )
+        HYPNOTIC = self._hypnotic_performance(mv, scan=False)
 
         # Ambient task: 0.25s/0.25s eye blink BOUND to the audio window -- the
         # factory receives the PlaybackController so the blink starts when the
@@ -828,6 +802,102 @@ class Animatronic:
                 HYPNOTIC, mv, audio_dir,
                 ambient=lambda pb: self._blink_eyes(pb, 0.25, 0.25),
             ).run()
+        )
+
+    def _hypnotic_performance(self, mv, scan=False):
+        """Build the ``hypnotic`` ``PerformanceDefinition`` (standalone or scan).
+
+        The standalone routine (``scan=False``) runs ``hypnotic_arm`` (arm
+        channels 4-7) concurrently with ``hyp_head_sway`` (neck channels 0-1).
+        The head sway supplies the audio gate (``gate=GateSpec("hyp_head_sway")``)
+        so playback starts ~100ms in — zero behaviour change from the
+        pre-factored ``hypnotic``. The two-track audio chain, near-end cutoff,
+        jaw/eyes-off player options and the ambient blink are unchanged.
+
+        The scan variant (``scan=True``) is arm-only: it drops the neck
+        ``hyp_head_sway`` ``MovementSpec`` so the group owns ONLY the arm
+        channels {4,5,6,7}, leaving the neck free for the scan tracker. Because
+        the dropped movement supplied the gate, the gate is set to ``None`` so
+        no ``GateSpec`` references a movement that no longer exists and no
+        remaining spec sets ``supplies_gate=True`` (``hypnotic_arm`` is already
+        ``supplies_gate=False``). Audio therefore starts at t=0 for the scan
+        variant — an intended, operator-visible timing change for scan only.
+        ``followup_audio_files``, the arm's ``stop_loop_lead_seconds=1.5``, the
+        jaw/eyes-off ``player_options`` and the ambient eye-blink are unchanged.
+
+        Args:
+            mv: The shared ``Movements`` instance backing every phase callable so
+                the arm and neck adapters share one ``TrunkController``.
+            scan: When ``True``, build the arm-only scan variant (neck
+                ``MovementSpec`` dropped, ``gate=None``). Defaults to ``False``.
+
+        Returns:
+            The assembled ``PerformanceDefinition``.
+        """
+        arm_spec = MovementSpec(
+            name="hypnotic_arm",
+            owned_channels=frozenset({
+                constants.RT_SHOULDER_ROTATOR,
+                constants.RT_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+            }),
+            lead_in=mv.hypnotic_arm_lead_in,      # reach out (t=0)
+            loop_body=mv.hypnotic_arm_loop_body,  # one sway
+            do_return=mv.hypnotic_arm_return,     # retract
+            supplies_gate=False,
+            # hypnotic.wav is short (~5.05s); stop starting new
+            # sways within 1.5s of the end so the last sway (~1s)
+            # plus the ~40%-faster retract (~0.8s) finish in time.
+            stop_loop_lead_seconds=1.5,
+        )
+        neck_spec = MovementSpec(
+            name="hyp_head_sway",
+            owned_channels=frozenset({
+                constants.NECK_PAN,
+                constants.NECK_TILT,          # 0,1
+            }),
+            lead_in=mv.hyp_scan_lead_in,      # 100ms gate + center
+            loop_body=mv.hyp_scan_loop_body,  # one gentle glance
+            do_return=mv.hyp_scan_return,     # neck to center
+            supplies_gate=True,               # opens the audio gate
+        )
+
+        # Scan variant: arm-only, so the neck stays free for the tracker. The
+        # neck spec supplied the gate, so with it dropped the gate must be None
+        # (no remaining spec supplies_gate=True) and audio starts at t=0.
+        if scan:
+            movements = (arm_spec,)
+            gate = None
+        else:
+            movements = (arm_spec, neck_spec)
+            # Head sway supplies the gate: its lead-in sleeps 100ms before
+            # completing, so audio starts ~100ms after the routine begins.
+            gate = GateSpec(movement_name="hyp_head_sway")
+
+        return PerformanceDefinition(
+            name="hypnotic",
+            audio_file=self.music[21],  # hypnotic.wav — ~5.05 s
+            # in_my_power.wav (~7.02 s) plays back-to-back immediately after
+            # hypnotic.wav on the same audio thread, so the arm/head/eyes keep
+            # going across BOTH tracks (~12.07 s total) and the arm's near-end
+            # cutoff above fires against the end of in_my_power.wav, not hypnotic.
+            # Per-track options: the jaw is ON for in_my_power.wav (so the mouth
+            # articulates on this line) but eyes stay OFF -- the ambient blinker
+            # owns EYE_LIGHT_PIN, so re-enabling envelope eyes here would clash.
+            followup_audio_files=(
+                (self.music[27], {"drive_jaw": True, "drive_eyes": False}),
+            ),
+            gate=gate,
+            # Jaw silent; AudioPlayer does NOT claim the eye pin so the ambient
+            # blinker can own EYE_LIGHT_PIN without a clash.
+            player_options={"drive_jaw": False, "drive_eyes": False},
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,
+                    group=ConcurrentGroup(movements=movements),
+                ),
+            ),
         )
 
     def clear_throat(self):
