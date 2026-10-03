@@ -76,18 +76,16 @@ MODELS_DIR = os.path.join(PROJECT_DIR, 'models')
 # nothing from the request is ever interpolated into a shell — we pass a fixed
 # script path plus a validated --action value as separate argv entries.
 ROUTINE_ACTIONS = {
-    'startParty', 'blah', 'krusty', 'waiting', 'exorcist', 'vaderFather',
-    'torture', 'vaderBeaten', 'yodaFear', 'evilLaugh', 'vincentPrice',
-    'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic', 'awaken',
-    'clearThroat', 'coughLong', 'coughMedium', 'burp', 'fart',
+    'startParty', 'blah', 'krusty',
+    'vincentPrice', 'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic',
+    'awaken', 'clearThroat', 'coughLong', 'coughMedium', 'burp', 'fart',
 }
 
 MOVEMENT_ACTIONS = {
-    'wave', 'come', 'comeHere', 'beckon', 'reachOut', 'menacingReach', 'yawnCover',
-    'nod', 'lookUp', 'lookAround', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
-    'swivelHead', 'scan', 'shakeHead', 'no', 'smno',
-    'waveAndSwivel', 'comeAndLook',
-    'reachAndLook', 'patrol', 'handVisor',
+    'wave', 'come', 'comeHere', 'beckon', 'menacingReach', 'yawnCover',
+    'nod', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
+    'swivelHead', 'shakeHead', 'no', 'smno',
+    'handVisor',
 }
 
 # Tracking Mode allowlist. Tracking is launched via animatronic.py like any
@@ -110,11 +108,11 @@ VOICE_EFFECTS = ['pitch', 'distortion', 'echo', 'reverb', 'tremolo',
                  'bitcrush', 'ring_mod']
 
 # Pools the automation loops draw from (mirrors the old Node-RED Switch nodes).
-ROUTINE_POOL = ['blah', 'exorcist', 'startParty', 'waiting', 'krusty', 'vaderFather']
+ROUTINE_POOL = ['blah', 'startParty', 'krusty']
 # Only valid MOVEMENT_ACTIONS — the old Node-RED Switch used 'yes'/'no' labels,
 # but the controller's actual actions are 'nod'/'no'. Using canonical names here.
-MOVEMENT_POOL = ['no', 'lookAround', 'lookAroundSmall',
-                 'scan', 'neckEllipse', 'swivelHead', 'come', 'wave']
+MOVEMENT_POOL = ['no', 'lookAroundSmall',
+                 'neckEllipse', 'swivelHead', 'come', 'wave']
 
 # ── Automation state ─────────────────────────────────────────────────────────
 automation = {

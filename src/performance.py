@@ -913,4 +913,20 @@ class PerformanceRunner:
                 )
                 gate_task.cancel()
 
+        # Wait for the audio chain to fully drain before returning. A movement's
+        # ``stop_loop_lead_seconds`` can retract the hand well BEFORE the audio
+        # ends (e.g. ``burp`` lowers the hand as ``gurgle_burp.wav`` finishes,
+        # while the ``excuseme_sb.wav`` follow-on is still playing). Audio runs
+        # on a daemon thread, so if ``run()`` returned here the ``asyncio.run``
+        # at the top of the routine would unwind and the process teardown would
+        # kill that thread mid-track, cutting off the tail of the chain. Joining
+        # the audio thread first guarantees every track plays to completion.
+        # Done in a worker thread so the blocking join never stalls the event
+        # loop, and only when playback actually started (a never-gated audio
+        # start leaves the thread unstarted, so this is a no-op there). This runs
+        # only on normal completion -- the exception path above is a failure
+        # teardown and must not block waiting on audio.
+        if playback.has_started():
+            await asyncio.to_thread(playback.wait_finished)
+
         print(f"[performance] finished '{self.definition.name}'")

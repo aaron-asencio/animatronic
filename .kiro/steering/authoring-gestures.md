@@ -21,9 +21,17 @@ gesture request should include, per joint:
 - motion feel (eased `move_to` vs. `randomized_centering_move`, steps/delay).
 
 If a landmark is missing, prefer the documented values already in the codebase
-(`constants.REST_POSITIONS`, `constants.SAFE_LIMITS`, the ARM DESTINATION POSES
-comment in `constants.py`, and the nearest existing gesture) over a fresh
+(`constants.REST_POSITIONS`, `constants.SAFE_LIMITS`, the `ARM_DESTINATION_POSES`
+dict in `constants.py`, and the nearest existing gesture) over a fresh
 full-file search. Only search when no documented value exists.
+
+`ARM_DESTINATION_POSES` is the canonical table of each gesture's peak/hold arm
+pose (the four right-arm channels) plus the `verified_pose_override` it needs —
+read it instead of re-deriving a hand-to-mouth or reach pose. It includes
+`yawnCover` and `coverMouth` (the shared cover-mouth hold used by `clearThroat`,
+the coughs, `burp`, and `fart`): elbow cover **162**, shoulder tilt 35, rotator
+200, forearm 185, under the `RT_SHOULDER_TILT: (35,270)` / `RT_ELBOW_TILT:
+(0,170)` override.
 
 ## 2. Reuse, don't re-derive
 
@@ -153,3 +161,15 @@ SAME shared primitives as the standalone gesture, so a seeded run reproduces an
 identical command sequence. If the request is gesture-only, you do NOT need the
 phased adapters — add them only when wiring the gesture into an audio Routine.
 See `menacing_reach` / `hypnotic_arm` / `present_palm` for the adapter trio.
+
+The cover-mouth family is the most-reused phased gesture: one shared pose + one
+hold (`yawn_cover_loop_body`) + one return (`yawn_cover_return`), with FOUR
+interchangeable lead-ins that differ only in audio timing
+(`yawn_cover_lead_in`, `_settled`, `_gated`, `_delayed`). When tuning a
+cover-mouth Routine, change the lead-in or a timing constant — do NOT fork the
+pose. The lead-in variants, their timing constants, and which Routine uses each
+are tabulated in `audio-sequencing.md` ("Cover-mouth lead-in variants"); the
+pose values live in `constants.ARM_DESTINATION_POSES["coverMouth"]` and the
+`Movements._YC_*_COVER` constants. The audio-side timing knobs that pair with
+these (gating, `followup_audio_files`, `stop_loop_lead_seconds`, and the
+"performance waits for audio to drain" rule) are all in `audio-sequencing.md`.

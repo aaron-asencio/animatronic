@@ -208,7 +208,7 @@ class AudioPlayer:
 
 if __name__ == "__main__":        
     music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav',
-             'vader-beaten.wav', 'vader-father.wav', 'were-waiting.wav', 'yoda-fear.wav']
+             'were-waiting.wav']
     p = AudioPlayer()
     # Repo audio/ directory (source of truth), relative to this module.
     path = os.path.join(
@@ -232,15 +232,9 @@ if __name__ == "__main__":
             #     audio_file_name = "sb_party_switch.wav"
             # case "torture": # must be wav
             #     audio_file_name = "spongebob-torture.mp3"
-            case "vaderBeaten":
-                audio_file_name = "vader-beaten.wav"
-            case "vaderFather":
-                audio_file_name = "vader-father.wav"
             case "waiting":
                 audio_file_name = "were-waiting.wav"
-            case "yoda-fear":
-                audio_file_name = "yoda-fear.wav"
-          
+
 
             case _:
                 raise ValueError("Unknown audio file name: " + audio_file_name)

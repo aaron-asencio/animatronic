@@ -197,6 +197,9 @@ FORBIDDEN_COMBINATIONS = [
 #   comeHere         RT_SHOULDER_TILT: (14, 270)
 #   yawnCover        RT_SHOULDER_TILT: (35, 270), RT_ELBOW_TILT: (0, 170)
 #                                                    (also NECK_PAN=90, NECK_TILT=90)
+#   coverMouth       RT_SHOULDER_TILT: (35, 270), RT_ELBOW_TILT: (0, 170)
+#                                                    (also NECK_PAN=90, NECK_TILT=90)
+#                    (same override as yawnCover; _YAWN_COVER_OVERRIDE in movements.py)
 #
 # Format: action_name -> {channel: destination_angle_deg}
 ARM_DESTINATION_POSES = {
@@ -224,10 +227,25 @@ ARM_DESTINATION_POSES = {
         RT_ELBOW_TILT:       140,
         RT_ELBOW_ROTATOR:    189,
     },
+    # Standalone yawn_cover gesture (Movements.yawn_cover): hand-to-mouth hold.
+    # Elbow cover value lowered 165 -> 162 to decrease the final hand position.
     "yawnCover": {
         RT_SHOULDER_ROTATOR: 200,
         RT_SHOULDER_TILT:    35,
-        RT_ELBOW_TILT:       165,
+        RT_ELBOW_TILT:       162,
+        RT_ELBOW_ROTATOR:    185,
+    },
+    # Shared cover-mouth pose used by the PHASED yawn_cover adapters
+    # (yawn_cover_lead_in* / _loop_body / _return in movements.py), driven by the
+    # cover-mouth Routines: clearThroat, coughLong, coughMedium, burp, and fart's
+    # phase 2. Same operator-verified keyframes as yawnCover above; the adapters
+    # read these from the Movements._YC_*_COVER class constants. The only pose
+    # difference from the standalone is the elbow REST landing (adapters rest the
+    # elbow at 5, the documented rest; standalone overshoots to 0).
+    "coverMouth": {
+        RT_SHOULDER_ROTATOR: 200,
+        RT_SHOULDER_TILT:    35,
+        RT_ELBOW_TILT:       162,
         RT_ELBOW_ROTATOR:    185,
     },
 }

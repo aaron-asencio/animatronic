@@ -312,7 +312,7 @@ class Movements:
         tilted, the hand would cover empty air instead of the mouth.
 
         Target arm pose (HARDWARE-MEASURED, hand directly in front of the mouth):
-            tilt=35, rotator=200, elbow=170, forearm=185.
+            tilt=35, rotator=200, elbow=162, forearm=185.
 
         NOTE: this pose sits in the coupled-shoulder region where the decoupled
         collision model is unreliable (it mislocates the folded-up hand), so the
@@ -325,7 +325,7 @@ class Movements:
         # Resting starts (from REST_POSITIONS) and measured yawn targets.
         TILT_REST, TILT_YAWN = 55, 35
         ROT_REST, ROT_YAWN = 0, 200
-        ELBOW_REST, ELBOW_YAWN = 0, 165
+        ELBOW_REST, ELBOW_YAWN = 0, 162
         FOREARM_REST, FOREARM_YAWN = 150, 185
 
         # tilt=35 and elbow=170 fall BELOW/ABOVE the conservative global
@@ -413,7 +413,7 @@ class Movements:
     # home there; here the adapter's own return lands it correctly).
     _YC_TILT_REST, _YC_TILT_COVER = 55, 35
     _YC_ROT_REST, _YC_ROT_COVER = 0, 200
-    _YC_ELBOW_REST, _YC_ELBOW_COVER = 5, 165
+    _YC_ELBOW_REST, _YC_ELBOW_COVER = 5, 162
     _YC_FOREARM_REST, _YC_FOREARM_COVER = 150, 185
     # Same two sub-limit channels yawn_cover widens, operator-verified safe in
     # THIS folded-to-the-mouth pose only. Held across lead-in -> loop -> return.
@@ -602,17 +602,24 @@ class Movements:
     #     Used by coughLong / coughMedium.
     #   * ``yawn_cover_lead_in_gated``: opens the gate a fixed ``_YC_GATE_SHORT``
     #     (250ms) after the routine begins while the fold runs underneath, so a
-    #     short clip (gurgle_burp.wav) starts promptly and the hand reaches the
-    #     mouth as it plays. Used by burp.
+    #     short clip starts promptly and the hand reaches the mouth as it plays.
+    #   * ``yawn_cover_lead_in_delayed``: for an UNGATED routine (audio at t=0),
+    #     holds the arm still ``_YC_MOTION_DELAY`` (0.5s) so the sound leads, THEN
+    #     raises the hand. Does NOT supply the gate. Used by burp.
     #
     # Both pair with the existing ``yawn_cover_loop_body`` (its
     # ``_await_pending_fold`` is a no-op when no fold task is pending, as with
     # the settled variant) and ``yawn_cover_return``.
 
-    # Fixed short audio-gate delay for the ``burp`` routine: the cover-mouth
-    # movement supplies the gate, so its lead-in opens the gate this long after
-    # the routine begins while the fold continues underneath.
+    # Fixed short audio-gate delay for a cover-mouth movement that SUPPLIES the
+    # gate: its lead-in opens the gate this long after the routine begins while
+    # the fold continues underneath.
     _YC_GATE_SHORT = 0.25
+
+    # Fixed delay before the ARM MOTION begins for the ``burp`` routine. Burp is
+    # UNGATED (audio plays at t=0), and the arm motion is held off this long so
+    # the burp sound leads and the hand comes up to cover the mouth a beat later.
+    _YC_MOTION_DELAY = 0.5
 
     async def yawn_cover_lead_in_settled(self):
         """Lead-in variant: fully fold the hand to the mouth, THEN open the gate.
@@ -644,18 +651,42 @@ class Movements:
         ``verified_pose_override`` on ``_yawn_cover_stack``. It differs only in
         gate timing: rather than returning ~0.5s before the fold ends, it returns
         a FIXED ``_YC_GATE_SHORT`` seconds after the fold begins, so a short clip
-        (``gurgle_burp.wav``) starts ~250ms in and the hand reaches the mouth as
-        it plays. Contains no audio logic; owns head channels 0,1 and arm
-        channels 4-7.
+        starts ~250ms in and the hand reaches the mouth as it plays. Contains no
+        audio logic; owns head channels 0,1 and arm channels 4-7.
         """
         self._yawn_cover_stack = contextlib.AsyncExitStack()
         self._yawn_cover_stack.enter_context(
             TrunkController.verified_pose_override(self._YAWN_COVER_OVERRIDE))
         # Center the head, then start the fold WITHOUT awaiting it so the gate
-        # can open a fixed 250ms in, while the fold keeps running underneath.
+        # can open a fixed _YC_GATE_SHORT in, while the fold keeps running
+        # underneath.
         await self._yawn_cover_center_head()
         self._yawn_cover_fold_task = asyncio.ensure_future(self._yawn_cover_fold_up())
         await asyncio.sleep(self._YC_GATE_SHORT)
+
+    async def yawn_cover_lead_in_delayed(self):
+        """Lead-in variant: hold the arm still ``_YC_MOTION_DELAY`` (0.5s), then raise.
+
+        For an UNGATED cover-mouth routine (``gate=None``, audio at t=0) that
+        wants the SOUND to lead and the arm motion to follow a beat later. Unlike
+        the gated/settled variants this movement does NOT supply the audio gate;
+        it simply delays its own motion: it opens the same
+        ``verified_pose_override`` on the per-adapter ``_yawn_cover_stack`` (held
+        across lead-in -> loop -> return, closed by ``yawn_cover_return``), sleeps
+        ``_YC_MOTION_DELAY`` with the arm at rest, then centers the head and folds
+        the hand fully up (awaited, so the hold begins only once the hand has
+        reached the mouth). No deferred fold task is created, so the paired
+        ``yawn_cover_loop_body``'s ``_await_pending_fold`` is a harmless no-op.
+        Contains no audio logic; owns head channels 0,1 and arm channels 4-7.
+        """
+        self._yawn_cover_stack = contextlib.AsyncExitStack()
+        self._yawn_cover_stack.enter_context(
+            TrunkController.verified_pose_override(self._YAWN_COVER_OVERRIDE))
+        # Hold the arm at rest for a beat so the (ungated) audio leads, then
+        # center the head and fold the hand fully up before returning.
+        await asyncio.sleep(self._YC_MOTION_DELAY)
+        await self._yawn_cover_center_head()
+        await self._yawn_cover_fold_up()
 
     async def face_palm(self):
         """Face palm: head drops into the hand, shakes 3x in dismay, then recovers.
@@ -1701,51 +1732,6 @@ class Movements:
             constants.RT_ELBOW_ROTATOR,
             RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
 
-    async def reach_out(self):
-        """Reach: extend arm forward at shoulder height, then retract.
-
-        Channels: RT_SHOULDER_ROTATOR (7), RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5)
-
-        Raises the shoulder, tilts it forward (extending toward the audience),
-        then slowly retracts — a reaching or pointing-out gesture.
-        """
-        RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 60
-        RT_SHOULDER_TILT_MIN    = 0
-        RT_SHOULDER_TILT_MAX    = 80
-        RT_ELBOW_TILT_MIN       = 0
-        RT_ELBOW_TILT_MAX       = 40
-
-        # Raise shoulder and extend elbow simultaneously.
-        raise_task   = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.003, True))
-        tilt_task    = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT,
-            RT_SHOULDER_TILT_MIN, RT_SHOULDER_TILT_MAX, 0.003, True))
-        await asyncio.gather(raise_task, tilt_task)
-
-        # Extend elbow slightly.
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT,
-            RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, True)
-
-        await asyncio.sleep(0.5)
-
-        # Retract: reverse all joints.
-        elbow_back   = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_ELBOW_TILT,
-            RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, False))
-        await asyncio.gather(elbow_back)
-
-        lower_task   = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.004, False))
-        untilt_task  = asyncio.create_task(self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_TILT,
-            RT_SHOULDER_TILT_MIN, RT_SHOULDER_TILT_MAX, 0.004, False))
-        await asyncio.gather(lower_task, untilt_task)
-
     # ================================================================== #
     # HEAD gestures  (channels: NECK_PAN (0), NECK_TILT (1))             #
     # Safe to gather with any ARM gesture.                                #
@@ -1772,32 +1758,6 @@ class Movements:
                 {constants.NECK_TILT: NECK_TILT_DOWN}, steps=18, delay=0.02)
             await self.trunkController.move_to(
                 {constants.NECK_TILT: NECK_TILT_LEVEL}, steps=18, delay=0.02)
-
-    async def look_up(self):
-        """Look up: tilt head back, hold briefly, return to level.
-
-        Channels: NECK_TILT (1)
-        """
-        NECK_TILT_MIN = 0
-        NECK_TILT_MAX = 90
-        await self.trunkController.move(
-            constants.NECK_TILT,
-            NECK_TILT_MIN, NECK_TILT_MAX, 0.02, False)
-        await asyncio.sleep(0.8)
-        await self.trunkController.move(
-            constants.NECK_TILT,
-            NECK_TILT_MAX, NECK_TILT_MIN, 0.02, False)
-
-    async def look_around(self):
-        """Pan and tilt the neck simultaneously, then return to center.
-
-        Channels: NECK_PAN (0), NECK_TILT (1)
-        """
-        await self.trunkController.neck_center()
-        neck_tilt = asyncio.create_task(self.trunkController.neck_tilt(10, 50))
-        neck_pan  = asyncio.create_task(self.trunkController.neck_pan())
-        await asyncio.gather(neck_tilt, neck_pan)
-        await self.trunkController.neck_center()
 
     async def look_around_random(self, duration=15.0):
         """Idly scan the room: look to random spots for ~15s, then return to rest.
@@ -2050,31 +2010,6 @@ class Movements:
         await self.neck_ellipse()
         await asyncio.sleep(1)
         await self.trunkController.neck_center()
-
-    async def scan(self, reps=2):
-        """Pan the head side-to-side, return to center.
-
-        Channels: NECK_PAN (0), NECK_TILT (1)
-
-        Levels the tilt to 90 and centers pan first, sweeps left/right via
-        move_to (smoothstep eased), then returns to center.
-
-        Args:
-            reps: Number of full side-to-side sweeps (default 2).
-        """
-        CENTER = constants.NECK_CENTER   # 90 pan + tilt neutral
-        PAN_LEFT, PAN_RIGHT = 120, 60
-        await self.trunkController.move_to(
-            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
-            steps=18, delay=0.02)
-        for _ in range(reps):
-            await self.trunkController.move_to(
-                {constants.NECK_PAN: PAN_LEFT}, steps=22, delay=0.02)
-            await self.trunkController.move_to(
-                {constants.NECK_PAN: PAN_RIGHT}, steps=22, delay=0.02)
-        await self.trunkController.move_to(
-            {constants.NECK_PAN: CENTER, constants.NECK_TILT: CENTER},
-            steps=18, delay=0.02)
 
     async def shake_head(self, reps=3):
         """Side-to-side head shake (full pan arc).
@@ -2494,19 +2429,6 @@ class Movements:
     # Each method documents which arm and head gesture it combines.       #
     # ================================================================== #
 
-    async def wave_and_swivel(self):
-        """Wave the arm while doing a double neck-ellipse swivel.
-
-        ARM: _wave_arm(no neck)  ·  HEAD: swivel_head()
-
-        Uses the neck-free wave so swivel_head() owns the neck channels without
-        the wave fighting it for the pan channel.
-        """
-        await asyncio.gather(
-            asyncio.create_task(self._wave_arm(include_neck=False)),
-            asyncio.create_task(self.swivel_head()),
-        )
-
     # --- wave_and_swivel_smooth landmarks (used by startParty) ------------ #
     # Smooth head swivel band. NECK_PAN ("neck rotate") uses the current
     # neck_pan() range 30-150 => center 90, half_range 60, driven by
@@ -2526,9 +2448,9 @@ class Movements:
         ARM: _wave_arm(no neck)  ·  HEAD: eased swivel over NECK_PAN + NECK_TILT.
 
         The arm and head run CONCURRENTLY over DISJOINT channels (arm 4-7, head
-        0-1). Unlike ``wave_and_swivel`` (raw one-degree ``neck_ellipse``
-        sweeps), the head here eases every move through ``move_to`` for smooth
-        acceleration/settle:
+        0-1). The head eases every move through ``move_to`` for smooth
+        acceleration/settle rather than stepping raw one-degree
+        ``neck_ellipse`` sweeps:
 
         - NECK_PAN ("neck rotate"): each arc picks its pan target via
           ``randomized_centering_move`` over the CURRENT pan range
@@ -2548,8 +2470,8 @@ class Movements:
                   [arm].
 
         Args:
-            arcs: Number of eased swivel arcs the head traces (default 2, to
-                match wave_and_swivel's double neck-ellipse).
+            arcs: Number of eased swivel arcs the head traces (default 2, a
+                double neck-ellipse).
         """
         async def head_swivel():
             # Start level and centered so the swivel begins from a known pose.
@@ -2593,30 +2515,10 @@ class Movements:
             asyncio.create_task(head_swivel()),
         )
 
-    async def come_and_look(self):
-        """Beckon while scanning the environment.
-
-        ARM: come()  ·  HEAD: look_around()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.come()),
-            asyncio.create_task(self.look_around()),
-        )
-
-    async def reach_and_look(self):
-        """Reach toward audience while looking around.
-
-        ARM: reach_out()  ·  HEAD: look_around()
-        """
-        await asyncio.gather(
-            asyncio.create_task(self.reach_out()),
-            asyncio.create_task(self.look_around()),
-        )
-
     # --- reach_and_look_smooth landmarks (used by vincentPrice) ----------- #
-    # Reach pose (eased, arm arrives together). Same landmarks as reach_out's
-    # extended pose, driven through move_to for smoothstep easing instead of the
-    # older linear move_by_direction 1-deg sweeps.
+    # Reach pose (eased, arm arrives together). An extended forward-reach arm
+    # pose driven through move_to for smoothstep easing instead of the older
+    # linear move_by_direction 1-deg sweeps.
     _RL_REACH = {
         constants.RT_SHOULDER_ROTATOR: 60,
         constants.RT_SHOULDER_TILT:    80,
@@ -2638,11 +2540,10 @@ class Movements:
         Channels: NECK_PAN (0), NECK_TILT (1), RT_SHOULDER_ROTATOR (7),
                   RT_SHOULDER_TILT (6), RT_ELBOW_TILT (5).
 
-        The vincentPrice routine's motion. Unlike ``reach_and_look`` (which uses
-        the older linear ``move_by_direction`` sweeps), every move here goes
-        through ``move_to`` with smoothstep easing so the arm and head
-        accelerate and settle smoothly. The ARM and HEAD run CONCURRENTLY over
-        disjoint channels:
+        The vincentPrice routine's motion. Every move here goes through
+        ``move_to`` with smoothstep easing so the arm and head accelerate and
+        settle smoothly. The ARM and HEAD run CONCURRENTLY over disjoint
+        channels:
 
         - ARM: REPEATS an eased reach — out to the reach pose (shoulder rotator
           60, shoulder tilt 80, elbow tilt 40 — arriving together), brief hold,
@@ -2708,15 +2609,6 @@ class Movements:
             asyncio.create_task(arm_reach()),
             asyncio.create_task(head_look()),
         )
-
-    async def patrol(self):
-        """Idle patrol: neck ellipse followed by a small look-around.
-
-        HEAD only — no arm movement.  Used for low-key ambient animation.
-        """
-        await self.neck_ellipse()
-        await asyncio.sleep(1)
-        await self.look_around_small()
 
     # ================================================================== #
     # more_candy — "too much candy" sugar-rush shakes                     #

@@ -10,15 +10,14 @@ Usage:
     python3 controller.py --action=<action_name>
 
 ARM gestures (channels 4–7):
-    wave, come, beckon, comeHere, reachOut, menacingReach, yawnCover, facePalm
+    wave, come, beckon, comeHere, menacingReach, yawnCover, facePalm
 
 HEAD gestures (channels 0–1):
-    nod, lookUp, lookAround, lookAroundSmall, lookAroundRandom, neckEllipse,
-    swivelHead, scan, shakeHead, shakeNo, smallShakeNo
+    nod, lookAroundSmall, lookAroundRandom, neckEllipse,
+    swivelHead, shakeHead, shakeNo, smallShakeNo
 
 COMPOSITE gestures (arm + head simultaneously):
-    waveAndSwivel, waveAndSwivelSmooth,
-    comeAndLook, reachAndLook, patrol
+    waveAndSwivelSmooth
 
 Tracking Mode (NOT a controller gesture):
     Head tracking is a camera-fed Mode, not an audio-free one-shot gesture, so
@@ -52,20 +51,16 @@ def main(args):
         'come':             mv.come,
         'beckon':           mv.beckon,
         'comeHere':         mv.come_here,
-        'reachOut':         mv.reach_out,
         'menacingReach':    mv.menacing_reach,
         'yawnCover':        mv.yawn_cover,
         'facePalm':         mv.face_palm,
 
         # --- HEAD gestures ---
         'nod':              mv.nod,
-        'lookUp':           mv.look_up,
-        'lookAround':       mv.look_around,
         'lookAroundSmall':  mv.look_around_small,
         'lookAroundRandom': mv.look_around_random,
         'neckEllipse':      mv.neck_ellipse,
         'swivelHead':       mv.swivel_head,
-        'scan':             mv.scan,
         'shakeHead':        mv.shake_head,
         'no':               mv.shake_no,
         'smno':             mv.small_shake_no,
@@ -73,11 +68,7 @@ def main(args):
         'awaken':           mv.awaken,
 
         # --- COMPOSITE gestures ---
-        'waveAndSwivel':      mv.wave_and_swivel,
         'waveAndSwivelSmooth': mv.wave_and_swivel_smooth,
-        'comeAndLook':      mv.come_and_look,
-        'reachAndLook':     mv.reach_and_look,
-        'patrol':           mv.patrol,
         'handVisor':        mv.hand_visor,
     }
 
@@ -112,6 +103,6 @@ if __name__ == '__main__':
         description="Test a single animatronic gesture (no audio)."
     )
     parser.add_argument('--action', default=None,
-                        help='Gesture to perform (e.g. wave, comeAndLook, patrol).')
+                        help='Gesture to perform (e.g. wave, nod, swivelHead).')
     args = parser.parse_args()
     main(args)

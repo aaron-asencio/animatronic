@@ -193,12 +193,12 @@ class Animatronic:
         'krusty-laugh.wav',        # 2
         'sb_party_switch.wav',     # 3
         'spongebob-torture.wav',   # 4
-        'vader-beaten.wav',        # 5
-        'vader-father.wav',        # 6
+        None,                      # 5  (removed: vaderBeaten)
+        None,                      # 6  (removed: vaderFather)
         'were-waiting.wav',        # 7
         'yoda-900.wav',            # 8
         None,                      # 9  (removed: yoda / yoda-agent-evil.wav)
-        'yoda-fear.wav',           # 10
+        None,                      # 10 (removed: yodaFear)
         None,                      # 11 (removed: hello / hello-everyone.wav)
         None,                      # 12 (removed: happyHalloween / happy-halloween.wav)
         None,                      # 13 (removed: niceDay / walk.wav)
@@ -395,33 +395,11 @@ class Animatronic:
         """Party switch audio — smooth wave + swivel head (returns to rest)."""
         self.run_action_and_audio("_do_wave_and_swivel_smooth", self.music[3])
 
-    # --- Beckon routines ---
-
-    def waiting(self):
-        """"We're waiting" audio — beckon + look around."""
-        self.run_action_and_audio("_do_come_and_look", self.music[7])
-
-    def exorcist(self):
-        """Exorcist audio — beckon + look around."""
-        self.run_action_and_audio("_do_come_and_look", self.music[0])
-
-    def vader_father(self):
-        """"I am your father" audio — beckon + look around."""
-        self.run_action_and_audio("_do_come_and_look", self.music[6])
-
-    def torture(self):
-        """SpongeBob torture audio — beckon + look around."""
-        self.run_action_and_audio("_do_come_and_look", self.music[4])
-
     # --- Patrol / ambient routines ---
 
     def krusty(self):
         """Krusty laugh audio — neck ellipse."""
         self.run_action_and_audio("_do_neck_ellipse", self.music[2])
-
-    def vader_beaten(self):
-        """Vader beaten audio — patrol (ellipse + small look)."""
-        self.run_action_and_audio("_do_patrol", self.music[5])
 
     # --- Reaction routines ---
 
@@ -495,15 +473,7 @@ class Animatronic:
 
         asyncio.run(PerformanceRunner(BLAH, mv, audio_dir).run())
 
-    def yoda_fear(self):
-        """Yoda fear audio — beckon + look around."""
-        self.run_action_and_audio("_do_come_and_look", self.music[10])
-
     # --- New gesture routines ---
-
-    def evil_laugh(self):
-        """Evil laugh audio — wave + swivel head."""
-        self.run_action_and_audio("_do_wave_and_swivel", self.music[16])
 
     def vincent_price(self):
         """Vincent Price laugh audio — smooth reach + flowing head look-around.
@@ -1026,20 +996,23 @@ class Animatronic:
 
         Driven by the Performance_Framework with the phased ``yawn_cover``
         adapters (same operator-verified cover pose + override as ``clearThroat``
-        and the coughs), but with a FIXED 250ms audio gate rather than
-        gating until the hand settles:
+        and the coughs), but UNGATED (audio at t=0) with the ARM MOTION delayed
+        1s so the burp sound leads and the hand follows a beat later:
 
-        * ``yawn_cover_lead_in_gated`` centers the head and starts the up-fold,
-          then opens the gate 250ms in (``supplies_gate=True``) while the fold
-          finishes underneath -- so ``gurgle_burp.wav`` starts promptly and the
-          hand reaches the mouth as the burp plays.
+        * ``gate=None`` -- ``gurgle_burp.wav`` starts the instant the routine
+          begins, before any movement runs.
+        * ``yawn_cover_lead_in_delayed`` holds the arm at rest ``_YC_MOTION_DELAY``
+          (0.5s) while the burp plays, THEN centers the head and folds the hand
+          up to the mouth. It does NOT supply the gate.
         * Audio is a TWO-TRACK chain: ``gurgle_burp.wav`` then ``excuseme_sb.wav``
           played back-to-back with no gap (``followup_audio_files``). The
           ``PlaybackController`` stays ``is_active()`` across BOTH tracks and its
-          duration is their SUM, so the hand stays at the mouth through the burp
-          AND the "excuse me", then lowers.
-        * ``yawn_cover_loop_body`` HOLDS the hand at the mouth across the chain;
-          ``yawn_cover_return`` lowers the hand and releases the override.
+          duration is their SUM.
+        * ``yawn_cover_loop_body`` HOLDS the hand at the mouth through the burp
+          only: ``stop_loop_lead_seconds`` is set to the "excuse me" track length
+          (~3.45s) so ``yawn_cover_return`` starts lowering the hand the instant
+          ``gurgle_burp.wav`` completes, and the "excuse me" plays as the hand
+          lowers. ``yawn_cover_return`` releases the override at the end.
 
         The single movement owns head channels {0,1} and arm channels {4,5,6,7}
         (trivially disjoint with no concurrent movement). A single ``Movements``
@@ -1056,8 +1029,9 @@ class Animatronic:
             # same audio thread, so the hand stays at the mouth across both and
             # the near-end cutoff fires against the end of excuseme_sb.wav.
             followup_audio_files=(self.music[32],),  # excuseme_sb.wav
-            # Cover-mouth movement supplies a fixed 250ms gate (not hand-arrival).
-            gate=GateSpec(movement_name="burp"),
+            # UNGATED: the burp plays at t=0 and the arm motion is delayed 1s
+            # (in the lead-in) so the sound leads and the hand follows.
+            gate=None,
             steps=(
                 PerformanceStep(
                     loop_for_audio=True,   # HOLD the hand across both tracks
@@ -1072,11 +1046,17 @@ class Animatronic:
                                 constants.RT_ELBOW_TILT,
                                 constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
                             }),
-                            lead_in=mv.yawn_cover_lead_in_gated,  # 250ms gate + fold
+                            lead_in=mv.yawn_cover_lead_in_delayed,  # wait 1s, then fold
                             loop_body=mv.yawn_cover_loop_body,     # hold while audio plays
                             do_return=mv.yawn_cover_return,        # lower hand at end
-                            supplies_gate=True,                    # opens the audio gate
-                            stop_loop_lead_seconds=0.9,
+                            # Ungated: no movement supplies the gate (audio t=0).
+                            # Lower the hand once gurgle_burp.wav completes rather
+                            # than holding through the "excuse me": the chain
+                            # duration is the SUM of both tracks, so a near-end
+                            # lead equal to the excuseme_sb.wav length (~3.45s)
+                            # starts do_return the instant the burp track ends,
+                            # leaving the "excuse me" to play as the hand lowers.
+                            stop_loop_lead_seconds=3.45,
                         ),
                     )),
                 ),
@@ -1092,9 +1072,11 @@ class Animatronic:
         gesture (unlike the coughs/burp, where audio plays while the hand is
         already at the mouth):
 
-        1. Play ``fart.wav`` to completion with NO movement -- a blocking
-           ``AudioPlayer`` on this thread, closed afterward so its jaw/eye pins
-           are released before the Performance below claims them.
+        1. Play ``fart.wav`` to completion with NO movement as PURE audio -- a
+           blocking ``AudioPlayer`` built with ``drive_jaw=False`` /
+           ``drive_eyes=False`` so the jaw motor and eye LED never flash (a fart
+           doesn't come out of the mouth). It claims neither GPIO pin, so both
+           stay free for the Performance below; closed afterward for symmetry.
         2. Run the Cover-Mouth gesture via the Performance_Framework with the
            SETTLED lead-in, so ``excuseme_sb.wav`` is GATED until the hand reaches
            its final cover position -- same mechanics as the coughs
@@ -1105,12 +1087,15 @@ class Animatronic:
         Performance run does not take the lock itself. Launched with
         ``asyncio.run`` at the top of the call stack (phase 2's runner).
         """
-        # Phase 1: fart.wav alone, no movement. Blocking playback on this thread;
-        # close() releases the jaw/eye pins before phase 2's players claim them.
+        # Phase 1: fart.wav alone, no movement. Pure audio -- the jaw and eyes
+        # are NOT driven (a fart doesn't come out of the mouth), so build the
+        # player with drive_jaw/drive_eyes disabled: it claims neither GPIO pin,
+        # leaving them free for phase 2's players. Blocking playback on this
+        # thread; close() afterward for symmetry.
         fart_path = os.path.join(self._resolve_audio_dir(), self.music[33])  # fart.wav
-        player = AudioPlayer()
+        player = AudioPlayer(drive_jaw=False, drive_eyes=False)
         try:
-            print(f"[fart] playing {fart_path} (no cover yet)")
+            print(f"[fart] playing {fart_path} as pure audio (no jaw/eyes, no cover yet)")
             player.play_audio_file(fart_path)
         finally:
             player.close()
@@ -2457,19 +2442,11 @@ class Animatronic:
         return {
             # Wave routines
             'startParty':     self.start_party,
-            # Beckon routines
-            'waiting':        self.waiting,
-            'exorcist':       self.exorcist,
-            'vaderFather':    self.vader_father,
-            'torture':        self.torture,
-            'yodaFear':       self.yoda_fear,
             # Patrol / ambient
             'krusty':         self.krusty,
-            'vaderBeaten':    self.vader_beaten,
             # Reaction
             'blah':           self.blah,
             # New routines
-            'evilLaugh':      self.evil_laugh,
             'vincentPrice':   self.vincent_price,
             'yawn':           self.yawn,
             'snuckUp':        self.snuck_up,
@@ -2499,21 +2476,9 @@ class Animatronic:
         mv = Movements("Animatronic")
         await self._run(mv.wave())
 
-    async def _do_wave_and_swivel(self):
-        mv = Movements("Animatronic")
-        await self._run(mv.wave_and_swivel())
-
     async def _do_wave_and_swivel_smooth(self):
         mv = Movements("Animatronic")
         await self._run(mv.wave_and_swivel_smooth())
-
-    async def _do_come_and_look(self):
-        mv = Movements("Animatronic")
-        await self._run(mv.come_and_look())
-
-    async def _do_reach_and_look(self):
-        mv = Movements("Animatronic")
-        await self._run(mv.reach_and_look())
 
     async def _do_reach_and_look_smooth(self):
         # vincentPrice: smooth eased reach + flowing head look-around that runs
@@ -2530,10 +2495,6 @@ class Animatronic:
         # arm is already rising when the yawn sound comes in.
         mv = Movements("Animatronic")
         await mv.yawn_cover()
-
-    async def _do_patrol(self):
-        mv = Movements("Animatronic")
-        await self._run(mv.patrol())
 
     async def _do_neck_ellipse(self):
         mv = Movements("Animatronic")
@@ -2736,7 +2697,7 @@ if __name__ == '__main__':
         description="Animatronic controller — run a named gesture + audio routine."
     )
     parser.add_argument('--action', default=None,
-                        help='Action to perform (e.g. startParty, waiting, blah, napping).')
+                        help='Action to perform (e.g. startParty, krusty, blah, napping).')
     parser.add_argument('--nap-timeout', dest='nap_timeout', type=int, default=60,
                         help='Napping mode: seconds before the timeout wake '
                              '(default: 60). Only used with --action=napping.')

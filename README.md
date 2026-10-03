@@ -144,11 +144,6 @@ Available actions:
 | `startParty` | Wave + swivel head | `sb_party_switch.wav` |
 | `blah` | Head-shake no | `blah.wav` |
 | `krusty` | Neck ellipse | `krusty-laugh.wav` |
-| `waiting` | Come + look around | `were-waiting.wav` |
-| `exorcist` | Come + look around | `beetel-exorcist.wav` |
-| `vaderFather` | Come + look around | `vader-father.wav` |
-| `torture` | Come + look around | `spongebob-torture.wav` |
-| `vaderBeaten` | Patrol | `vader-beaten.wav` |
 | `mic` | — | Live microphone passthrough (AudioStreamer) |
 
 ### Test an individual gesture (no audio)
@@ -157,8 +152,8 @@ Available actions:
 sudo .venv/bin/python src/controller.py --action=<action>
 ```
 
-Available gesture actions: `wave`, `yes`, `no`, `smno`, `lookAround`,
-`scan`, `slowScan`, `swivelHead`, `come`, `comein`, `neckEllipse`,
+Available gesture actions: `wave`, `yes`, `no`, `smno`,
+`slowScan`, `swivelHead`, `come`, `comein`, `neckEllipse`,
 `lookAroundSmall`.
 
 ### Run the face-palm concurrent movement demo

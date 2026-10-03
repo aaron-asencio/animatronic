@@ -1,0 +1,24 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "severity": "non-blocking",
+      "confidence": "confirmed",
+      "label": "Unrelated burp/fart/yawn rework bundled in",
+      "detail": "The working tree carries an undocumented behavioral rework of the burp/fart cover-mouth routines alongside the deletions: new yawn_cover_lead_in_delayed + _YC_MOTION_DELAY in movements.py, burp made ungated with stop_loop_lead_seconds=3.45 and fart built with drive_jaw/drive_eyes=False in animatronic.py, a coverMouth pose entry and elbow-cover angle change 165->162 in constants.py, a PerformanceRunner audio-drain wait in performance.py, and matching audio-sequencing.md / authoring-gestures.md updates. Not part of the deletion spec and absent from the coder's notes. Does not touch any removed name, the music[] list, or deleted audio, so it does not break the cleanup. Recommend committing it separately and having the operator bench-verify the cover-mouth pose/timing on hardware."
+    },
+    {
+      "severity": "non-blocking",
+      "confidence": "confirmed",
+      "label": "README retains stale vaderFather/torture/vaderBeaten rows",
+      "detail": "The README routine table still lists vaderFather, torture, and vaderBeaten rows (prior-pass removals; vader* audio is already deleted). Out of scope for pass-2 but worth cleaning when those names are finished with."
+    },
+    {
+      "severity": "informational",
+      "confidence": "confirmed",
+      "label": "music[] indices 5/6/10 nulled by prior pass",
+      "detail": "Indices 5/6/10 read None (removed vaderBeaten/vaderFather/yodaFear from the earlier pass), nulled in place with no splice/shift. The spec's protected indices 0 (beetel-exorcist.wav), 7 (were-waiting.wav), and 16 (evil-laugh.wav) are byte-for-byte intact and the list is still 34 entries. Recorded so the None entries are not mistaken for a pass-2 edit."
+    }
+  ],
+  "reviewDoc": "/home/aaron/workspace/animatronic-v2/.agents/tasks/cleanup-pass2-review.md"
+}
