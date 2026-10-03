@@ -85,9 +85,10 @@ ROUTINE_ACTIONS = {
 
 MOVEMENT_ACTIONS = {
     'wave', 'comeHere', 'beckon', 'menacingReach', 'yawnCover', 'facePalm',
+    'fanButt', 'fanNose',
     'yes', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
-    'swivelHead', 'shakeHead', 'smno',
-    'handVisor',
+    'swivelHead', 'shakeHead', 'snapHead', 'smno', 'snuckUp', 'awaken',
+    'waveAndSwivelSmooth', 'handVisor',
 }
 
 # Tracking Mode allowlist. Tracking is launched via animatronic.py like any
