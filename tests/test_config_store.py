@@ -36,6 +36,12 @@ from config_store import (  # noqa: E402
     DEFAULT_CLOSE_HOLD_FRAMES,
     PROFILE_FILE,
     PROFILE_MIC,
+    SCAN_KEY,
+    SCAN_TIMEOUT_KEY,
+    SCAN_TIMEOUT_DEFAULT_MIN,
+    SCAN_TIMEOUT_MIN,
+    SCAN_TIMEOUT_MAX,
+    VOICE_STYLES_KEY,
 )
 
 # The environment variables that influence path resolution.
@@ -534,3 +540,111 @@ def test_single_file_contains_both_profiles_after_update(tmp_path):
         "ema_alpha": 0.25,
         "close_hold_frames": 4,
     }
+
+
+# ---------------------------------------------------------------------------
+# FEAT-001 — scan-mode timeout accessors (load_scan_timeout / save_scan_timeout)
+# ---------------------------------------------------------------------------
+
+
+def test_scan_timeout_round_trip(tmp_path):
+    """A saved scan timeout loads back unchanged within the valid range."""
+    store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
+
+    assert store.save_scan_timeout(45) == 45
+    assert store.load_scan_timeout() == 45
+
+    # A fresh store on the same path reads the same value.
+    assert ConfigStore(config_path=str(tmp_path / "tuning.json")).load_scan_timeout() == 45
+
+
+def test_scan_timeout_default_when_missing(tmp_path):
+    """Missing file/section yields the default without raising."""
+    store = ConfigStore(config_path=str(tmp_path / "absent.json"))
+    assert store.load_scan_timeout() == SCAN_TIMEOUT_DEFAULT_MIN
+
+
+@pytest.mark.parametrize(
+    "given_value, expected",
+    [
+        (0, SCAN_TIMEOUT_MIN),       # below floor -> clamp up to 1
+        (-5, SCAN_TIMEOUT_MIN),      # negative -> clamp up to 1
+        (1, SCAN_TIMEOUT_MIN),       # exact floor
+        (120, SCAN_TIMEOUT_MAX),     # exact ceiling
+        (999, SCAN_TIMEOUT_MAX),     # above ceiling -> clamp down to 120
+        (60, 60),                    # mid-range unchanged
+        ("30", 30),                  # numeric string coerced to int
+    ],
+)
+def test_scan_timeout_save_clamps(tmp_path, given_value, expected):
+    """save_scan_timeout coerces and clamps to [1, 120] and returns the result."""
+    store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
+    assert store.save_scan_timeout(given_value) == expected
+    assert store.load_scan_timeout() == expected
+
+
+def test_scan_timeout_save_rejects_non_numeric(tmp_path):
+    """A value that cannot be coerced to int raises ValueError."""
+    store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
+    with pytest.raises(ValueError):
+        store.save_scan_timeout("not-a-number")
+
+
+def test_load_scan_timeout_defaults_on_corrupt_section(tmp_path):
+    """A non-int or non-dict scan section loads as the default (never raises)."""
+    config_file = tmp_path / "tuning.json"
+
+    # Non-int timeout value -> default.
+    config_file.write_text(json.dumps({SCAN_KEY: {SCAN_TIMEOUT_KEY: "abc"}}))
+    assert ConfigStore(config_path=str(config_file)).load_scan_timeout() == SCAN_TIMEOUT_DEFAULT_MIN
+
+    # Scan section is not a dict -> default.
+    config_file.write_text(json.dumps({SCAN_KEY: "oops"}))
+    assert ConfigStore(config_path=str(config_file)).load_scan_timeout() == SCAN_TIMEOUT_DEFAULT_MIN
+
+    # Out-of-range stored value is clamped on load.
+    config_file.write_text(json.dumps({SCAN_KEY: {SCAN_TIMEOUT_KEY: 999}}))
+    assert ConfigStore(config_path=str(config_file)).load_scan_timeout() == SCAN_TIMEOUT_MAX
+
+
+def test_save_scan_timeout_preserves_other_sections(tmp_path):
+    """Saving the scan timeout preserves existing profiles and voice_styles."""
+    config_file = tmp_path / "tuning.json"
+    store = ConfigStore(config_path=str(config_file))
+
+    # Seed a file with both a profiles section and a voice_styles section.
+    pair = {
+        PROFILE_FILE: _expected_default_profile(),
+        PROFILE_MIC: _expected_default_profile(),
+    }
+    store.save_profiles(pair)
+    store.save_voice_style("ghost", {})  # writes a voice_styles section
+
+    store.save_scan_timeout(90)
+
+    with open(config_file, "r") as f:
+        raw = json.load(f)
+
+    # The scan section is present and correct...
+    assert raw[SCAN_KEY] == {SCAN_TIMEOUT_KEY: 90}
+    # ...and the pre-existing sections are untouched.
+    assert "profiles" in raw
+    assert set(raw["profiles"]) == {PROFILE_FILE, PROFILE_MIC}
+    assert raw["profiles"][PROFILE_FILE] == _expected_default_profile()
+    assert VOICE_STYLES_KEY in raw
+    assert "ghost" in raw[VOICE_STYLES_KEY]
+
+    # And both accessors still read correctly.
+    assert store.load_scan_timeout() == 90
+    assert store.load_profiles() == pair
+
+
+def test_module_level_scan_timeout_wrappers(tmp_path, monkeypatch):
+    """The thin module-level wrappers delegate to the default store."""
+    config_file = tmp_path / "tuning.json"
+    monkeypatch.setenv(CONFIG_PATH_OVERRIDE_ENV_PRIMARY, str(config_file))
+    # Rebind the default store so it picks up the overridden path.
+    monkeypatch.setattr(config_store, "_default_store", ConfigStore())
+
+    assert config_store.save_scan_timeout(75) == 75
+    assert config_store.load_scan_timeout() == 75

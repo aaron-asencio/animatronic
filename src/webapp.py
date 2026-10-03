@@ -39,6 +39,7 @@ import urllib.error
 from servo_lock import is_locked
 import nap_signal
 import range_publish
+import config_store
 
 app = Flask(__name__)
 
@@ -95,6 +96,13 @@ MOVEMENT_ACTIONS = {
 # this set before any subprocess is spawned, and the action is passed as a
 # separate, fixed argv entry (never interpolated into a shell) (Req 9.1-9.3).
 TRACKING_ACTIONS = {'tracking'}
+
+# Scan Mode allowlist. Scan is launched via animatronic.py like any other
+# action, so its name is gated the same way: the only permitted value is the
+# fixed 'scan' action. This set is checked before any subprocess is spawned, and
+# the action is passed as a separate, fixed argv entry (never interpolated into
+# a shell) (Req 9.1-9.3).
+SCAN_ACTIONS = {'scan'}
 
 # IR control modes. The only permitted values for a `POST /camera/ir` request
 # (which becomes an IR mode name, Req 10.3). Kept here with the other allowlists
@@ -226,6 +234,33 @@ def run_tracking(scan_timeout_seconds=None):
     return subprocess.Popen(cmd, cwd=PROJECT_DIR)
 
 
+def run_scan(timeout_min):
+    """Launch animatronic.py --action=scan (the Scan MODE).
+
+    Mirrors run_tracking: a fixed VENV_PYTHON + ANIMATRONIC path and a fixed
+    ``--action=scan`` passed as separate argv entries (never a shell), so nothing
+    from the request is ever interpolated into a command string (Req 9.1-9.3).
+    The timeout minutes are forwarded as a separate, validated ``--scan-timeout-min``
+    argv entry (coerced to int here; animatronic.py owns the real 1-120 clamp).
+
+    A Mode runs open-endedly (until its timeout or an external stop), so unlike a
+    routine no watchdog is attached.
+
+    Args:
+        timeout_min: The scan-mode timeout in minutes (an int).
+
+    Returns:
+        The spawned subprocess.Popen.
+    """
+    cmd = [VENV_PYTHON, ANIMATRONIC, '--action=scan',
+           f'--scan-timeout-min={int(timeout_min)}']
+    print(f"[scan] {' '.join(cmd)}")
+    # Fresh run: clear any stale stop request so the mode doesn't exit at once
+    # (same as run_tracking/run_napping/run_awake).
+    nap_signal.clear_stop()
+    return subprocess.Popen(cmd, cwd=PROJECT_DIR)
+
+
 # ── Gesture launch coordinator ───────────────────────────────────────────────
 # SAFETY: only one gesture-driving subprocess may run at a time. The child
 # processes enforce this at the hardware level via a cross-process file lock
@@ -346,7 +381,7 @@ def _stop_mic():
 # a Routine/Movement is requested it is preempted like napping/awake. (Tracking
 # only holds the Neck_Group, so an arm-only Gesture can coexist with it — that
 # concurrency is handled by the per-group servo lock, not here.)
-_MODE_LABELS = ('napping', 'awake', 'tracking')
+_MODE_LABELS = ('napping', 'awake', 'tracking', 'scan')
 
 
 def _preempt_mode_if_running(wait_seconds=15):
@@ -857,6 +892,100 @@ def tracking(state):
         # Signal the mode to wind down; it releases the lock and exits itself.
         nap_signal.request_stop()
         return jsonify({'status': 'success', 'message': 'tracking stop requested'})
+    return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
+
+
+# ── Route: scan mode ─────────────────────────────────────────────────────────
+def launch_scan(timeout_min):
+    """Serialised launch of the Scan MODE subprocess.
+
+    Mirrors ``launch_napping``/``launch_awake``: check-and-spawn under
+    ``_launch_lock`` and track the process in ``_active_proc`` (label ``scan``)
+    so the busy check, preemption, and force-stop all see it. Refuses if the
+    servos are already busy. No watchdog is attached — like the other Modes,
+    Scan runs open-endedly (until its timeout or a stop signal), so the
+    GESTURE_TIMEOUT backstop would wrongly kill it.
+
+    UNLIKE tracking (which is Gesture-like toward the mic Stream), Scan's Routine
+    responses drive the jaw motor, so Scan owns the jaw/audio path and auto-stops
+    the mic at launch (like napping/awake). The ``'scan'`` label is in
+    ``_MODE_LABELS``, so a later Routine/Movement request preempts it via
+    ``_preempt_mode_if_running``.
+
+    Args:
+        timeout_min: The scan-mode timeout in minutes (an int) forwarded to
+            ``run_scan``.
+
+    Returns:
+        (ok, message). ok=False means the servos were busy.
+    """
+    with _launch_lock:
+        # Scan owns the jaw/audio path (its Routine responses drive the jaw), so
+        # auto-stop the mic like napping/awake.
+        if _mic_is_streaming():
+            if not _stop_mic():
+                return False, ('Mic streaming is on and could not be stopped; '
+                               'it uses the jaw motor. Turn off the mic and retry.')
+        if _gesture_busy():
+            active = _active_proc['label'] or 'another process'
+            return False, f'Servos busy — {active} is still running.'
+        proc = run_scan(timeout_min)
+        _active_proc['proc'] = proc
+        _active_proc['label'] = 'scan'
+        _last_action['value'] = 'scan'
+        return True, f'scan started (timeout {int(timeout_min)} min)'
+
+
+@app.route('/scan/<state>', methods=['POST'])
+def scan(state):
+    """Start or stop the Scan MODE.
+
+    - ``start``: validate against the ``SCAN_ACTIONS`` allowlist (Req 9.1/9.2),
+      then launch Scan. The timeout minutes come from JSON ``{"timeout_min":
+      <int>}`` — if provided it MUST be an int in [1, 120] (both a non-int AND an
+      out-of-range value are rejected with 400, stricter than ``/tracking``); if
+      omitted it falls back to the persisted ``config_store.load_scan_timeout()``.
+      The chosen value is persisted via ``config_store.save_scan_timeout`` before
+      launch. A Mode runs until interrupted; it is NOT given a GESTURE_TIMEOUT
+      watchdog.
+    - ``stop``: ask a running Scan Mode to wind down via the cross-process stop
+      signal; it cancels any in-flight response, recenters the Neck_Group,
+      releases the lock, and exits.
+
+    An unknown ``state`` returns 400 and launches no subprocess.
+    """
+    if state == 'start':
+        # Allowlist gate: 'scan' is the only permitted action name, checked
+        # before any subprocess is spawned (Req 9.1/9.2).
+        if 'scan' not in SCAN_ACTIONS:
+            return jsonify({'status': 'error',
+                            'message': 'scan action not permitted'}), 400
+        data = request.json or {}
+        minutes = data.get('timeout_min')
+        if minutes is not None:
+            # Stricter than /tracking: reject a non-int AND an out-of-range value
+            # with 400 (launch nothing) rather than silently clamping. bool is an
+            # int subclass, so reject it explicitly.
+            if isinstance(minutes, bool) or not isinstance(minutes, int):
+                return jsonify({'status': 'error',
+                                'message': 'timeout_min must be an integer'}), 400
+            if not (1 <= minutes <= 120):
+                return jsonify({'status': 'error',
+                                'message': 'timeout_min must be between 1 and 120'}), 400
+        else:
+            # Omitted: use the persisted (or default 60) timeout.
+            minutes = config_store.load_scan_timeout()
+        # Persist the chosen value so it survives a restart and is the next
+        # default (returns the clamped int actually stored).
+        minutes = config_store.save_scan_timeout(minutes)
+        ok, message = launch_scan(minutes)
+        if not ok:
+            return jsonify({'status': 'busy', 'message': message}), 409
+        return jsonify({'status': 'success', 'message': message})
+    if state == 'stop':
+        # Signal the mode to wind down; it releases the lock and exits itself.
+        nap_signal.request_stop()
+        return jsonify({'status': 'success', 'message': 'scan stop requested'})
     return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
 
 

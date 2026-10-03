@@ -514,11 +514,17 @@ class PerformanceRunner:
         movements: "Movements",
         audio_dir: str,
         ambient: Callable[[PlaybackController], Awaitable[None]] | None = None,
+        rest_channels: "frozenset[int] | None" = None,
     ) -> None:
         self.definition = definition
         self.movements = movements
         self.audio_dir = audio_dir
         self.ambient = ambient
+        # Optional channel restriction for the rest sweep. When None (default)
+        # the whole robot is rested exactly as before; when a set is given only
+        # those channels are rested, so an arm-only response's cleanup never
+        # moves the neck.
+        self.rest_channels = rest_channels
 
     def _validate_channel_ownership(self) -> None:
         """Re-check every group's Channel_Ownership before any motion is issued.
@@ -724,7 +730,9 @@ class PerformanceRunner:
         fresh ``asyncio.run`` loop. ``return_to_rest`` itself drives every
         configured channel to its ``REST_POSITIONS`` value and never raises, so
         residual channels a movement's ``do_return`` did not cover are still
-        brought home (Requirements 8.1, 8.3, 10.4).
+        brought home (Requirements 8.1, 8.3, 10.4). When this runner was built
+        with a ``rest_channels`` restriction, the sweep is confined to those
+        channels so an arm-only response never rests the neck.
 
         This is a recovery/cleanup path and must never mask a real error: any
         unexpected failure while resting is caught and logged, not propagated
@@ -736,7 +744,7 @@ class PerformanceRunner:
                 for debug output.
         """
         try:
-            await self.movements.trunkController.return_to_rest()
+            await self.movements.trunkController.return_to_rest(channels=self.rest_channels)
         except Exception as error:  # noqa: BLE001 - recovery path, never mask
             print(f"[performance] return_to_rest failed during {phase}: {error}")
 

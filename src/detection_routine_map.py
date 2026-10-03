@@ -27,7 +27,9 @@ Two behaviours are implemented here:
   deterministic in tests.
 """
 
-from typing import Iterable, List, Optional
+import random
+from enum import Enum
+from typing import Dict, Iterable, List, Optional
 
 from vision_models import Detection, DetectionRule, PERSON_LABEL
 
@@ -55,6 +57,144 @@ def default_rules() -> List[DetectionRule]:
         DetectionRule(
             required_classes=(PERSON_LABEL, DEFAULT_DOG_LABEL),
             action=DEFAULT_WALK_DOG_ACTION,
+        ),
+    ]
+
+
+# --- Scan-mode arm-only response data layer -------------------------------- #
+#
+# Scan Mode holds the head OFF-center to track a detected person (the neck
+# tracker drives NECK_PAN=0 / NECK_TILT=1), then layers an arm-only response on
+# top. Everything below is the pure DATA/DEFINITION layer the scan responder
+# (FEAT-003) consumes: an allowlist of head-decoupled arm-only Gestures/Routines,
+# their declared arm-channel subsets, a weighted picker, and the detection rules.
+# No servo, camera, or subprocess access and no scan-specific logging lives here
+# — the module stays logic-only.
+
+# The arm/wrist channels — the COMPLEMENT of the neck tracker's channels
+# {NECK_PAN=0, NECK_TILT=1}. It INCLUDES RT_WRIST_TILT=3 (so the guardrail bound
+# is {3,4,5,6,7}, NOT {4,5,6,7}): beckon/comeHere flex the wrist, so a response
+# may legitimately drive channel 3 while scan owns 0/1.
+ARM_ONLY_CHANNELS = frozenset({3, 4, 5, 6, 7})
+
+# Per-Gesture channel subsets. Gestures carry no ``owned_channels`` field (unlike
+# a Performance MovementSpec), so their arm-channel footprint is declared here as
+# the subset guardrail checked against ARM_ONLY_CHANNELS. Verified against
+# movements.py: beckon/come_here curl the wrist to 170 and _wave_arm writes
+# RT_WRIST_TILT, so each gesture's set spans {3,4,5,6,7}.
+SCAN_GESTURE_CHANNELS: Dict[str, frozenset] = {
+    "beckon": frozenset({3, 4, 5, 6, 7}),
+    "comeHere": frozenset({3, 4, 5, 6, 7}),
+    "wave": frozenset({3, 4, 5, 6, 7}),
+}
+
+
+class ScanActionKind(Enum):
+    """Whether a scan-safe action is a Gesture (no audio) or a Routine (audio)."""
+
+    GESTURE = "gesture"
+    ROUTINE = "routine"
+
+
+# Weighting for the scan picker: Gestures are 5x more likely than Routines
+# (operator choice — gestures are quieter/safer to layer over tracking).
+GESTURE_WEIGHT = 5
+ROUTINE_WEIGHT = 1
+
+# The allowlist of head-decoupled, arm-only actions scan may run while the neck
+# tracks a person. Gestures carry no audio and never touch the jaw/neck;
+# Routines run their arm-only (scan=True) builders so they drive only {4,5,6,7}.
+#
+# burp is DELIBERATELY withheld — see the FLAGGED commented-out entry below.
+SCAN_SAFE_ARM_ACTIONS: Dict[str, ScanActionKind] = {
+    "beckon": ScanActionKind.GESTURE,
+    "comeHere": ScanActionKind.GESTURE,
+    "wave": ScanActionKind.GESTURE,
+    "brains": ScanActionKind.ROUTINE,
+    "hypnotic": ScanActionKind.ROUTINE,
+    # FLAGGED — DO NOT ENABLE without an operator bench-verification:
+    #   "burp": ScanActionKind.ROUTINE,
+    # burp is head-COUPLED. Its coverMouth hand-to-mouth fold is operator-verified
+    # safe ONLY with the head centered (NECK_PAN=90, NECK_TILT=90). Scan holds the
+    # head OFF-center to track the person, and FORBIDDEN_COMBINATIONS has no neck
+    # term, so nothing would catch the hand colliding with the off-center head.
+    # Keep burp out of the scan pool until an operator bench-verifies the fold
+    # clears the head across the FULL tracking envelope.
+}
+
+# Seconds a scan response is blocked from re-firing after it completes (per-rule
+# cooldown, keyed by rule identity in DetectionRoutineMap).
+SCAN_RESPONSE_COOLDOWN_S = 8.0
+
+
+def weighted_scan_pool(
+    allow: Dict[str, ScanActionKind] = SCAN_SAFE_ARM_ACTIONS,
+) -> List[str]:
+    """Build the weighted selection pool of scan-safe action names.
+
+    Each Gesture name is repeated ``GESTURE_WEIGHT`` times and each Routine name
+    ``ROUTINE_WEIGHT`` times, so a uniform ``random.choice`` over the pool yields
+    the 5:1 Gesture:Routine bias.
+
+    Args:
+        allow: The allowlist mapping action name -> ``ScanActionKind``. Defaults
+            to the shipped ``SCAN_SAFE_ARM_ACTIONS``.
+
+    Returns:
+        A list of action names with each name repeated by its kind's weight, in
+        allowlist iteration order.
+    """
+    pool: List[str] = []
+    for name, kind in allow.items():
+        weight = GESTURE_WEIGHT if kind is ScanActionKind.GESTURE else ROUTINE_WEIGHT
+        pool.extend([name] * weight)
+    return pool
+
+
+def choose_scan_action(
+    allow: Dict[str, ScanActionKind] = SCAN_SAFE_ARM_ACTIONS,
+) -> str:
+    """Pick one scan-safe action name at random, weighted 5:1 Gesture:Routine.
+
+    Uses the shared stdlib ``random`` module so ``random.seed(x)`` makes the
+    selection reproducible (required for the phased-vs-standalone equivalence
+    tests).
+
+    Args:
+        allow: The allowlist mapping action name -> ``ScanActionKind``. Defaults
+            to the shipped ``SCAN_SAFE_ARM_ACTIONS``.
+
+    Returns:
+        One action name drawn uniformly from ``weighted_scan_pool(allow)``.
+    """
+    return random.choice(weighted_scan_pool(allow))
+
+
+def scan_rules() -> List[DetectionRule]:
+    """Build the scan-mode detection rules (person, and person+dog).
+
+    Both rules use ``action='scan'`` as a dispatch-ignored placeholder: the scan
+    responder (FEAT-003) always dispatches ``choose_scan_action()`` regardless of
+    which rule fired, and distinguishes the dog case by testing for
+    ``DEFAULT_DOG_LABEL`` in the selected rule's ``required_classes``. The rules
+    are returned in definition order (person before person+dog); arbitration in
+    ``DetectionRoutineMap`` prefers the more specific person+dog rule when a dog
+    is also present, and each rule keeps its own ``id()``-keyed cooldown.
+
+    Returns:
+        A fresh list of two ``DetectionRule`` entries, each with
+        ``cooldown_s=SCAN_RESPONSE_COOLDOWN_S``.
+    """
+    return [
+        DetectionRule(
+            required_classes=(PERSON_LABEL,),
+            action="scan",
+            cooldown_s=SCAN_RESPONSE_COOLDOWN_S,
+        ),
+        DetectionRule(
+            required_classes=(PERSON_LABEL, DEFAULT_DOG_LABEL),
+            action="scan",
+            cooldown_s=SCAN_RESPONSE_COOLDOWN_S,
         ),
     ]
 

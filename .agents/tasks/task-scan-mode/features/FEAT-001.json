@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Leaf-layer plumbing the scan loop depends on: (a) persist the scan-mode timeout (minutes, 1-120, default 60) via config_store/tuning.json using the raw-JSON preservation path; (b) let the servo rest sweep be restricted to a caller-supplied channel set so an arm-only response's cleanup never rests the neck. No scan logic yet — purely additive, backward-compatible changes to config_store.py, trunkcontroller.py, and performance.py. Independent of FEAT-002.",
+  "status": "completed",
+  "steps": [
+    "In src/config_store.py add ConfigStore.load_scan_timeout() -> reads self._load_raw().get('scan', {}).get('timeout_min', 60), coerces to int, clamps to [1,120], returns 60 on any missing/corrupt/non-int value, never raises.",
+    "In src/config_store.py add ConfigStore.save_scan_timeout(minutes) -> validate/coerce to int, clamp to [1,120], then raw = self._load_raw(); raw['scan'] = {'timeout_min': n}; self._write_raw(raw) so existing 'profiles'/'voice_styles'/'voice_styles_previous' sections are preserved. Return the clamped int.",
+    "Optionally add module-level thin wrappers load_scan_timeout()/save_scan_timeout(minutes) on _default_store mirroring the existing load_profile wrapper (only if it keeps call sites clean).",
+    "In src/trunkcontroller.py change return_to_rest (near line 665) to accept an optional channels=None. When None, iterate all constants.REST_POSITIONS exactly as today. When a set/frozenset is given, iterate only {ch: REST_POSITIONS[ch] for ch in channels if ch in REST_POSITIONS}. Preserve the step-by-step return_to_start(delay=0.03) behaviour and the never-raises per-channel try/except.",
+    "In src/performance.py add an optional rest_channels: 'frozenset[int] | None' = None parameter to the PerformanceRunner constructor (near line 511) and store it on self.rest_channels. In _return_to_rest(phase) (near line 717) change the call to 'await self.movements.trunkController.return_to_rest(channels=self.rest_channels)'. Default None preserves whole-robot resting for every current caller (brains/hypnotic/blah/snore and the inter-step + exception-recovery paths in run()).",
+    "Add config-store timeout tests to tests/test_config_store.py: round-trip save/load against a tmp_path config; clamp cases (0->1, 999->120, non-int->60, missing section->60); and assert a save preserves an existing 'profiles' and 'voice_styles' section in the same file.",
+    "Add a rest-channel restriction test (extend tests/test_performance.py or add tests/test_rest_channels.py following the SERVO_SIM import convention): assert return_to_rest(channels=frozenset({3,4,5,6,7})) writes NO channel 0/1 angle while a default return_to_rest() still writes channels 0 and 1, reading writes back from the fake kit."
+  ],
+  "acceptance_criteria": [
+    "`/home/aaron/workspace/animatronic-v2/.venv/bin/python -m py_compile src/config_store.py src/trunkcontroller.py src/performance.py` exits 0.",
+    "load_scan_timeout/save_scan_timeout round-trip and clamp correctly and preserve other tuning.json sections; verified by passing tests in tests/test_config_store.py.",
+    "return_to_rest(channels={3,4,5,6,7}) addresses no neck channel while the default rests channels 0 and 1; verified by a passing non-safety channel-set test.",
+    "All existing tests/test_performance.py tests still pass (no behaviour change for None defaults)."
+  ],
+  "verification": [
+    "/home/aaron/workspace/animatronic-v2/.venv/bin/python -m py_compile src/config_store.py src/trunkcontroller.py src/performance.py",
+    "SERVO_SIM=1 /home/aaron/workspace/animatronic-v2/.venv/bin/python -m pytest tests/test_config_store.py tests/test_performance.py -q --maxfail=1",
+    "SERVO_SIM=1 /home/aaron/workspace/animatronic-v2/.venv/bin/python -m pytest tests/test_rest_channels.py -q --maxfail=1  (only if that file was created)"
+  ],
+  "blocked_reason": null,
+  "findings": "config_store.py: added ConfigStore.load_scan_timeout() -> int in [1,120] (default 60, never raises) and ConfigStore.save_scan_timeout(minutes) -> clamped int (raises ValueError only when minutes can't be coerced to int). Both use the raw-JSON path (_load_raw/_write_raw), preserving profiles/voice_styles/voice_styles_previous. New top-level section is 'scan' with key 'timeout_min'. New module-level constants: SCAN_KEY='scan', SCAN_TIMEOUT_KEY='timeout_min', SCAN_TIMEOUT_DEFAULT_MIN=60, SCAN_TIMEOUT_MIN=1, SCAN_TIMEOUT_MAX=120. Thin module-level wrappers config_store.load_scan_timeout()/save_scan_timeout(minutes) delegate to _default_store (mirrors load_profile). trunkcontroller.py: return_to_rest now takes return_to_rest(self, channels=None); channels=None rests ALL constants.REST_POSITIONS (unchanged default); a set/frozenset rests only {ch for ch in channels if ch in REST_POSITIONS}. Still steps via return_to_start(delay=0.03) and never raises per-channel. performance.py: PerformanceRunner.__init__ gained rest_channels: frozenset[int]|None = None (stored as self.rest_channels, 5th positional param after ambient); _return_to_rest now calls return_to_rest(channels=self.rest_channels). Default None => whole-robot rest for all existing callers (brains/hypnotic/blah/snore + inter-step/exception paths). Arm-only scan responses should pass rest_channels=frozenset of arm channels (e.g. {4,5,6,7} and wrist) to avoid resting neck channels 0/1. Tests: tests/test_config_store.py extended with scan-timeout round-trip/clamp/corrupt/preserve + wrapper tests; tests/test_rest_channels.py added (SERVO_SIM fake-kit, reads servo[ch].angle is None for un-addressed channels). NOTE: FakeTrunkController.return_to_rest in tests/test_performance.py was updated to accept channels=None to match the real signature."
+}
