@@ -214,6 +214,7 @@ ARM_DESTINATION_POSES = {
         RT_SHOULDER_TILT:    43,   # center/reach value; swing oscillates tilt in [26, 60]
         RT_ELBOW_TILT:       0,
         RT_ELBOW_ROTATOR:    0,
+        RT_WRIST_TILT:      90,
     },
     "beckon": {
         RT_SHOULDER_ROTATOR: 90,
