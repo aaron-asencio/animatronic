@@ -150,3 +150,5 @@ models/*.tflite
 
 # prebuild backups
 .venv.old.*
+
+.agents/
