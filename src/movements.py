@@ -1753,8 +1753,10 @@ class Movements:
         rotator=90 (lifts the arm), shoulder tilt=55, elbow rotator=270, elbow
         tilt=125. The "come here" curl swings the elbow tilt 105<->135, the
         shoulder rotation and elbow tilt moving concurrently as the arm lifts.
-        Repeats a random 3-4 times, holds briefly, then lowers. All keyframes
-        validated collision-free.
+        On each curl-in stroke, once the elbow reaches 0.7 of its timeline
+        toward its destination the wrist concurrently flexes to 170, then
+        returns to rest (90) on the way back out. Repeats a random 3-4 times,
+        holds briefly, then lowers. All keyframes validated collision-free.
         """
         # Rest + beckon-pose values.
         ROT_REST, ROT_UP = 0, 90             # shoulder rotator lifts the arm
@@ -1762,6 +1764,11 @@ class Movements:
         FOREARM_REST, FOREARM_UP = 150, 270  # elbow rotator (palm turned in)
         ELBOW_REST = 0                       # elbow tilt at rest (arm extended)
         ELBOW_LO, ELBOW_HI = 105, 135        # the "come here" curl arc
+        WRIST_REST, WRIST_FLEX = 90, 170     # wrist straight / flexed (SAFE 10-230)
+        # Start the wrist flex 0.7 of the way through the elbow's forward
+        # (curl-in) sweep so the hand flicks as the forearm reaches its
+        # destination, then returns to rest. Mirrors comeHere.
+        WRIST_FLEX_START = 0.7
 
         # RAISE: rotator up, tilt, forearm and the elbow-tilt curl all move
         # together from t=0 -- the shoulder rotation and elbow tilt happen
@@ -1780,21 +1787,36 @@ class Movements:
         curls = random.randint(3, 4)
         print(f"[beckon] beckoning {curls} time(s)")
         for _ in range(curls):
+            # Forward (curl-in) stroke: as the elbow reaches 0.7 of its
+            # timeline toward ELBOW_HI, the wrist concurrently flexes to 170.
             await self.trunkController.move_to(
-                {constants.RT_ELBOW_TILT: ELBOW_HI}, steps=14, delay=0.025)
+                {
+                    constants.RT_ELBOW_TILT: ELBOW_HI,
+                    constants.RT_WRIST_TILT: WRIST_FLEX,
+                },
+                steps=14, delay=0.025,
+                start_fractions={constants.RT_WRIST_TILT: WRIST_FLEX_START},
+            )
+            # Return stroke: elbow back out and the wrist back to rest together.
             await self.trunkController.move_to(
-                {constants.RT_ELBOW_TILT: ELBOW_LO}, steps=14, delay=0.025)
+                {
+                    constants.RT_ELBOW_TILT: ELBOW_LO,
+                    constants.RT_WRIST_TILT: WRIST_REST,
+                },
+                steps=14, delay=0.025)
 
         # Hold the beckon pose briefly before lowering.
         await asyncio.sleep(0.25)
 
-        # LOWER: extend the elbow, lower the arm, forearm back to rest, together.
+        # LOWER: extend the elbow, lower the arm, forearm and wrist back to
+        # rest, together.
         await self.trunkController.move_to(
             {
                 constants.RT_SHOULDER_ROTATOR: ROT_REST,
                 constants.RT_SHOULDER_TILT: TILT_REST,
                 constants.RT_ELBOW_ROTATOR: FOREARM_REST,
                 constants.RT_ELBOW_TILT: ELBOW_REST,
+                constants.RT_WRIST_TILT: WRIST_REST,
             },
             steps=50, delay=0.025,
         )
