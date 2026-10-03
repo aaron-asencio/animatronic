@@ -232,6 +232,7 @@ class Animatronic:
         'excuseme_sb.wav',         # 32  (burp/fart follow-on: "excuse me")
         'fart.wav',                # 33  (fart: lead track, no cover)
         'elf_smell_ghost_burrito.wav',  # 34  (fartGhost: gated reaction after fan-nose arrives)
+        'sneeze.wav',                   # 35  (sneeze: yawn-cover arm + sneeze.wav, snapHead after 5s)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -521,6 +522,19 @@ class Animatronic:
         motion and audio start together.
         """
         self.run_action_and_audio("_do_awaken", self.music[26])  # awakened.wav
+
+    def sneeze(self):
+        """Sneeze reaction — yawn cover-mouth arm, then a head snap 5s in.
+
+        Reuses the yawn arm gesture (``Movements.yawn_cover``) paired with
+        ``sneeze.wav`` played UNGATED (``audio_delay=0.0`` default): motion and
+        audio both start at t=0 and the jaw syncs to the clip's amplitude via
+        AudioPlayer as normal. Unlike ``yawn`` there is no ``_YC_GATE_LEAD`` /
+        gate lead-in. Then, 5 seconds after the routine/audio starts, the
+        ``snapHead`` gesture (``Movements.snap_head``) fires — see ``_do_sneeze``
+        for the ordering.
+        """
+        self.run_action_and_audio("_do_sneeze", self.music[35])  # sneeze.wav
 
     @staticmethod
     def _audio_duration_seconds(audio_file, default=7.0):
@@ -3052,6 +3066,7 @@ class Animatronic:
             'yawn':           self.yawn,
             'snuckUp':        self.snuck_up,
             'awaken':         self.awaken,
+            'sneeze':         self.sneeze,
             # Performance-framework routines
             'brains':         self.brains,
             'hypnotic':       self.hypnotic,
@@ -3128,6 +3143,33 @@ class Animatronic:
         mv = Movements("Animatronic")
         duration = self._audio_duration_seconds(self.music[26])  # awakened.wav
         await mv.awaken(duration=duration)
+
+    async def _do_sneeze(self):
+        """Sneeze gesture coroutine: yawn-cover arm, then snapHead 5s in.
+
+        Ungated (see ``sneeze``): this coroutine and the ``sneeze.wav`` audio
+        thread both start at t=0, so "5 seconds after the routine starts" is
+        measured from audio start. The two gestures run SEQUENTIALLY, never
+        concurrently:
+
+            1. mark ``start`` at t=0 (== audio start, since ungated);
+            2. ``yawn_cover`` reuses the yawn arm gesture AS-IS (its own
+               verified-pose override), returning ALL channels — arm (4-7) and
+               neck (0,1) — to rest when it completes;
+            3. pad out to the 5s mark (``max(0.0, ...)`` so if ``yawn_cover``
+               ever ran past 5s, ``snap_head`` fires immediately after it rather
+               than scheduling a negative sleep);
+            4. ``snap_head`` drives NECK_TILT only.
+
+        Because ``yawn_cover`` finishes and releases every channel (including
+        NECK_TILT) before ``snap_head`` begins, there is no channel contention
+        even though both touch the neck.
+        """
+        mv = Movements("Animatronic")
+        start = time.monotonic()
+        await mv.yawn_cover()
+        await asyncio.sleep(max(0.0, 5.0 - (time.monotonic() - start)))
+        await mv.snap_head()
 
     async def _do_look_around_random(self):
         # Gesture-only (no audio): idly scan the room, then return to rest. Run
