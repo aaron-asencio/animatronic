@@ -80,6 +80,7 @@ ROUTINE_ACTIONS = {
     'startParty', 'blah', 'krusty',
     'vincentPrice', 'moreCandy', 'snuckUp', 'brains', 'yawn', 'hypnotic',
     'awaken', 'clearThroat', 'coughLong', 'coughMedium', 'burp', 'fart',
+    'fartGhost',
 }
 
 MOVEMENT_ACTIONS = {

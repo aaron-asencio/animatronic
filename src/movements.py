@@ -1881,49 +1881,89 @@ class Movements:
         rotator and the shoulder rotator back toward REST_POSITIONS (elbow tilt
         5, wrist 90, elbow rotator 150, shoulder rotator 0); controller.py
         additionally drives everything home on the error path.
+
+        DRY note: the three motion phases are factored into the shared
+        ``_fan_nose_settle`` / ``_fan_nose_fan`` / ``_fan_nose_lower`` primitives
+        so the ``fartGhost`` Routine's phased adapters (``fan_nose_lead_in`` /
+        ``fan_nose_return``) drive the SAME motion through the Performance
+        Framework. This standalone gesture is simply those three primitives run
+        back-to-back, so the two paths never fork the pose or the fan sequence.
         """
-        ELBOW_SPEED = 8
-        WRIST_SPEED = 8
-        LOWER_SPEED = 7           # elbow/wrist return-to-rest speed
-        SHOULDER_LOWER_SPEED = 7  # shoulder rotator (170 -> rest) descent speed
-        DELAY = 0.02
+        await self._fan_nose_settle()
+        await self._fan_nose_fan()
+        await self._fan_nose_lower()
 
-        # Start pose keyed by channel-number dict {0:90,1:90,3:90,4:205,5:145,
-        # 6:5,7:170}; RT_SHOULDER_TILT=5 is passed as-is and set_angle clamps it
-        # up to the SAFE_LIMITS floor of 45. RT_ELBOW_TILT settles at the fan
-        # center 145 (the elbow's right-angle landmark).
-        start_pose = {
-            constants.NECK_PAN:            90,
-            constants.NECK_TILT:           90,
-            constants.RT_WRIST_TILT:       90,
-            constants.RT_ELBOW_ROTATOR:    205,
-            constants.RT_ELBOW_TILT:       145,
-            constants.RT_SHOULDER_TILT:    5,
-            constants.RT_SHOULDER_ROTATOR: 170,
-        }
+    # --- fan_nose shared motion primitives ------------------------------- #
+    #
+    # Factored out of the standalone ``fan_nose`` so the ``fartGhost`` Routine's
+    # phased adapters (``fan_nose_lead_in`` / ``fan_nose_return``) reuse the
+    # EXACT same settle, fan loop and return — the fan motion is defined once and
+    # driven by both the gesture-only CLI path and the audio Routine (DRY).
 
-        # Fan legs as (elbow_target, wrist_target) keyframes. Elbow oscillates
-        # 145 -> 150 -> 140 -> 145 (center 145); wrist is coupled to the elbow
-        # direction and crosses 90 as the elbow passes 145.
-        legs = (
-            (150, 120),  # A flex:     elbow 145->150, wrist 90->120
-            (140, 60),   # B extend:   elbow 150->140, wrist 120->60
-            (145, 90),   # C recenter: elbow 140->145, wrist 60->90
-        )
+    _FAN_NOSE_ELBOW_SPEED = 8
+    _FAN_NOSE_WRIST_SPEED = 8
+    _FAN_NOSE_LOWER_SPEED = 7           # elbow/wrist return-to-rest speed
+    _FAN_NOSE_SHOULDER_LOWER_SPEED = 7  # shoulder rotator (170 -> rest) descent
+    _FAN_NOSE_DELAY = 0.02
+    _FAN_NOSE_REPS = 6
 
-        # Settle all seven joints at the start pose, concurrently. The arm
-        # servos run "to destination pose at speed 8"; the starting angles are
-        # unknown until commanded (mirrors the hardware), so size the shared
-        # settle from the full travel span at speed 8 (same single-move_to
-        # pattern as fan_butt, which uses a fixed settle). 270 deg is the
-        # worst-case span.
-        settle_steps = speed_to_steps(270, ELBOW_SPEED, delay=DELAY)
-        await self.trunkController.move_to(start_pose, steps=settle_steps, delay=DELAY)
+    # Start pose keyed by channel-number dict {0:90,1:90,3:90,4:205,5:145,
+    # 6:5,7:170}; RT_SHOULDER_TILT=5 is passed as-is and set_angle clamps it up
+    # to the SAFE_LIMITS floor of 45. RT_ELBOW_TILT settles at the fan center
+    # 145 (the elbow's right-angle landmark).
+    _FAN_NOSE_START_POSE = {
+        constants.NECK_PAN:            90,
+        constants.NECK_TILT:           90,
+        constants.RT_WRIST_TILT:       90,
+        constants.RT_ELBOW_ROTATOR:    205,
+        constants.RT_ELBOW_TILT:       145,
+        constants.RT_SHOULDER_TILT:    5,
+        constants.RT_SHOULDER_ROTATOR: 170,
+    }
 
-        # Fan: 6 reps, each A -> B -> C, elbow (5) and wrist (3) together.
+    # Fan legs as (elbow_target, wrist_target) keyframes. Elbow oscillates
+    # 145 -> 150 -> 140 -> 145 (center 145); wrist is coupled to the elbow
+    # direction and crosses 90 as the elbow passes 145.
+    _FAN_NOSE_LEGS = (
+        (150, 120),  # A flex:     elbow 145->150, wrist 90->120
+        (140, 60),   # B extend:   elbow 150->140, wrist 120->60
+        (145, 90),   # C recenter: elbow 140->145, wrist 60->90
+    )
+
+    async def _fan_nose_settle(self):
+        """SETTLE: ease all seven joints to the fan-nose start pose.
+
+        The arm servos run "to destination pose at speed 8"; the starting angles
+        are unknown until commanded (mirrors the hardware), so size the shared
+        settle from the full travel span at speed 8 (same single-move_to pattern
+        as fan_butt, which uses a fixed settle). 270 deg is the worst-case span.
+        RT_SHOULDER_TILT=5 is passed as-is and set_angle clamps it up to the
+        SAFE_LIMITS floor of 45.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_WRIST_TILT (3),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+        """
+        settle_steps = speed_to_steps(
+            270, self._FAN_NOSE_ELBOW_SPEED, delay=self._FAN_NOSE_DELAY)
+        await self.trunkController.move_to(
+            self._FAN_NOSE_START_POSE, steps=settle_steps, delay=self._FAN_NOSE_DELAY)
+
+    async def _fan_nose_fan(self):
+        """FAN: oscillate the elbow tilt (5) + wrist tilt (3) for ``_FAN_NOSE_REPS``.
+
+        Each rep is A -> B -> C (flex / extend / recenter); the two disjoint fan
+        joints move together in one move_to per leg, the step count sized from
+        the SLOWER-arriving joint so they arrive together (see ``fan_nose``'s
+        docstring for the speed tradeoff). On completion the fan has returned to
+        its center (elbow 145, wrist 90) — the gesture's DESTINATION POINT, which
+        is what the ``fartGhost`` Routine's gate waits for.
+
+        Channels: RT_ELBOW_TILT (5), RT_WRIST_TILT (3).
+        """
         elbow_prev, wrist_prev = 145, 90
-        for _ in range(6):
-            for elbow_target, wrist_target in legs:
+        for _ in range(self._FAN_NOSE_REPS):
+            for elbow_target, wrist_target in self._FAN_NOSE_LEGS:
                 elbow_travel = abs(elbow_target - elbow_prev)
                 wrist_travel = abs(wrist_target - wrist_prev)
                 # Size the shared step count from the SLOWER-arriving joint so
@@ -1932,37 +1972,49 @@ class Movements:
                 # the LARGER step count. Elbow speed is therefore approximate
                 # (see docstring); arriving together is the operator's intent.
                 leg_steps = max(
-                    speed_to_steps(elbow_travel, ELBOW_SPEED, delay=DELAY),
-                    speed_to_steps(wrist_travel, WRIST_SPEED, delay=DELAY),
+                    speed_to_steps(elbow_travel, self._FAN_NOSE_ELBOW_SPEED,
+                                   delay=self._FAN_NOSE_DELAY),
+                    speed_to_steps(wrist_travel, self._FAN_NOSE_WRIST_SPEED,
+                                   delay=self._FAN_NOSE_DELAY),
                 )
                 await self.trunkController.move_to(
                     {
                         constants.RT_ELBOW_TILT: elbow_target,
                         constants.RT_WRIST_TILT: wrist_target,
                     },
-                    steps=leg_steps, delay=DELAY,
+                    steps=leg_steps, delay=self._FAN_NOSE_DELAY,
                 )
                 elbow_prev, wrist_prev = elbow_target, wrist_target
 
-        # Return everything to rest in ONE concurrent move so the elbow tilt,
-        # wrist, elbow rotator and shoulder rotator all lower AT THE SAME TIME
-        # (all four channels are disjoint). All move at SPEED 7; the shared step
-        # count is sized from the SLOWEST-arriving joint (max of each joint's
-        # own speed_to_steps) so none finishes early and they arrive together.
-        # The shoulder rotator's 170 -> 0 travel is the longest, so it dominates
-        # and the shorter-travel joints are eased over the same timeline.
-        # Targets (REST_POSITIONS): elbow tilt 5, wrist 90, elbow rotator 150,
-        # shoulder rotator 0. NECK_PAN/TILT and RT_SHOULDER_TILT stay where the
-        # start pose set them; controller.py's return_to_rest settles everything
-        # after the gesture / on error.
+    async def _fan_nose_lower(self):
+        """LOWER: return the fan joints, elbow rotator and shoulder rotator to rest.
+
+        One concurrent move so the elbow tilt, wrist, elbow rotator and shoulder
+        rotator all lower AT THE SAME TIME (all four channels are disjoint). All
+        move at SPEED 7; the shared step count is sized from the SLOWEST-arriving
+        joint (max of each joint's own speed_to_steps) so none finishes early and
+        they arrive together. The shoulder rotator's 170 -> 0 travel is the
+        longest, so it dominates and the shorter-travel joints are eased over the
+        same timeline. Targets (REST_POSITIONS): elbow tilt 5, wrist 90, elbow
+        rotator 150, shoulder rotator 0. NECK_PAN/TILT and RT_SHOULDER_TILT stay
+        where the start pose set them; controller.py's return_to_rest (and the
+        Performance Framework's residual rest sweep) settle everything after the
+        gesture / on error.
+
+        Channels: RT_ELBOW_TILT (5), RT_WRIST_TILT (3), RT_ELBOW_ROTATOR (4),
+                  RT_SHOULDER_ROTATOR (7).
+        """
         elbow_rest     = constants.REST_POSITIONS[constants.RT_ELBOW_TILT]
         wrist_rest     = constants.REST_POSITIONS[constants.RT_WRIST_TILT]
         elbow_rot_rest = constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR]
         shoulder_rest  = constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR]
         return_steps = max(
-            speed_to_steps(abs(145 - elbow_rest),     LOWER_SPEED,          delay=DELAY),
-            speed_to_steps(abs(205 - elbow_rot_rest), LOWER_SPEED,          delay=DELAY),
-            speed_to_steps(abs(170 - shoulder_rest),  SHOULDER_LOWER_SPEED, delay=DELAY),
+            speed_to_steps(abs(145 - elbow_rest),
+                           self._FAN_NOSE_LOWER_SPEED, delay=self._FAN_NOSE_DELAY),
+            speed_to_steps(abs(205 - elbow_rot_rest),
+                           self._FAN_NOSE_LOWER_SPEED, delay=self._FAN_NOSE_DELAY),
+            speed_to_steps(abs(170 - shoulder_rest),
+                           self._FAN_NOSE_SHOULDER_LOWER_SPEED, delay=self._FAN_NOSE_DELAY),
         )
         await self.trunkController.move_to(
             {
@@ -1971,8 +2023,51 @@ class Movements:
                 constants.RT_ELBOW_ROTATOR:    elbow_rot_rest,
                 constants.RT_SHOULDER_ROTATOR: shoulder_rest,
             },
-            steps=return_steps, delay=DELAY,
+            steps=return_steps, delay=self._FAN_NOSE_DELAY,
         )
+
+    # --- fan_nose phased adapters (Performance Framework) ---------------- #
+    #
+    # Used by the ``fartGhost`` Routine (src/animatronic.py). They drive the SAME
+    # shared primitives as the standalone ``fan_nose`` so a seeded run reproduces
+    # an identical command sequence; see the adapter trios for present_palm /
+    # yawn_cover for the shape. fan_nose uses no randomness, so no state is reset
+    # here.
+
+    async def fan_nose_lead_in(self):
+        """Lead-in phase: settle, then fan to the DESTINATION POINT, then gate.
+
+        Runs ``_fan_nose_settle`` followed by the full ``_fan_nose_fan`` loop and
+        AWAITS both to completion, so when this coroutine returns the arm has
+        ARRIVED at the fan's destination (the recenter pose elbow 145 / wrist 90).
+        The ``fartGhost`` MovementSpec sets ``supplies_gate=True``, so the
+        framework opens the audio gate — starting ``elf_smell_ghost_burrito.wav``
+        — the instant this lead-in finishes, i.e. exactly when the arm reaches
+        the fan destination ("gate audio until the gesture reaches a pose").
+        Contains no audio logic; owns head channels 0,1 and arm channels 3-7.
+        """
+        await self._fan_nose_settle()
+        await self._fan_nose_fan()
+
+    async def fan_nose_loop_body(self):
+        """Loop-body phase: HOLD the fan destination pose while audio plays.
+
+        The fan motion already completed in the lead-in, so the body simply holds
+        (a brief sleep) and the step loops it for the audio duration — the arm
+        stays at the destination pose while ``elf_smell_ghost_burrito.wav``
+        plays, then ``fan_nose_return`` lowers it. Issues no servo writes (the
+        joints are already at the destination); contains no audio logic.
+        """
+        await asyncio.sleep(self._FAN_NOSE_DELAY)
+
+    async def fan_nose_return(self):
+        """Return phase: lower the arm to rest via the shared lower primitive.
+
+        Owns the fan joints + elbow/shoulder rotator (3,4,5,7). Delegates to
+        ``_fan_nose_lower`` so the Routine lowers EXACTLY as the standalone
+        gesture does. Contains no audio logic.
+        """
+        await self._fan_nose_lower()
 
     async def beckon(self):
         """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.

@@ -231,6 +231,7 @@ class Animatronic:
         'gurgle_burp.wav',         # 31  (burp: cover-mouth burp lead track)
         'excuseme_sb.wav',         # 32  (burp/fart follow-on: "excuse me")
         'fart.wav',                # 33  (fart: lead track, no cover)
+        'elf_smell_ghost_burrito.wav',  # 34  (fartGhost: gated reaction after fan-nose arrives)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -1181,6 +1182,97 @@ class Animatronic:
 
         # Phase 2: cover the mouth and, once the hand settles, say "excuse me".
         self._run_cover_mouth_settled(self.music[32], name="fart")  # excuseme_sb.wav
+
+    def fart_ghost(self):
+        """"Fart Ghost" — fart first, THEN fan the nose and react to the smell.
+
+        A TWO-PHASE routine, built from the SAME two shapes as ``fart`` (two
+        sequential audio phases, no overlap) but with the fan-nose Gesture and a
+        gate-until-settled second clip instead of the cover-mouth hold:
+
+        1. Play ``fart.wav`` to completion with NO movement as PURE audio -- a
+           blocking ``AudioPlayer`` built with ``drive_jaw=False`` /
+           ``drive_eyes=False`` so the jaw motor and eye LED never flash (a fart
+           doesn't come out of the mouth). This is EXACTLY ``fart``'s phase 1: it
+           claims neither GPIO pin, so both stay free for the Performance below,
+           and is ``close()``d afterward for symmetry.
+        2. Run the ``fan_nose`` Gesture via the Performance_Framework UNGATED:
+           ``gate=None`` starts ``elf_smell_ghost_burrito.wav`` at t=0 -- the
+           instant the fan phase begins moving -- so the reaction clip plays as
+           soon as the arm MOVES, rather than waiting for it to reach the fan
+           destination (shape #1 in audio-sequencing.md -- the same ungated
+           start as ``brains`` / ``snuckUp``). ``fan_nose_lead_in`` still runs
+           the fan motion concurrently with the audio; it just no longer supplies
+           a gate. The hand then HOLDS at the destination while the clip plays
+           (``fan_nose_loop_body`` under ``loop_for_audio=True``) and
+           ``fan_nose_return`` lowers the arm to rest at the end.
+
+        The two audio phases never overlap (``fart.wav`` fully drains before the
+        fan phase starts), so -- as in ``fart`` -- there is no jaw-motor /
+        audio-device contention. The whole routine runs inside the caller's servo
+        lock; the Performance run does not take the lock itself. Phase 2's runner
+        is launched with ``asyncio.run`` at the top of the call stack.
+
+        DRY: the phased ``fan_nose_lead_in`` / ``fan_nose_loop_body`` /
+        ``fan_nose_return`` adapters drive the SAME shared ``_fan_nose_*``
+        primitives as the standalone ``fanNose`` gesture, so the fan motion is
+        identical to the gesture-only CLI path. Every servo write still goes
+        through ``move_to``/``set_angle`` (clamped to SAFE_LIMITS) and the
+        runner sweeps residual channels home on completion or failure.
+        """
+        # Phase 1: fart.wav alone, no movement -- identical to fart's phase 1.
+        # Pure audio with the jaw and eyes NOT driven (a fart doesn't come out of
+        # the mouth), so the player claims neither GPIO pin, leaving them free for
+        # phase 2. Blocking playback on this thread; close() afterward for symmetry.
+        fart_path = os.path.join(self._resolve_audio_dir(), self.music[33])  # fart.wav
+        player = AudioPlayer(drive_jaw=False, drive_eyes=False)
+        try:
+            print(f"[fartGhost] playing {fart_path} as pure audio (no jaw/eyes, no fan yet)")
+            player.play_audio_file(fart_path)
+        finally:
+            player.close()
+
+        # Phase 2: fan the nose; the reaction clip starts at t=0 (as soon as the
+        # arm begins moving), holds the pose while it plays, then lowers.
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        FART_GHOST = PerformanceDefinition(
+            name="fanNose",
+            audio_file=self.music[34],  # elf_smell_ghost_burrito.wav
+            # Ungated: audio starts at t=0, the instant the fan phase begins
+            # moving -- the reaction plays as soon as the arm MOVES, not when it
+            # arrives at the destination.
+            gate=None,
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,   # HOLD at the destination until the clip ends
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="fanNose",
+                            # fan_nose owns head channels 0,1 (set once in the
+                            # start pose) and arm channels 3-7 (the fan joints
+                            # plus the elbow/shoulder rotator lowered on return).
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,          # 0,1
+                                constants.RT_WRIST_TILT,      # 3
+                                constants.RT_ELBOW_ROTATOR,
+                                constants.RT_ELBOW_TILT,      # 4,5
+                                constants.RT_SHOULDER_TILT,
+                                constants.RT_SHOULDER_ROTATOR,  # 6,7
+                            }),
+                            lead_in=mv.fan_nose_lead_in,     # fan to destination (concurrent with audio)
+                            loop_body=mv.fan_nose_loop_body,  # hold while audio plays
+                            do_return=mv.fan_nose_return,     # lower arm at end
+                            # Ungated performance (gate=None): no movement supplies a gate.
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(FART_GHOST, mv, audio_dir).run())
 
     def snore(self):
         """"Snore" audio — jerky heavy-head drop gates the snore, then sleep.
@@ -2913,6 +3005,7 @@ class Animatronic:
             'coughMedium':    self.cough_medium,
             'burp':           self.burp,
             'fart':           self.fart,
+            'fartGhost':      self.fart_ghost,
             'sleep':          self.snore,
             'moreCandy':      self.more_candy,
             # Tracking Mode — camelCase key kept in the allowlist for parity with
