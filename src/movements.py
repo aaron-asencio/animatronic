@@ -1681,35 +1681,49 @@ class Movements:
         pulled-in "come toward me" pose, twice.
 
         Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
-                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5), RT_WRIST_TILT (3)
 
         Each rep runs from the resting position to the hardware-measured closed
         pose (arm closest to the body): shoulder rotator=129, shoulder tilt=14,
         elbow rotator=189, elbow tilt=140. All joints move concurrently. Runs
         twice with a 0.1s pause at the closed pose between reps.
 
+        The wrist (RT_WRIST_TILT, channel 3) flexes from rest (90) to 170 as
+        part of the same forward sweep, but STAGGERED: it holds at rest until
+        the sweep is 0.7 of the way through its timeline (operator-chosen
+        fraction), then flexes up to arrive with the rest of the arm. On the
+        return sweep the wrist eases back to rest (90) with the arm.
+
         shoulder_tilt dips to 14, below the global floor (45); operator-verified
         safe in this pose only, so widen just that channel via
-        verified_pose_override. All keyframes validated collision-free against
-        the kinematic model.
+        verified_pose_override. The wrist flex to 170 stays within its global
+        SAFE_LIMITS (10, 230), so it needs no override. All keyframes validated
+        collision-free against the kinematic model.
         """
         # Rest + closed-pose values.
         ROT_REST, ROT_CLOSED = 0, 129        # shoulder rotator
         TILT_REST, TILT_CLOSED = 55, 14      # shoulder tilt (14 = pulled in)
         FOREARM_REST, FOREARM_CLOSED = 150, 189   # elbow rotator
         ELBOW_REST, ELBOW_CLOSED = 0, 140    # elbow tilt (deep flex = come here)
+        WRIST_REST, WRIST_FLEX = 90, 170     # wrist tilt (170 = flexed in)
+
+        # Timeline fraction at which the wrist begins flexing during the forward
+        # sweep (operator-chosen; staggered start, not an angle threshold).
+        WRIST_START_FRACTION = 0.7
 
         closed = {
             constants.RT_SHOULDER_ROTATOR: ROT_CLOSED,
             constants.RT_SHOULDER_TILT: TILT_CLOSED,
             constants.RT_ELBOW_ROTATOR: FOREARM_CLOSED,
             constants.RT_ELBOW_TILT: ELBOW_CLOSED,
+            constants.RT_WRIST_TILT: WRIST_FLEX,
         }
         rest = {
             constants.RT_SHOULDER_ROTATOR: ROT_REST,
             constants.RT_SHOULDER_TILT: TILT_REST,
             constants.RT_ELBOW_ROTATOR: FOREARM_REST,
             constants.RT_ELBOW_TILT: ELBOW_REST,
+            constants.RT_WRIST_TILT: WRIST_REST,
         }
 
         # tilt dips to 14, below the global floor of 45; operator-verified safe
@@ -1718,7 +1732,12 @@ class Movements:
         with TrunkController.verified_pose_override(override):
             for rep in range(2):
                 # Sweep everything from rest to the closed pose, concurrently.
-                await self.trunkController.move_to(closed, steps=40, delay=0.02)
+                # The wrist is staggered to begin at 0.7 of the timeline so it
+                # flexes in near the end of the sweep rather than from the start.
+                await self.trunkController.move_to(
+                    closed, steps=40, delay=0.02,
+                    start_fractions={constants.RT_WRIST_TILT: WRIST_START_FRACTION},
+                )
                 # Hold the "come here" pose briefly (0.1s).
                 await asyncio.sleep(0.1)
                 # Return to rest (concurrently) before the next rep / finish.

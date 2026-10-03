@@ -25,6 +25,20 @@ If a landmark is missing, prefer the documented values already in the codebase
 dict in `constants.py`, and the nearest existing gesture) over a fresh
 full-file search. Only search when no documented value exists.
 
+### Staggered starts are expressed as TIMELINE FRACTIONS, not angles
+
+`move_to`'s `start_fractions` staggers a joint by a fraction of the shared
+motion timeline (0.0–1.0), NOT by another joint's angle. The operator drives
+these by timeline fraction directly.
+
+So when a request phrases a stagger as an **angle threshold** — e.g. "as
+`RT_ELBOW_TILT` reaches 100, start to flex the wrist" — do NOT try to convert
+the angle into a fraction (the smoothstep easing makes that conversion
+non-linear and error-prone). Instead, **ask the operator for the timeline
+fraction** they want the joint to start at, and use that value verbatim in
+`start_fractions`. Do not guess or compute a fraction from the angle on their
+behalf.
+
 `ARM_DESTINATION_POSES` is the canonical table of each gesture's peak/hold arm
 pose (the four right-arm channels) plus the `verified_pose_override` it needs —
 read it instead of re-deriving a hand-to-mouth or reach pose. It includes
