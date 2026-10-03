@@ -240,7 +240,9 @@ ARM_DESTINATION_POSES = {
         RT_SHOULDER_TILT:    15,
         RT_ELBOW_TILT:       140,
         RT_ELBOW_ROTATOR:    190,
-        RT_WRIST_TILT:       90,
+        RT_WRIST_TILT:       170,  # flexes 90->170 during the live gesture, staggered
+                                   # to begin at 0.7 of the forward sweep's timeline
+                                   # (returns to rest=90 on the way back)
     },
     # Standalone yawn_cover gesture (Movements.yawn_cover): hand-to-mouth hold.
     # Elbow cover value lowered 165 -> 162 to decrease the final hand position.
