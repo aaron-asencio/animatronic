@@ -40,7 +40,7 @@ Dependency chain
 import asyncio
 import contextlib
 import random
-from trunkcontroller import TrunkController
+from trunkcontroller import TrunkController, speed_to_steps
 import constants
 
 
@@ -1742,6 +1742,237 @@ class Movements:
                 await asyncio.sleep(0.1)
                 # Return to rest (concurrently) before the next rep / finish.
                 await self.trunkController.move_to(rest, steps=40, delay=0.02)
+
+    async def fan_butt(self):
+        """Fan butt: fan the hand at the side to waft away an unpleasant smell.
+
+        Channels: RT_WRIST_TILT (3), RT_ELBOW_TILT (5), RT_SHOULDER_ROTATOR (7)
+                  (the three fanning joints). NECK_PAN (0), NECK_TILT (1),
+                  RT_ELBOW_ROTATOR (4) and RT_SHOULDER_TILT (6) are set ONCE in
+                  the start pose and are not driven during the fanning loop.
+
+        The three fan joints oscillate between an UP keyframe (shoulder
+        rotator=10, elbow tilt=5, wrist tilt=10) and a DOWN keyframe (shoulder
+        rotator=0, elbow tilt=60, wrist tilt=160) for 3 reps (one up + one down
+        = one rep), then return toward rest. All three joints move at SPEED 8;
+        because they share one speed they go in a SINGLE move_to per stroke over
+        one shared step count, sized from the LONGEST-travel joint (the wrist,
+        150 deg) via speed_to_steps so they arrive together. The fan channels
+        (3, 5, 7) are disjoint, so one move_to drives them concurrently.
+
+        All commanded angles sit inside the global SAFE_LIMITS (wrist floor 10,
+        shoulder-rotator floor 0 clamp cleanly), so no verified_pose_override is
+        needed. Every write still goes through move_to -> set_angle clamping,
+        and the gesture ends by moving the fan joints back toward REST_POSITIONS;
+        controller.py additionally drives everything home on the error path.
+        """
+        FAN_SPEED = 8
+        DELAY = 0.02
+
+        # Start pose: settle all seven joints before fanning begins.
+        start_pose = {
+            constants.NECK_PAN:            90,
+            constants.NECK_TILT:           85,
+            constants.RT_WRIST_TILT:       90,
+            constants.RT_ELBOW_ROTATOR:    25,
+            constants.RT_ELBOW_TILT:       60,
+            constants.RT_SHOULDER_TILT:    55,
+            constants.RT_SHOULDER_ROTATOR: 0,
+        }
+
+        # Two fan keyframes (the three disjoint fan joints only).
+        up = {
+            constants.RT_SHOULDER_ROTATOR: 10,
+            constants.RT_ELBOW_TILT:       5,
+            constants.RT_WRIST_TILT:       10,
+        }
+        down = {
+            constants.RT_SHOULDER_ROTATOR: 0,
+            constants.RT_ELBOW_TILT:       60,
+            constants.RT_WRIST_TILT:       160,
+        }
+
+        # Size each stroke from the LONGEST joint's travel so all three arrive
+        # together at speed 8. Both legs (up<->down) share the same longest
+        # travel: the wrist swings 10<->160 = 150 deg (elbow 55, rotator 10).
+        up_steps = speed_to_steps(
+            max(abs(down[ch] - up[ch]) for ch in up), FAN_SPEED, delay=DELAY)
+        down_steps = speed_to_steps(
+            max(abs(up[ch] - down[ch]) for ch in down), FAN_SPEED, delay=DELAY)
+
+        # Settle the start pose at the same speed, sized from its longest leg
+        # (the elbow-rotator move 150->25, etc. depend on current pose; a modest
+        # fixed settle is fine, but keep it one move_to).
+        await self.trunkController.move_to(start_pose, steps=40, delay=DELAY)
+
+        # Fan: 3 reps of up then down, all three joints concurrently per stroke.
+        for _ in range(3):
+            await self.trunkController.move_to(up, steps=up_steps, delay=DELAY)
+            await self.trunkController.move_to(down, steps=down_steps, delay=DELAY)
+
+        # Return the fan joints toward rest (REST_POSITIONS: shoulder rotator 0,
+        # elbow tilt 5, wrist 90). Neck / elbow-rotator / shoulder-tilt stay
+        # where the start pose set them; controller.py's return_to_rest settles
+        # everything to full rest after the gesture / on error.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: 0,
+                constants.RT_ELBOW_TILT:       5,
+                constants.RT_WRIST_TILT:       90,
+            },
+            steps=40, delay=DELAY,
+        )
+
+    async def fan_nose(self):
+        """Fan nose: fan the hand in front of the nose to waft away a bad smell.
+
+        Channels: RT_ELBOW_TILT (5) and RT_WRIST_TILT (3) are the two fanning
+                  joints. NECK_PAN (0), NECK_TILT (1) and RT_SHOULDER_TILT (6)
+                  are set ONCE in the start pose and stay there. RT_ELBOW_ROTATOR
+                  (4) is set in the start pose (205) and then returned to rest
+                  (150) on the gesture's return; RT_SHOULDER_ROTATOR (7) is set
+                  in the start pose (170) and then lowered to rest (0) on the
+                  return. During the fanning loop only the elbow tilt (5) and
+                  wrist tilt (3) move (they are disjoint, so one move_to drives
+                  them concurrently per leg).
+
+        Motion: once the start pose has settled, RT_ELBOW_TILT oscillates in
+        [140, 150] about center 145 for 6 reps at SPEED 8. RT_WRIST_TILT is
+        COUPLED to the elbow's DIRECTION at SPEED 8 and crosses through 90 as the
+        elbow passes 145:
+            - elbow flexes 145 -> 150  =>  wrist 90 -> 120
+            - elbow extends 145 -> 140  =>  wrist 90 -> 60
+            - at elbow 145 the wrist is at 90 (neutral)
+        Each rep is decomposed into three legs so the two joints always arrive
+        together:
+            A (flex):     elbow 145 -> 150, wrist 90 -> 120
+            B (extend):   elbow 150 -> 140, wrist 120 -> 60  (passes (145, 90)
+                          at the leg midpoint)
+            C (recenter): elbow 140 -> 145, wrist 60 -> 90  (back to start of
+                          the next rep)
+
+        Speed tradeoff: the elbow and wrist share SPEED 8 but travel different
+        distances per leg (elbow 5 deg, wrist 30 deg), so a single shared
+        move_to cannot honor the speed for BOTH exactly. Per the operator's
+        stated intent the joints must ARRIVE TOGETHER, so each leg is one
+        move_to whose step count is sized from the LARGER of the two
+        speed_to_steps results (always the wrist here, since it travels
+        farther). That runs the WRIST at its true speed 8 and the elbow a touch
+        slower (its small travel spread over the wrist's longer timeline), which
+        keeps the "wrist = 90 as the elbow passes 145" crossing exact. The
+        return eases the elbow tilt, wrist, elbow rotator and shoulder rotator
+        to rest CONCURRENTLY in one move at SPEED 7; the shared step count is
+        sized from the slowest-arriving joint (the shoulder rotator's 170 -> 0
+        is the longest travel) so they all lower at the same time and none
+        finishes early.
+
+        Safety: the elbow fan range 140-150 is inside SAFE_LIMITS[RT_ELBOW_TILT]
+        = (0, 160) and the wrist fan range 60-120 is inside
+        SAFE_LIMITS[RT_WRIST_TILT] = (10, 230), so NO verified_pose_override is
+        needed. FORBIDDEN_COMBINATIONS only matches when RT_ELBOW_TILT is in
+        [150, 270] AND RT_SHOULDER_ROTATOR is in [210, 270]; the shoulder
+        rotator is 170 during the fan and only ever decreases (170 -> 0) on the
+        return, so it never enters [210, 270] and no forbidden combination is
+        matched. The start pose commands RT_SHOULDER_TILT = 5, which is below
+        SAFE_LIMITS[RT_SHOULDER_TILT] = (45, 270); set_angle clamps it UP to 45
+        (the intended safety behavior) — the value is passed as-is and no
+        override is used. Every write goes through move_to -> set_angle
+        clamping, and the gesture ends by moving the fan joints, the elbow
+        rotator and the shoulder rotator back toward REST_POSITIONS (elbow tilt
+        5, wrist 90, elbow rotator 150, shoulder rotator 0); controller.py
+        additionally drives everything home on the error path.
+        """
+        ELBOW_SPEED = 8
+        WRIST_SPEED = 8
+        LOWER_SPEED = 7           # elbow/wrist return-to-rest speed
+        SHOULDER_LOWER_SPEED = 7  # shoulder rotator (170 -> rest) descent speed
+        DELAY = 0.02
+
+        # Start pose keyed by channel-number dict {0:90,1:90,3:90,4:205,5:145,
+        # 6:5,7:170}; RT_SHOULDER_TILT=5 is passed as-is and set_angle clamps it
+        # up to the SAFE_LIMITS floor of 45. RT_ELBOW_TILT settles at the fan
+        # center 145 (the elbow's right-angle landmark).
+        start_pose = {
+            constants.NECK_PAN:            90,
+            constants.NECK_TILT:           90,
+            constants.RT_WRIST_TILT:       90,
+            constants.RT_ELBOW_ROTATOR:    205,
+            constants.RT_ELBOW_TILT:       145,
+            constants.RT_SHOULDER_TILT:    5,
+            constants.RT_SHOULDER_ROTATOR: 170,
+        }
+
+        # Fan legs as (elbow_target, wrist_target) keyframes. Elbow oscillates
+        # 145 -> 150 -> 140 -> 145 (center 145); wrist is coupled to the elbow
+        # direction and crosses 90 as the elbow passes 145.
+        legs = (
+            (150, 120),  # A flex:     elbow 145->150, wrist 90->120
+            (140, 60),   # B extend:   elbow 150->140, wrist 120->60
+            (145, 90),   # C recenter: elbow 140->145, wrist 60->90
+        )
+
+        # Settle all seven joints at the start pose, concurrently. The arm
+        # servos run "to destination pose at speed 8"; the starting angles are
+        # unknown until commanded (mirrors the hardware), so size the shared
+        # settle from the full travel span at speed 8 (same single-move_to
+        # pattern as fan_butt, which uses a fixed settle). 270 deg is the
+        # worst-case span.
+        settle_steps = speed_to_steps(270, ELBOW_SPEED, delay=DELAY)
+        await self.trunkController.move_to(start_pose, steps=settle_steps, delay=DELAY)
+
+        # Fan: 6 reps, each A -> B -> C, elbow (5) and wrist (3) together.
+        elbow_prev, wrist_prev = 145, 90
+        for _ in range(6):
+            for elbow_target, wrist_target in legs:
+                elbow_travel = abs(elbow_target - elbow_prev)
+                wrist_travel = abs(wrist_target - wrist_prev)
+                # Size the shared step count from the SLOWER-arriving joint so
+                # both arrive together; the wrist (speed 8) is faster but moves
+                # farther, the elbow (speed 5) is slower but moves less — take
+                # the LARGER step count. Elbow speed is therefore approximate
+                # (see docstring); arriving together is the operator's intent.
+                leg_steps = max(
+                    speed_to_steps(elbow_travel, ELBOW_SPEED, delay=DELAY),
+                    speed_to_steps(wrist_travel, WRIST_SPEED, delay=DELAY),
+                )
+                await self.trunkController.move_to(
+                    {
+                        constants.RT_ELBOW_TILT: elbow_target,
+                        constants.RT_WRIST_TILT: wrist_target,
+                    },
+                    steps=leg_steps, delay=DELAY,
+                )
+                elbow_prev, wrist_prev = elbow_target, wrist_target
+
+        # Return everything to rest in ONE concurrent move so the elbow tilt,
+        # wrist, elbow rotator and shoulder rotator all lower AT THE SAME TIME
+        # (all four channels are disjoint). All move at SPEED 7; the shared step
+        # count is sized from the SLOWEST-arriving joint (max of each joint's
+        # own speed_to_steps) so none finishes early and they arrive together.
+        # The shoulder rotator's 170 -> 0 travel is the longest, so it dominates
+        # and the shorter-travel joints are eased over the same timeline.
+        # Targets (REST_POSITIONS): elbow tilt 5, wrist 90, elbow rotator 150,
+        # shoulder rotator 0. NECK_PAN/TILT and RT_SHOULDER_TILT stay where the
+        # start pose set them; controller.py's return_to_rest settles everything
+        # after the gesture / on error.
+        elbow_rest     = constants.REST_POSITIONS[constants.RT_ELBOW_TILT]
+        wrist_rest     = constants.REST_POSITIONS[constants.RT_WRIST_TILT]
+        elbow_rot_rest = constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR]
+        shoulder_rest  = constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR]
+        return_steps = max(
+            speed_to_steps(abs(145 - elbow_rest),     LOWER_SPEED,          delay=DELAY),
+            speed_to_steps(abs(205 - elbow_rot_rest), LOWER_SPEED,          delay=DELAY),
+            speed_to_steps(abs(170 - shoulder_rest),  SHOULDER_LOWER_SPEED, delay=DELAY),
+        )
+        await self.trunkController.move_to(
+            {
+                constants.RT_ELBOW_TILT:       elbow_rest,
+                constants.RT_WRIST_TILT:       wrist_rest,
+                constants.RT_ELBOW_ROTATOR:    elbow_rot_rest,
+                constants.RT_SHOULDER_ROTATOR: shoulder_rest,
+            },
+            steps=return_steps, delay=DELAY,
+        )
 
     async def beckon(self):
         """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.
