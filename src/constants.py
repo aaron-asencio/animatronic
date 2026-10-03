@@ -191,6 +191,7 @@ FORBIDDEN_COMBINATIONS = [
 #
 #   Action          override (channel -> widened range)
 #   ------------     ---------------------------------------------
+#   wave             none                             (also NECK_PAN swings 84<->96)
 #   facePalm         RT_SHOULDER_TILT: (40, 270)      (also NECK_TILT=140)
 #   menacingReach    RT_SHOULDER_TILT: (25, 270)
 #   beckon           none
@@ -203,6 +204,17 @@ FORBIDDEN_COMBINATIONS = [
 #
 # Format: action_name -> {channel: destination_angle_deg}
 ARM_DESTINATION_POSES = {
+    # Standalone wave gesture (Movements.wave / _wave_arm): raised arm-up pose.
+    # Hardware-measured arm-up hold; no verified_pose_override needed (all values
+    # inside the global SAFE_LIMITS). The wave oscillates about this pose before
+    # recentering and lowering to REST_POSITIONS.
+    "wave": {
+        RT_SHOULDER_ROTATOR: 270,  # lifts the arm up
+        RT_SHOULDER_TILT:    55,   # wave center; oscillates tilt in [45, 65]
+        RT_ELBOW_TILT:       0,    # flat while the arm is extended
+        RT_ELBOW_ROTATOR:    30,   # forearm up; the flap wave oscillates in [22, 38]
+        RT_WRIST_TILT:       90,   # rest (wave never drives the wrist)
+    },
     "facePalm": {
         RT_SHOULDER_ROTATOR: 200,
         RT_SHOULDER_TILT:    40,
@@ -210,8 +222,8 @@ ARM_DESTINATION_POSES = {
         RT_ELBOW_ROTATOR:    200,
     },
     "menacingReach": {
-        RT_SHOULDER_ROTATOR: 209,
-        RT_SHOULDER_TILT:    43,   # center/reach value; swing oscillates tilt in [26, 60]
+        RT_SHOULDER_ROTATOR: 210,
+        RT_SHOULDER_TILT:    45,   # center/reach value; swing oscillates tilt in [26, 60]
         RT_ELBOW_TILT:       0,
         RT_ELBOW_ROTATOR:    0,
         RT_WRIST_TILT:      90,
@@ -221,12 +233,14 @@ ARM_DESTINATION_POSES = {
         RT_SHOULDER_TILT:    55,
         RT_ELBOW_TILT:       105,  # curl arc swings 105<->135
         RT_ELBOW_ROTATOR:    270,
+        RT_WRIST_TILT:       90,
     },
     "comeHere": {
-        RT_SHOULDER_ROTATOR: 129,
-        RT_SHOULDER_TILT:    14,
+        RT_SHOULDER_ROTATOR: 130,
+        RT_SHOULDER_TILT:    15,
         RT_ELBOW_TILT:       140,
-        RT_ELBOW_ROTATOR:    189,
+        RT_ELBOW_ROTATOR:    190,
+        RT_WRIST_TILT:       90,
     },
     # Standalone yawn_cover gesture (Movements.yawn_cover): hand-to-mouth hold.
     # Elbow cover value lowered 165 -> 162 to decrease the final hand position.
@@ -235,6 +249,7 @@ ARM_DESTINATION_POSES = {
         RT_SHOULDER_TILT:    35,
         RT_ELBOW_TILT:       162,
         RT_ELBOW_ROTATOR:    185,
+        RT_WRIST_TILT:       90,
     },
     # Shared cover-mouth pose used by the PHASED yawn_cover adapters
     # (yawn_cover_lead_in* / _loop_body / _return in movements.py), driven by the
@@ -248,5 +263,6 @@ ARM_DESTINATION_POSES = {
         RT_SHOULDER_TILT:    35,
         RT_ELBOW_TILT:       162,
         RT_ELBOW_ROTATOR:    185,
+        RT_WRIST_TILT:       90,
     },
 }

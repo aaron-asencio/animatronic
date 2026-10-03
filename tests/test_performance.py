@@ -996,8 +996,28 @@ def _record_menacing_reach(run_gesture, start_angles):
     return commands
 
 
+# The standalone gesture adds a concurrent WRIST FLEX on RT_WRIST_TILT (channel
+# 3) that the phased ``brains`` path intentionally does NOT perform, and whose
+# count/timing come from a DEDICATED entropy-seeded RNG (not the shared
+# ``random`` stream). The equivalence guarantee therefore holds on the shared
+# arm channels the two paths both drive (4-7) -- channel 3 is excluded from the
+# comparison, and because the wrist RNG is isolated it never perturbs the shared
+# swing stream, so channels 4-7 stay byte-identical. See
+# Movements._menacing_reach_wrist_flex.
+_MR_WRIST_CHANNEL = constants.RT_WRIST_TILT  # 3
+
+
+def _drop_wrist(commands):
+    """Filter out the standalone-only wrist-flex writes (channel 3)."""
+    return [(ch, ang) for (ch, ang) in commands if ch != _MR_WRIST_CHANNEL]
+
+
 async def _run_standalone(movements):
-    """Run the standalone menacing_reach gesture (reach + swing x3 + retract)."""
+    """Run the standalone menacing_reach gesture (reach + swing x8 + retract).
+
+    This also performs the concurrent wrist flex on channel 3; the test filters
+    those writes out via ``_drop_wrist`` before comparing to the phased path.
+    """
     await movements.menacing_reach()
 
 
@@ -1028,24 +1048,35 @@ def test_property10_phased_composition_reproduces_standalone(start_angles):
     """Feature: audio-synced-concurrent-gestures, Property 10: Phased composition reproduces standalone behavior.
 
     For any starting pose of the owned arm channels (4-7), running the phase
-    composition ``menacing_reach_lead_in()`` + ``menacing_reach_loop_body()`` x3
+    composition ``menacing_reach_lead_in()`` + ``menacing_reach_loop_body()`` x8
     + ``menacing_reach_return()`` issues the IDENTICAL ordered sequence of
     ``(channel, post-clamp angle)`` servo commands as the standalone
-    ``menacing_reach()`` gesture (reach, swing three times, retract). Both paths
-    are driven from the same reset starting pose, capturing every write at the
-    ``TrunkController.set_angle`` choke point, and the verified-pose override
-    leaves no residue after either run (Requirement 9.3).
+    ``menacing_reach()`` gesture (reach, swing eight times, retract), ON THE
+    SHARED ARM CHANNELS (4-7). Both paths are driven from the same reset
+    starting pose, capturing every write at the ``TrunkController.set_angle``
+    choke point, and the verified-pose override leaves no residue after either
+    run (Requirement 9.3).
+
+    The standalone gesture additionally performs a concurrent wrist flex on
+    channel 3 (absent from the phased ``brains`` path, driven by its own
+    isolated RNG); those channel-3 writes are filtered out of the standalone
+    stream before comparison. Because the wrist RNG is isolated from the shared
+    ``random`` stream, it does not perturb the swing draws, so the remaining
+    channel 4-7 sequence stays byte-identical between the two paths.
 
     Validates: Requirements 9.3
     """
-    standalone_commands = _record_menacing_reach(_run_standalone, start_angles)
+    standalone_commands = _drop_wrist(
+        _record_menacing_reach(_run_standalone, start_angles)
+    )
     phased_commands = _record_menacing_reach(_run_phased, start_angles)
 
     # Both paths delegate to the same reach/swing/retract primitives from the
-    # same starting pose, so every commanded (channel, angle) must match exactly
-    # and in the same order -- the move_to sweeps make these lists long.
+    # same starting pose, so every commanded (channel, angle) on channels 4-7
+    # must match exactly and in the same order -- the move_to sweeps make these
+    # lists long.
     assert phased_commands == standalone_commands, (
-        "phased composition diverged from standalone menacing_reach: "
+        "phased composition diverged from standalone menacing_reach (channels 4-7): "
         f"{len(phased_commands)} phased vs {len(standalone_commands)} standalone "
         f"commands; first mismatch at "
         f"{next((i for i, (a, b) in enumerate(zip(phased_commands, standalone_commands)) if a != b), 'n/a')}"
