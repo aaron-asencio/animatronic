@@ -10,11 +10,11 @@ Usage:
     python3 controller.py --action=<action_name>
 
 ARM gestures (channels 4–7):
-    wave, come, beckon, comeHere, menacingReach, yawnCover, facePalm
+    wave, beckon, comeHere, menacingReach, yawnCover, facePalm
 
 HEAD gestures (channels 0–1):
-    nod, lookAroundSmall, lookAroundRandom, neckEllipse,
-    swivelHead, shakeHead, shakeNo, smallShakeNo
+    yes, lookAroundSmall, lookAroundRandom, neckEllipse,
+    swivelHead, shakeHead, smallShakeNo
 
 COMPOSITE gestures (arm + head simultaneously):
     waveAndSwivelSmooth
@@ -48,7 +48,6 @@ def main(args):
     action_map = {
         # --- ARM gestures ---
         'wave':             mv.wave,
-        'come':             mv.come,
         'beckon':           mv.beckon,
         'comeHere':         mv.come_here,
         'menacingReach':    mv.menacing_reach,
@@ -56,13 +55,12 @@ def main(args):
         'facePalm':         mv.face_palm,
 
         # --- HEAD gestures ---
-        'nod':              mv.nod,
+        'yes':              mv.nod,
         'lookAroundSmall':  mv.look_around_small,
         'lookAroundRandom': mv.look_around_random,
         'neckEllipse':      mv.neck_ellipse,
         'swivelHead':       mv.swivel_head,
         'shakeHead':        mv.shake_head,
-        'no':               mv.shake_no,
         'smno':             mv.small_shake_no,
         'snuckUp':          mv.snuck_up,
         'awaken':           mv.awaken,
@@ -103,6 +101,6 @@ if __name__ == '__main__':
         description="Test a single animatronic gesture (no audio)."
     )
     parser.add_argument('--action', default=None,
-                        help='Gesture to perform (e.g. wave, nod, swivelHead).')
+                        help='Gesture to perform (e.g. wave, yes, swivelHead).')
     args = parser.parse_args()
     main(args)

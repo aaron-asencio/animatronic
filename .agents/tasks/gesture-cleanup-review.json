@@ -1,0 +1,7 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    "Non-blocking: README gesture-actions line still lists `comein`, which is not an action_map key. Pre-existing stale doc text, explicitly out of scope for this pass; noted only so it is not mistaken for a regression. No action required."
+  ],
+  "reviewDoc": "/home/aaron/workspace/animatronic-v2/.agents/tasks/gesture-cleanup-review.md"
+}
