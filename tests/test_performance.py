@@ -628,10 +628,22 @@ class FakeTrunkController:
         self.rest_calls = 0
         self.rested_channels: set = set()
 
-    async def return_to_rest(self) -> None:
-        """Record a safe-rest sweep of every configured channel to rest."""
+    async def return_to_rest(self, channels=None) -> None:
+        """Record a safe-rest sweep to rest, honouring an optional restriction.
+
+        Mirrors the real primitive's signature: with ``channels=None`` every
+        configured channel is rested; with a set/frozenset, only those channels
+        (intersected with the known channels) are rested.
+
+        Args:
+            channels: Optional set of channels to restrict the rest sweep to.
+                When None, every configured channel is rested.
+        """
         self.rest_calls += 1
-        self.rested_channels |= set(self.all_channels)
+        if channels is None:
+            self.rested_channels |= set(self.all_channels)
+        else:
+            self.rested_channels |= (set(self.all_channels) & set(channels))
 
 
 class FakeMovements:

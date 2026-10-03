@@ -662,16 +662,32 @@ class TrunkController:
     # Diagnostics & composite tests                                        #
     # ------------------------------------------------------------------ #
 
-    async def return_to_rest(self):
-        """Drive every configured servo to its safe REST_POSITION.
+    async def return_to_rest(self, channels=None):
+        """Drive configured servos to their safe REST_POSITION.
 
         Called between routines and — critically — after any error, so servos
         are never left energized against a jam. Moves gently (step-by-step via
         return_to_start) and never raises: a failure here must not mask the
         original error, and we still want to attempt every other servo.
+
+        Args:
+            channels: Optional set/frozenset of channel indices to restrict the
+                      rest sweep to. When None (the default) every channel in
+                      constants.REST_POSITIONS is rested, exactly as before.
+                      When a set is given, only those channels present in
+                      REST_POSITIONS are rested — so an arm-only response's
+                      cleanup can avoid moving the neck.
         """
-        print("return_to_rest: moving all servos to safe resting positions")
-        for servo_num, rest_angle in constants.REST_POSITIONS.items():
+        if channels is None:
+            rest_targets = dict(constants.REST_POSITIONS)
+        else:
+            rest_targets = {
+                ch: constants.REST_POSITIONS[ch]
+                for ch in channels
+                if ch in constants.REST_POSITIONS
+            }
+        print(f"return_to_rest: moving servos {sorted(rest_targets)} to safe resting positions")
+        for servo_num, rest_angle in rest_targets.items():
             try:
                 await self.return_to_start(servo_num, rest_angle, delay=0.03)
             except Exception as e:

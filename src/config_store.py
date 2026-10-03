@@ -44,6 +44,14 @@ VOICE_EFFECT_NAMES = (
 VOICE_STYLES_KEY = "voice_styles"
 VOICE_STYLES_PREVIOUS_KEY = "voice_styles_previous"
 
+# --- Scan-mode persistence --------------------------------------------------
+# Top-level tuning.json section + key for the scan-mode timeout, in minutes.
+SCAN_KEY = "scan"
+SCAN_TIMEOUT_KEY = "timeout_min"
+SCAN_TIMEOUT_DEFAULT_MIN = 60
+SCAN_TIMEOUT_MIN = 1
+SCAN_TIMEOUT_MAX = 120
+
 
 def _default_profile():
     """Return a fresh copy of the default jaw-tuning profile.
@@ -392,6 +400,58 @@ class ConfigStore:
                 effects = None
         return {"style": (str(style) if style else None), "effects": effects}
 
+    def load_scan_timeout(self):
+        """Load the scan-mode timeout in minutes, clamped to a safe range.
+
+        Reads the ``scan.timeout_min`` value from the Config_File. Any missing
+        file/section, corrupt content, or non-integer value yields the default
+        (``SCAN_TIMEOUT_DEFAULT_MIN``). Valid values are coerced to int and
+        clamped to ``[SCAN_TIMEOUT_MIN, SCAN_TIMEOUT_MAX]``. Never raises.
+
+        Returns:
+            The scan timeout in minutes as an int in [1, 120].
+        """
+        raw = self._load_raw()
+        section = raw.get(SCAN_KEY, {})
+        if not isinstance(section, dict):
+            return SCAN_TIMEOUT_DEFAULT_MIN
+        value = section.get(SCAN_TIMEOUT_KEY, SCAN_TIMEOUT_DEFAULT_MIN)
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            return SCAN_TIMEOUT_DEFAULT_MIN
+        return max(SCAN_TIMEOUT_MIN, min(SCAN_TIMEOUT_MAX, minutes))
+
+    def save_scan_timeout(self, minutes):
+        """Persist the scan-mode timeout in minutes, preserving other sections.
+
+        Validates/coerces ``minutes`` to an int and clamps it to
+        ``[SCAN_TIMEOUT_MIN, SCAN_TIMEOUT_MAX]`` before writing. The existing
+        raw JSON is loaded first so other top-level sections (``profiles``,
+        ``voice_styles``, ``voice_styles_previous``) are preserved.
+
+        Args:
+            minutes: The requested timeout in minutes. Non-int or out-of-range
+                     values are coerced/clamped rather than rejected.
+
+        Returns:
+            The clamped int that was persisted.
+
+        Raises:
+            ValueError: If ``minutes`` cannot be coerced to an int.
+        """
+        try:
+            clamped = int(minutes)
+        except (TypeError, ValueError):
+            raise ValueError("scan timeout must be an integer number of minutes")
+        clamped = max(SCAN_TIMEOUT_MIN, min(SCAN_TIMEOUT_MAX, clamped))
+
+        raw = self._load_raw()
+        raw[SCAN_KEY] = {SCAN_TIMEOUT_KEY: clamped}
+        self._write_raw(raw)
+        print(f"Scan timeout saved: {clamped} min")
+        return clamped
+
 
 # Module-level default instance + thin wrappers for simple call sites.
 _default_store = ConfigStore()
@@ -407,3 +467,24 @@ def load_profile(name):
         A mutable dict copy of the requested profile.
     """
     return _default_store.load_profile(name)
+
+
+def load_scan_timeout():
+    """Load the scan-mode timeout (minutes) via the default store.
+
+    Returns:
+        The scan timeout in minutes as an int in [1, 120].
+    """
+    return _default_store.load_scan_timeout()
+
+
+def save_scan_timeout(minutes):
+    """Persist the scan-mode timeout (minutes) via the default store.
+
+    Args:
+        minutes: The requested timeout in minutes (coerced/clamped to [1, 120]).
+
+    Returns:
+        The clamped int that was persisted.
+    """
+    return _default_store.save_scan_timeout(minutes)
