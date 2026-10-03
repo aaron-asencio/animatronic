@@ -1689,49 +1689,6 @@ class Movements:
             steps=50, delay=0.025,
         )
 
-    async def come(self):
-        """Beckon: raise arm, rotate palm up, curl elbow 3×, lower.
-
-        Channels: RT_SHOULDER_ROTATOR (7), RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5)
-
-        Sequence:
-        1. Raise shoulder to horizontal-ish position (0 → 40°).
-        2. Rotate forearm so palm faces upward (10 → 260°).
-        3. Curl the elbow 3 times to signal "come here" (0 → 70°, reverting).
-        4. Lower arm and rotate palm back down.
-        """
-        RT_SHOULDER_ROTATOR_MIN = 0
-        RT_SHOULDER_ROTATOR_MAX = 40
-        RT_ELBOW_ROTATE_MIN     = 10
-        RT_ELBOW_ROTATE_MAX     = 260
-        RT_ELBOW_TILT_MIN       = 0
-        RT_ELBOW_TILT_MAX       = 70
-
-        increasing = True
-
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.002, increasing)
-
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR,
-            RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-
-        for _ in range(3):
-            await self.trunkController.move(
-                constants.RT_ELBOW_TILT,
-                RT_ELBOW_TILT_MIN, RT_ELBOW_TILT_MAX, 0.005, True, self.DEFAULT_DELAY)
-
-        await asyncio.sleep(.2)
-
-        increasing = False
-        await self.trunkController.move_by_direction(
-            constants.RT_SHOULDER_ROTATOR,
-            RT_SHOULDER_ROTATOR_MIN, RT_SHOULDER_ROTATOR_MAX, 0.005, increasing)
-        await self.trunkController.move_by_direction(
-            constants.RT_ELBOW_ROTATOR,
-            RT_ELBOW_ROTATE_MIN, RT_ELBOW_ROTATE_MAX, 0.0025, increasing)
-
     # ================================================================== #
     # HEAD gestures  (channels: NECK_PAN (0), NECK_TILT (1))             #
     # Safe to gather with any ARM gesture.                                #
@@ -3025,4 +2982,3 @@ if __name__ == '__main__':
     # Quick interactive testing — uncomment the gesture you want to run.
     mv = Movements("Servo Movements")
     # asyncio.run(mv.wave())
-    # asyncio.run(mv.come())

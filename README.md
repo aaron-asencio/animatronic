@@ -152,8 +152,8 @@ Available actions:
 sudo .venv/bin/python src/controller.py --action=<action>
 ```
 
-Available gesture actions: `wave`, `yes`, `no`, `smno`,
-`slowScan`, `swivelHead`, `come`, `comein`, `neckEllipse`,
+Available gesture actions: `wave`, `yes`, `smno`,
+`slowScan`, `swivelHead`, `comein`, `neckEllipse`,
 `lookAroundSmall`.
 
 ### Run the face-palm concurrent movement demo

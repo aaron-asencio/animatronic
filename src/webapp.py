@@ -82,9 +82,9 @@ ROUTINE_ACTIONS = {
 }
 
 MOVEMENT_ACTIONS = {
-    'wave', 'come', 'comeHere', 'beckon', 'menacingReach', 'yawnCover',
-    'nod', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
-    'swivelHead', 'shakeHead', 'no', 'smno',
+    'wave', 'comeHere', 'beckon', 'menacingReach', 'yawnCover',
+    'yes', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
+    'swivelHead', 'shakeHead', 'smno',
     'handVisor',
 }
 
@@ -109,10 +109,11 @@ VOICE_EFFECTS = ['pitch', 'distortion', 'echo', 'reverb', 'tremolo',
 
 # Pools the automation loops draw from (mirrors the old Node-RED Switch nodes).
 ROUTINE_POOL = ['blah', 'startParty', 'krusty']
-# Only valid MOVEMENT_ACTIONS — the old Node-RED Switch used 'yes'/'no' labels,
-# but the controller's actual actions are 'nod'/'no'. Using canonical names here.
-MOVEMENT_POOL = ['no', 'lookAroundSmall',
-                 'neckEllipse', 'swivelHead', 'come', 'wave']
+# Only valid MOVEMENT_ACTIONS. The head-nod action is now 'yes' (renamed from
+# the old 'nod'); the redundant 'no' head-shake action was removed in favor of
+# 'shakeHead'. Using canonical controller action names here.
+MOVEMENT_POOL = ['yes', 'lookAroundSmall',
+                 'neckEllipse', 'swivelHead', 'wave']
 
 # ── Automation state ─────────────────────────────────────────────────────────
 automation = {
