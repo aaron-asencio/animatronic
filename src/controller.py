@@ -63,6 +63,7 @@ def main(args):
         'neckEllipse':      mv.neck_ellipse,
         'swivelHead':       mv.swivel_head,
         'shakeHead':        mv.shake_head,
+        'snapHead':         mv.snap_head,
         'smno':             mv.small_shake_no,
         'snuckUp':          mv.snuck_up,
         'awaken':           mv.awaken,

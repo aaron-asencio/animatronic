@@ -3438,6 +3438,56 @@ class Movements:
             steps=45, delay=0.03,
         )
 
+    async def snap_head(self):
+        """Snap the head down-and-up on the tilt axis, then settle to rest.
+
+        A quick two-beat tilt snap on a single joint (NECK_TILT: lower = head
+        up/back, higher = chin down/forward):
+
+            1. NECK_TILT 90 -> 50 at speed 5   (ease the head back/up)
+               then hold the head-back pose for 0.5s
+            2. NECK_TILT 50 -> 110 at speed 8  (snap forward past level, faster)
+            3. NECK_TILT -> rest (90) at speed 5 (settle back to level)
+
+        All three target angles (50, 110, 90) sit inside the NECK_TILT
+        SAFE_LIMITS (30, 160), so no verified_pose_override is needed. Each leg
+        is a single move_to whose step count is sized from that leg's own travel
+        via speed_to_steps at the shared DELAY, so each runs at its intended
+        speed. The gesture ends at REST_POSITIONS[NECK_TILT]; controller.py also
+        drives everything home on the error path.
+
+        Channels: NECK_TILT (1).
+        """
+        DELAY = 0.02
+        TILT_BACK = 50     # head up/back (below level)
+        TILT_FWD = 110     # chin down/forward (above level)
+        TILT_REST = constants.REST_POSITIONS[constants.NECK_TILT]  # 90 = level
+
+        # Current tilt (default to rest) so the first leg is sized from where
+        # the joint actually starts.
+        start = getattr(
+            self.trunkController.kit.servo[constants.NECK_TILT], "angle", None)
+        if start is None:
+            start = TILT_REST
+
+        # 1. Ease the head back/up: 90 -> 50 at speed 5.
+        back_steps = speed_to_steps(abs(TILT_BACK - start), 5, delay=DELAY)
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: TILT_BACK}, steps=back_steps, delay=DELAY)
+
+        # Hold the head-back pose for a beat before snapping forward.
+        await asyncio.sleep(0.5)
+
+        # 2. Snap forward past level: 50 -> 110 at speed 8 (faster).
+        fwd_steps = speed_to_steps(abs(TILT_FWD - TILT_BACK), 8, delay=DELAY)
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: TILT_FWD}, steps=fwd_steps, delay=DELAY)
+
+        # 3. Settle back to level rest: 110 -> 90 at speed 5.
+        rest_steps = speed_to_steps(abs(TILT_REST - TILT_FWD), 5, delay=DELAY)
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: TILT_REST}, steps=rest_steps, delay=DELAY)
+
 
 if __name__ == '__main__':
     # Quick interactive testing — uncomment the gesture you want to run.
