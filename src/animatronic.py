@@ -34,6 +34,7 @@ from performance import (
     PerformanceDefinition,
     PerformanceRunner,
     PerformanceStep,
+    PlaybackController,
 )
 import nap_signal
 import constants
@@ -524,17 +525,26 @@ class Animatronic:
         self.run_action_and_audio("_do_awaken", self.music[26])  # awakened.wav
 
     def sneeze(self):
-        """Sneeze reaction — yawn cover-mouth arm, then a head snap 5s in.
+        """Sneeze reaction — cover-mouth arm held until sneeze.wav ends, head snap 5s in.
 
-        Reuses the yawn arm gesture (``Movements.yawn_cover``) paired with
-        ``sneeze.wav`` played UNGATED (``audio_delay=0.0`` default): motion and
-        audio both start at t=0 and the jaw syncs to the clip's amplitude via
-        AudioPlayer as normal. Unlike ``yawn`` there is no ``_YC_GATE_LEAD`` /
-        gate lead-in. Then, 5 seconds after the routine/audio starts, the
-        ``snapHead`` gesture (``Movements.snap_head``) fires — see ``_do_sneeze``
-        for the ordering.
+        Reuses the yawn cover-mouth arm phases (``Movements.yawn_cover_*``)
+        paired with ``sneeze.wav`` played UNGATED: the arm begins rising at t≈0
+        the instant audio starts (no gate, no ``_YC_MOTION_DELAY``), the hand is
+        HELD at the mouth for the full ``sneeze.wav`` duration, then lowers the
+        moment the audio finishes. Concurrently, 5 seconds after audio start, the
+        ``snapHead`` gesture (``Movements.snap_head``) fires on NECK_TILT — see
+        ``_do_sneeze`` for the ordering.
+
+        Driven by a ``PlaybackController`` (the project's real playback-
+        completion signal: its ``is_active()`` is ``True`` until the WAV thread
+        drains) rather than ``run_action_and_audio``, so the hold tracks actual
+        audio completion instead of a hardcoded sleep. ``asyncio.run`` is called
+        here at the top of the call stack (never inside a running loop).
         """
-        self.run_action_and_audio("_do_sneeze", self.music[35])  # sneeze.wav
+        mv = Movements("Animatronic")
+        audio_path = os.path.join(self._resolve_audio_dir(), self.music[35])  # sneeze.wav
+        playback = PlaybackController(audio_path)
+        asyncio.run(self._do_sneeze(mv, playback))
 
     @staticmethod
     def _audio_duration_seconds(audio_file, default=7.0):
@@ -3144,32 +3154,83 @@ class Animatronic:
         duration = self._audio_duration_seconds(self.music[26])  # awakened.wav
         await mv.awaken(duration=duration)
 
-    async def _do_sneeze(self):
-        """Sneeze gesture coroutine: yawn-cover arm, then snapHead 5s in.
+    async def _do_sneeze(self, mv, playback):
+        """Sneeze gesture coroutine: cover-mouth hold until audio ends + snapHead 5s in.
 
-        Ungated (see ``sneeze``): this coroutine and the ``sneeze.wav`` audio
-        thread both start at t=0, so "5 seconds after the routine starts" is
-        measured from audio start. The two gestures run SEQUENTIALLY, never
-        concurrently:
+        Ungated and audio-driven. ``playback.start()`` begins ``sneeze.wav`` and
+        ``start`` is anchored immediately after, so t≈0 == audio start. Two
+        sub-coroutines run CONCURRENTLY under one ``asyncio.gather`` over DISJOINT
+        channels (the ``Movements.awaken`` pattern): the arm hold owns {4,5,6,7},
+        ``snap_head`` owns NECK_TILT {1}.
 
-            1. mark ``start`` at t=0 (== audio start, since ungated);
-            2. ``yawn_cover`` reuses the yawn arm gesture AS-IS (its own
-               verified-pose override), returning ALL channels — arm (4-7) and
-               neck (0,1) — to rest when it completes;
-            3. pad out to the 5s mark (``max(0.0, ...)`` so if ``yawn_cover``
-               ever ran past 5s, ``snap_head`` fires immediately after it rather
-               than scheduling a negative sleep);
-            4. ``snap_head`` drives NECK_TILT only.
+        hold_cover():
+            1. ``yawn_cover_lead_in_settled`` raises the hand to the mouth. There
+               is NO pre-motion delay — the ungated, non-delayed ``_settled``
+               lead-in centers the head and folds the hand with no
+               ``_YC_MOTION_DELAY`` hold and no gate-lead sleep, so the FIRST arm
+               servo write happens at t≈0 the instant audio starts.
+            2. HOLD at the mouth: ``while playback.is_active(): await
+               yawn_cover_loop_body()`` — the hand stays folded (no servo re-
+               commanded) for the full ``sneeze.wav`` duration, driven by the
+               real playback-completion signal (``is_active()`` is ``True`` until
+               the WAV thread drains), NOT a hardcoded sleep.
+            3. ``yawn_cover_return`` lowers the hand to rest and releases the
+               verified-pose override the instant audio finishes.
 
-        Because ``yawn_cover`` finishes and releases every channel (including
-        NECK_TILT) before ``snap_head`` begins, there is no channel contention
-        even though both touch the neck.
+        head_snap():
+            sleeps until the 5s mark measured from audio start, then runs
+            ``snap_head`` (NECK_TILT only, ends at rest 90).
+
+        Shorter-than-5s edge case (documented ordering): if ``sneeze.wav`` is
+        shorter than 5s, the hold loop exits and the hand lowers when audio ends
+        — we do NOT artificially hold to 5s. ``head_snap`` independently still
+        sleeps to the 5s mark and fires ``snap_head`` then, on a now-idle neck.
+        Because the two sub-coroutines own disjoint channels, even a marginal
+        overlap of the arm return and the neck snap is safe, and the ``gather``
+        waits for BOTH so the routine always runs through the 5s snap.
+
+        Safety: every servo write still goes through ``move_to``/``set_angle``
+        (clamped to ``SAFE_LIMITS`` / the scoped ``_YAWN_COVER_OVERRIDE``). On
+        any exception, and always on completion, everything is swept to safe rest
+        via ``return_to_rest`` so no servo is left energized; the audio thread is
+        joined (``wait_finished``) so the daemon track is never killed mid-clip.
+        ``main()`` already wraps the dispatch in ``servo_lock()``, so this
+        routine does not take the lock itself.
         """
-        mv = Movements("Animatronic")
+        playback.start()
         start = time.monotonic()
-        await mv.yawn_cover()
-        await asyncio.sleep(max(0.0, 5.0 - (time.monotonic() - start)))
-        await mv.snap_head()
+        print(f"Playing audio: {playback.audio_path} (ungated, arm raises at t≈0)")
+
+        async def hold_cover():
+            # Non-delayed lead-in: first arm servo write at t≈0, no gate/motion
+            # delay. Hold at the mouth while audio plays, lower when it ends.
+            await mv.yawn_cover_lead_in_settled()
+            while playback.is_active():
+                await mv.yawn_cover_loop_body()
+            await mv.yawn_cover_return()
+
+        async def head_snap():
+            # Fire snapHead at ~5s after audio start, regardless of whether the
+            # hand is still up (disjoint channel: NECK_TILT only).
+            await asyncio.sleep(max(0.0, 5.0 - (time.monotonic() - start)))
+            await mv.snap_head()
+
+        try:
+            await asyncio.gather(
+                asyncio.create_task(hold_cover()),
+                asyncio.create_task(head_snap()),
+            )
+            # Sweep any residual channel home on normal completion.
+            await mv.trunkController.return_to_rest()
+        except Exception:
+            # SAFETY: a raised gesture must never leave a servo energized —
+            # drive everything to safe rest before re-raising.
+            await mv.trunkController.return_to_rest()
+            raise
+        finally:
+            # Join the daemon audio thread so sneeze.wav is never killed mid-clip
+            # when asyncio.run unwinds and the servo-lock context tears down.
+            playback.wait_finished(timeout=2)
 
     async def _do_look_around_random(self):
         # Gesture-only (no audio): idly scan the room, then return to rest. Run
