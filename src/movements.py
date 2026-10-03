@@ -40,7 +40,7 @@ Dependency chain
 import asyncio
 import contextlib
 import random
-from trunkcontroller import TrunkController
+from trunkcontroller import TrunkController, speed_to_steps
 import constants
 
 
@@ -1742,6 +1742,86 @@ class Movements:
                 await asyncio.sleep(0.1)
                 # Return to rest (concurrently) before the next rep / finish.
                 await self.trunkController.move_to(rest, steps=40, delay=0.02)
+
+    async def fan_butt(self):
+        """Fan butt: fan the hand at the side to waft away an unpleasant smell.
+
+        Channels: RT_WRIST_TILT (3), RT_ELBOW_TILT (5), RT_SHOULDER_ROTATOR (7)
+                  (the three fanning joints). NECK_PAN (0), NECK_TILT (1),
+                  RT_ELBOW_ROTATOR (4) and RT_SHOULDER_TILT (6) are set ONCE in
+                  the start pose and are not driven during the fanning loop.
+
+        The three fan joints oscillate between an UP keyframe (shoulder
+        rotator=10, elbow tilt=5, wrist tilt=10) and a DOWN keyframe (shoulder
+        rotator=0, elbow tilt=60, wrist tilt=160) for 3 reps (one up + one down
+        = one rep), then return toward rest. All three joints move at SPEED 8;
+        because they share one speed they go in a SINGLE move_to per stroke over
+        one shared step count, sized from the LONGEST-travel joint (the wrist,
+        150 deg) via speed_to_steps so they arrive together. The fan channels
+        (3, 5, 7) are disjoint, so one move_to drives them concurrently.
+
+        All commanded angles sit inside the global SAFE_LIMITS (wrist floor 10,
+        shoulder-rotator floor 0 clamp cleanly), so no verified_pose_override is
+        needed. Every write still goes through move_to -> set_angle clamping,
+        and the gesture ends by moving the fan joints back toward REST_POSITIONS;
+        controller.py additionally drives everything home on the error path.
+        """
+        FAN_SPEED = 8
+        DELAY = 0.02
+
+        # Start pose: settle all seven joints before fanning begins.
+        start_pose = {
+            constants.NECK_PAN:            90,
+            constants.NECK_TILT:           85,
+            constants.RT_WRIST_TILT:       90,
+            constants.RT_ELBOW_ROTATOR:    25,
+            constants.RT_ELBOW_TILT:       60,
+            constants.RT_SHOULDER_TILT:    55,
+            constants.RT_SHOULDER_ROTATOR: 0,
+        }
+
+        # Two fan keyframes (the three disjoint fan joints only).
+        up = {
+            constants.RT_SHOULDER_ROTATOR: 10,
+            constants.RT_ELBOW_TILT:       5,
+            constants.RT_WRIST_TILT:       10,
+        }
+        down = {
+            constants.RT_SHOULDER_ROTATOR: 0,
+            constants.RT_ELBOW_TILT:       60,
+            constants.RT_WRIST_TILT:       160,
+        }
+
+        # Size each stroke from the LONGEST joint's travel so all three arrive
+        # together at speed 8. Both legs (up<->down) share the same longest
+        # travel: the wrist swings 10<->160 = 150 deg (elbow 55, rotator 10).
+        up_steps = speed_to_steps(
+            max(abs(down[ch] - up[ch]) for ch in up), FAN_SPEED, delay=DELAY)
+        down_steps = speed_to_steps(
+            max(abs(up[ch] - down[ch]) for ch in down), FAN_SPEED, delay=DELAY)
+
+        # Settle the start pose at the same speed, sized from its longest leg
+        # (the elbow-rotator move 150->25, etc. depend on current pose; a modest
+        # fixed settle is fine, but keep it one move_to).
+        await self.trunkController.move_to(start_pose, steps=40, delay=DELAY)
+
+        # Fan: 3 reps of up then down, all three joints concurrently per stroke.
+        for _ in range(3):
+            await self.trunkController.move_to(up, steps=up_steps, delay=DELAY)
+            await self.trunkController.move_to(down, steps=down_steps, delay=DELAY)
+
+        # Return the fan joints toward rest (REST_POSITIONS: shoulder rotator 0,
+        # elbow tilt 5, wrist 90). Neck / elbow-rotator / shoulder-tilt stay
+        # where the start pose set them; controller.py's return_to_rest settles
+        # everything to full rest after the gesture / on error.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: 0,
+                constants.RT_ELBOW_TILT:       5,
+                constants.RT_WRIST_TILT:       90,
+            },
+            steps=40, delay=DELAY,
+        )
 
     async def beckon(self):
         """Beckon "come here": raise the arm close to the body, curl the forearm 2-3x.

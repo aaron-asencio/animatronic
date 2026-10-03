@@ -36,6 +36,70 @@ SERVO_PWM_FREQ_TOLERANCE = 5  # Hz
 SERVO_SIM = os.environ.get('SERVO_SIM') == '1'
 
 
+# ---------------------------------------------------------------------------
+# Movement speed dial (see the "Movement speed (1-10 dial)" section of the
+# animation-vocabulary steering).
+#
+# Speed is an angular velocity in degrees/second on a 1-10 dial. The scale is
+# GEOMETRIC -- each whole step multiplies the velocity by a constant ratio --
+# anchored so speed 1 = 20 deg/s (very slow, deliberate) and speed 10 =
+# 500 deg/s (a near-instant snap), with the natural/default pace around 5-6.
+# Defining speed as a velocity (not an abstract knob) is what lets a plain
+# description like "move 45 deg at speed 6" map to one reproducible motion
+# independent of travel distance.
+# ---------------------------------------------------------------------------
+SPEED_MIN = 1
+SPEED_MAX = 10
+SPEED_MIN_DPS = 20.0    # deg/s at speed 1 (slowest)
+SPEED_MAX_DPS = 500.0   # deg/s at speed 10 (fastest)
+# Constant per-step velocity multiplier so the dial is geometric (~1.43).
+SPEED_RATIO = (SPEED_MAX_DPS / SPEED_MIN_DPS) ** (1.0 / (SPEED_MAX - SPEED_MIN))
+
+
+def speed_to_deg_per_sec(speed):
+    """Convert a 1-10 speed-dial value to an angular velocity in degrees/sec.
+
+    The dial is geometric: ``SPEED_MIN_DPS * SPEED_RATIO ** (speed - 1)``, so
+    each whole step multiplies the velocity by ``SPEED_RATIO`` (~1.43). ``speed``
+    may be fractional and is clamped to ``[SPEED_MIN, SPEED_MAX]``.
+
+    Args:
+        speed: Speed-dial value in [1, 10] (fractional allowed); clamped.
+
+    Returns:
+        Angular velocity in degrees per second (float).
+    """
+    speed = max(SPEED_MIN, min(SPEED_MAX, speed))
+    return SPEED_MIN_DPS * SPEED_RATIO ** (speed - 1)
+
+
+def speed_to_steps(distance_deg, speed, delay=0.02, min_steps=1):
+    """Size a ``move_to`` ``steps`` count from a travel distance and speed dial.
+
+    Speed sets the pace, distance sets the duration, and the two together set
+    ``steps`` at a fixed per-step ``delay``::
+
+        duration_seconds = abs(distance_deg) / speed_to_deg_per_sec(speed)
+        steps            = round(duration_seconds / delay)
+
+    Always pass the SAME ``delay`` here and to the matching ``move_to`` call so
+    the commanded motion runs at the intended pace.
+
+    Args:
+        distance_deg: Travel distance in degrees (sign ignored). For a
+            multi-joint ``move_to``, size from the LONGEST joint's travel so
+            they arrive together.
+        speed: Speed-dial value in [1, 10] (fractional allowed); clamped.
+        delay: Per-step delay in seconds; must match the ``move_to`` call.
+        min_steps: Floor so a tiny move still runs at least one step.
+
+    Returns:
+        The ``steps`` count (int), at least ``min_steps``.
+    """
+    duration = abs(distance_deg) / speed_to_deg_per_sec(speed)
+    return max(min_steps, int(round(duration / delay)))
+
+
 def _ease_in_out(t):
     """Smoothstep easing: map linear progress t in [0, 1] to an S-curve.
 
