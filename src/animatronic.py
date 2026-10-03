@@ -40,7 +40,16 @@ import constants
 from range_sensor import ApproachDetector
 from vision_models import Detection, TrackingConfig
 from tracking_controller import select_target, compute_offset, next_neck_targets
-from detection_routine_map import DetectionRoutineMap
+from detection_routine_map import (
+    DetectionRoutineMap,
+    ARM_ONLY_CHANNELS,
+    SCAN_GESTURE_CHANNELS,
+    SCAN_SAFE_ARM_ACTIONS,
+    ScanActionKind,
+    choose_scan_action,
+    scan_rules,
+    DEFAULT_DOG_LABEL,
+)
 import asyncio
 import threading
 import argparse
@@ -2485,6 +2494,381 @@ class Animatronic:
                 name = constants.servos.get(channel, f"ch{channel}")
                 print(f"[tracking] could not recenter {name}: {e}")
 
+    # ------------------------------------------------------------------ #
+    # Scan — a MODE (continuous neck tracker + concurrent arm-only responder) #
+    # ------------------------------------------------------------------ #
+
+    def scan(
+        self,
+        camera_url=DEFAULT_CAMERA_URL,
+        timeout_seconds=None,
+        max_step=None,
+        deadband=None,
+        conf=None,
+        scan_timeout=None,
+        aim_frac=None,
+        tilt_center=None,
+        tilt_min=None,
+        tilt_max=None,
+        settle_gain=None,
+    ):
+        """SCAN mode: continuously neck-track a person while running arm-only responses.
+
+        A Mode (per the animation vocabulary) that runs until interrupted. Scan
+        layers two behaviours on DISJOINT servo groups so they run concurrently:
+
+        * **The neck tracker** owns the Neck_Group (channels
+          ``NECK_PAN``/``NECK_TILT`` = 0/1). It reads Detections from
+          Camera_Service and drives the neck to follow the Target_Person exactly
+          like Tracking_Mode, running a leave-frame Scan_Sweep when no one is in
+          frame. The tracker NEVER winds down to run a response — it keeps
+          holding the head on the person the entire time.
+        * **The responder** fires an arm-only Gesture or Routine (Arm_Group
+          channels, see ``ARM_ONLY_CHANNELS``) whenever a detection rule allows,
+          chosen by the weighted picker ``choose_scan_action`` (Gestures 5x more
+          likely than Routines). Only ONE response is ever in flight at a time.
+
+        Because the two behaviours own disjoint channels they can run at the same
+        time without a servo conflict — the arm responds while the head keeps
+        tracking. Scan carries audio (its Routine responses drive the jaw motor),
+        so like any Routine it owns the jaw/audio path and interrupts a live mic
+        Stream.
+
+        Lock model (IMPORTANT): like napping/awake/tracking this method takes NO
+        lock itself. ``main()`` wraps the call in a single ``with servo_lock():``
+        (the responder may drive the whole arm + jaw/audio, so scan needs the
+        whole-robot lock, unlike tracking's Neck_Group-only lock).
+
+        Dog handling: the person+dog rule logs a ``walkYourDog`` placeholder line
+        to the console (no dedicated gesture/routine yet) and otherwise dispatches
+        the SAME weighted arm-only response as a plain person (per the operator's
+        instruction to treat it the same but log it).
+
+        Wind-down: the loop stops on a ``nap_signal`` stop request (a web action
+        preempting the Mode) OR when ``timeout_seconds`` elapses. On wind-down it
+        cancels and awaits any in-flight response, then recenters the neck. The
+        same recenter happens on any loop error (the ``except`` backstop below).
+
+        Args:
+            camera_url: Base URL of Camera_Service (default
+                ``http://localhost:8001``).
+            timeout_seconds: Seconds before the timeout winds the Mode down.
+                ``None`` means no timeout (run until an external stop).
+            max_step, deadband, conf, scan_timeout, aim_frac, tilt_center,
+            tilt_min, tilt_max, settle_gain: Neck-tracker tuning forwarded to
+                ``TrackingConfig`` (same meaning and clamping as ``tracking()``).
+                Each ``None`` uses the ``TrackingConfig`` default.
+        """
+        # Build the TrackingConfig exactly like tracking() (dataclass defaults
+        # fill any None; __post_init__ clamps each value into its safe range).
+        cfg_kwargs = {}
+        if max_step is not None:
+            cfg_kwargs["max_step_deg"] = max_step
+        if deadband is not None:
+            cfg_kwargs["deadband_frac_w"] = deadband
+            cfg_kwargs["deadband_frac_h"] = deadband
+        if conf is not None:
+            cfg_kwargs["conf_threshold"] = conf
+        if scan_timeout is not None:
+            cfg_kwargs["scan_timeout_s"] = scan_timeout
+        if aim_frac is not None:
+            cfg_kwargs["aim_frac_h"] = aim_frac
+        if tilt_center is not None:
+            cfg_kwargs["tilt_center_deg"] = tilt_center
+        if tilt_min is not None:
+            cfg_kwargs["tilt_min_deg"] = tilt_min
+        if tilt_max is not None:
+            cfg_kwargs["tilt_max_deg"] = tilt_max
+        if settle_gain is not None:
+            cfg_kwargs["settle_gain"] = settle_gain
+        cfg = TrackingConfig(**cfg_kwargs)
+
+        routine_map = DetectionRoutineMap(scan_rules())
+
+        # One shared Movements instance backs every response callable so the arm
+        # adapters share a single TrunkController (same pattern as the Routines).
+        mv = Movements("Animatronic")
+
+        # Map each ENABLED allowlist name to its arm-only callable. This stays in
+        # lockstep with SCAN_SAFE_ARM_ACTIONS (burp commented out in both). The
+        # Performance responses build their arm-only variant (neck spec dropped)
+        # and rest ONLY the arm channels via rest_channels so neck 0/1 are left
+        # for the tracker.
+        scan_responses = {
+            'beckon':   lambda: mv.beckon(),
+            'comeHere': lambda: mv.come_here(),
+            'wave':     lambda: mv._wave_arm(include_neck=False),
+            'brains':   lambda: self._run_scan_performance(
+                self._brains_performance(mv, scan=True), mv
+            ),
+            'hypnotic': lambda: self._run_scan_performance(
+                self._hypnotic_performance(mv, scan=True), mv
+            ),
+            # 'burp' intentionally omitted — head-coupled, see SCAN_SAFE_ARM_ACTIONS.
+        }
+
+        # Clear any stale stop request from a previous Mode run (mirrors
+        # napping/awake/tracking) so we start clean.
+        nap_signal.clear_stop()
+
+        client = CameraClient(base_url=camera_url)
+        deadline = (
+            time.monotonic() + max(1, timeout_seconds)
+            if timeout_seconds is not None
+            else None
+        )
+        print(
+            f"[scan] entering scan mode (camera {client.base_url}, "
+            f"timeout {timeout_seconds}s)"
+        )
+
+        try:
+            asyncio.run(
+                self._run_scan_loop(
+                    client, cfg, routine_map, scan_responses, mv, deadline
+                )
+            )
+            print("[scan] wound down")
+        except Exception as e:
+            # Any loop error: recenter the neck and exit cleanly. The loop helper
+            # already recenters in its own finally, but this is the final
+            # backstop if asyncio.run itself raised before/after that path.
+            print(f"[scan] error during scan loop: {e}")
+            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
+        finally:
+            # Clear the stop signal on exit so the next Mode starts clean and the
+            # requesting web-app action can proceed once the servo lock frees.
+            nap_signal.clear_stop()
+
+    async def _run_scan_loop(
+        self, client, cfg, routine_map, scan_responses, mv, deadline
+    ):
+        """Neck-track continuously while running one arm-only response at a time.
+
+        The neck tracker is identical to ``_run_tracking_loop`` — it owns ONLY
+        channels 0/1, reuses ``get_detections``/``select_target``/
+        ``compute_offset``/``next_neck_targets`` + ``set_angle`` on
+        ``NECK_PAN``/``NECK_TILT``, and runs ``_run_scan_sweep`` verbatim when no
+        target is present. Unlike tracking, the tracker NEVER winds down to run a
+        response: the response runs CONCURRENTLY on the disjoint Arm_Group.
+
+        Responder: ``self._active`` holds ``(task, rule)`` for the single
+        in-flight response (``None`` when idle). Each iteration asks
+        ``routine_map.select_action`` which rule — if any — may fire. When idle
+        and a rule fired, the person+dog rule logs the ``walkYourDog``
+        placeholder, then a weighted ``choose_scan_action()`` name is dispatched
+        as a concurrent task. The loop only POLLS ``task.done()`` — it never
+        awaits the response — so the neck keeps stepping across the whole
+        response. When the task finishes its result is checked (errors logged)
+        and the rule's cooldown starts via ``mark_completed``.
+
+        Wind-down (strict order in ``finally``): (1) cancel + await any in-flight
+        response task; (2) recenter the neck to ``cfg.tilt_center_deg``; (3)
+        return. The loop breaks on a ``nap_signal`` stop request (checked at the
+        top of each iteration) OR when the deadline elapses.
+
+        Args:
+            client: A ``CameraClient`` for ``GET /detections``.
+            cfg: The ``TrackingConfig`` neck tuning.
+            routine_map: The ``DetectionRoutineMap`` (built from ``scan_rules()``)
+                evaluated each iteration to decide whether a response may fire.
+            scan_responses: Dict mapping an allowlisted action name to a 0-arg
+                callable returning the response coroutine.
+            mv: The shared ``Movements`` instance (its ``trunkController`` is used
+                for the fail-closed arm rest in ``_dispatch_scan_response``).
+            deadline: Monotonic time at which the timeout fires, or ``None`` for
+                no timeout.
+        """
+        trunk = Movements.trunkController
+
+        # Seed the local neck angles like the tracking loop: pan from global rest
+        # (centered), tilt from the tracking tilt center (level gaze).
+        cur_pan = float(constants.REST_POSITIONS[constants.NECK_PAN])
+        cur_tilt = float(cfg.tilt_center_deg)
+
+        # Drive the neck to the start pose up front (every write clamped).
+        trunk.set_angle(constants.NECK_PAN, cur_pan)
+        cur_tilt = trunk.set_angle(constants.NECK_TILT, cur_tilt)
+
+        # The single in-flight arm-only response: (task, rule) or None.
+        self._active = None
+        try:
+            while True:
+                # Wind down on an external stop request (a web action preempting
+                # the Mode) at the top of each iteration.
+                if nap_signal.stop_requested():
+                    print("[scan] stop requested -> wound down")
+                    break
+                # Wind down on timeout.
+                if deadline is not None and time.monotonic() >= deadline:
+                    print("[scan] timeout -> wound down")
+                    break
+
+                detections, frame_w, frame_h = client.get_detections()
+
+                # Responder bookkeeping. Evaluate on the SAME detections used for
+                # tracking so a response may fire whether we are actively
+                # tracking or sweeping.
+                rule = routine_map.select_action(detections, time.monotonic())
+                if self._active is None and rule is not None:
+                    if DEFAULT_DOG_LABEL in rule.required_classes:
+                        # No walkYourDog gesture/routine yet: treat the same as a
+                        # person but log the placeholder for testing (per spec).
+                        print("[scan] person+dog detected (walkYourDog placeholder)")
+                    name = choose_scan_action()
+                    self._active = (
+                        asyncio.create_task(
+                            self._dispatch_scan_response(name, scan_responses, mv)
+                        ),
+                        rule,
+                    )
+                elif self._active is not None and self._active[0].done():
+                    task, fired_rule = self._active
+                    self._active = None
+                    try:
+                        task.result()
+                    except Exception as e:
+                        print(f"[scan] response failed: {e}")
+                    # Start the rule's cooldown measured from completion so the
+                    # same condition cannot immediately re-fire.
+                    routine_map.mark_completed(fired_rule, time.monotonic())
+
+                # Neck tracker (owns 0/1 only). Hold the head on the person the
+                # whole time — the response runs concurrently on the arm.
+                if frame_w <= 0 or frame_h <= 0:
+                    await asyncio.sleep(self._TRACKING_LOOP_PERIOD_S)
+                    continue
+
+                target = select_target(detections, frame_w, frame_h)
+
+                if target is None:
+                    # No Target_Person: run the leave-frame Scan_Sweep verbatim.
+                    reacquired, cur_pan = await self._run_scan_sweep(
+                        client, cfg, trunk, cur_pan
+                    )
+                    if reacquired is None:
+                        # External stop mid-sweep — wind down.
+                        print("[scan] stop requested -> wound down")
+                        break
+                    # Whether a person reappeared or the sweep timed out, scan
+                    # keeps running (unlike tracking, scan never ends on a sweep
+                    # timeout) — resume on the next iteration.
+                    continue
+
+                offset = compute_offset(target, frame_w, frame_h, cfg)
+                targets = next_neck_targets(
+                    offset, cur_pan, cur_tilt, cfg, frame_w, frame_h
+                )
+
+                if constants.NECK_PAN in targets:
+                    cur_pan = trunk.set_angle(
+                        constants.NECK_PAN, targets[constants.NECK_PAN]
+                    )
+                if constants.NECK_TILT in targets:
+                    cur_tilt = trunk.set_angle(
+                        constants.NECK_TILT, targets[constants.NECK_TILT]
+                    )
+
+                await asyncio.sleep(self._TRACKING_LOOP_PERIOD_S)
+        finally:
+            # Strict wind-down order: (1) cancel + await the in-flight response so
+            # the arm task is fully stopped and its cleanup has run; (2) recenter
+            # the neck to the tracking tilt center; (3) return.
+            if self._active is not None:
+                self._active[0].cancel()
+                await asyncio.gather(self._active[0], return_exceptions=True)
+                self._active = None
+            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
+
+    async def _dispatch_scan_response(self, name, scan_responses, mv):
+        """Run one allowlisted arm-only response, fail-closed on a Gesture.
+
+        Membership-guard: ``name`` must be a key in ``scan_responses`` (and thus
+        in ``SCAN_SAFE_ARM_ACTIONS``). An absent name is logged and ignored — the
+        name is never passed to ``getattr``/``eval``/``exec``/shell.
+
+        Gesture subset guard (fail-closed): for a Gesture
+        (``SCAN_SAFE_ARM_ACTIONS[name] is ScanActionKind.GESTURE``) the gesture's
+        declared channel footprint ``SCAN_GESTURE_CHANNELS[name]`` must be a
+        subset of ``ARM_ONLY_CHANNELS`` so it can never command a neck channel
+        the tracker owns. A missing or non-subset entry is logged and the
+        response is skipped — it never crashes the loop.
+
+        On an exception from a Gesture (which may have died before lowering the
+        arm) a best-effort ``return_to_rest`` restricted to ``ARM_ONLY_CHANNELS``
+        runs so the arm is not left energized, then the error is re-raised so the
+        loop logs it. Performance (Routine) responses rest the arm themselves via
+        the ``rest_channels=ARM_ONLY_CHANNELS`` cleanup, so they are not re-rested
+        here.
+
+        Args:
+            name: The chosen allowlisted action name.
+            scan_responses: The name -> 0-arg response-callable map.
+            mv: The shared ``Movements`` instance (for the fail path's arm rest).
+        """
+        if name not in scan_responses:
+            print(f"[scan] REJECTED response '{name}': not in scan_responses - skipped")
+            return
+
+        kind = SCAN_SAFE_ARM_ACTIONS.get(name)
+        is_gesture = kind is ScanActionKind.GESTURE
+        if is_gesture:
+            channels = SCAN_GESTURE_CHANNELS.get(name)
+            if channels is None or not channels <= ARM_ONLY_CHANNELS:
+                print(
+                    f"[scan] REJECTED gesture '{name}': channel set {channels} "
+                    f"is not a subset of ARM_ONLY_CHANNELS {set(ARM_ONLY_CHANNELS)} "
+                    f"- skipped (fail-closed)"
+                )
+                return
+
+        try:
+            await scan_responses[name]()
+        except Exception:
+            if is_gesture:
+                # A Gesture may have died before lowering the arm; best-effort
+                # rest ONLY the arm channels (never the neck the tracker owns).
+                try:
+                    await Movements.trunkController.return_to_rest(
+                        channels=ARM_ONLY_CHANNELS
+                    )
+                except Exception as rest_err:
+                    print(f"[scan] arm rest after '{name}' failed: {rest_err}")
+            # Re-raise so the loop logs the failure and starts the cooldown.
+            raise
+
+    def _run_scan_performance(self, defn, mv):
+        """Run an arm-only Performance response inside the scan loop's event loop.
+
+        Returns the ``PerformanceRunner.run()`` COROUTINE (does NOT call
+        ``asyncio.run`` — ``_run_scan_loop`` already runs under ``asyncio.run``,
+        and the response is awaited there as a task). ``rest_channels`` is pinned
+        to ``ARM_ONLY_CHANNELS`` (FEAT-001) so the runner's cleanup rests only the
+        arm and never the neck channels the tracker owns. Uses the same shared
+        ``Movements`` instance the ``scan_responses`` lambdas use so the arm
+        adapters share one ``TrunkController``.
+
+        For ``hypnotic`` the ambient eye-blink is kept (bound to the audio
+        window) exactly as the standalone routine; ``brains`` has no ambient.
+
+        Args:
+            defn: The arm-only ``PerformanceDefinition`` (built with ``scan=True``).
+            mv: The shared ``Movements`` instance.
+
+        Returns:
+            The ``PerformanceRunner.run()`` coroutine to be awaited by the caller.
+        """
+        ambient = None
+        if defn.name == "hypnotic":
+            ambient = lambda pb: self._blink_eyes(pb, 0.25, 0.25)
+        return PerformanceRunner(
+            defn,
+            mv,
+            self._resolve_audio_dir(),
+            ambient=ambient,
+            rest_channels=ARM_ONLY_CHANNELS,
+        ).run()
+
     def build_action_map(self):
         """Build the dispatch allowlist of ``camelCase`` action name -> method.
 
@@ -2536,6 +2920,11 @@ class Animatronic:
             # (NOT the generic servo_lock() path) because it takes only the
             # Neck_Group lock. See the 'tracking' branch in main().
             'tracking':       self.tracking,
+            # Scan Mode — camelCase key kept in the allowlist for parity with the
+            # webapp's dispatch, but dispatched by main()'s dedicated branch
+            # (placed BEFORE the generic servo_lock() path) so the timeout flag
+            # and single whole-robot lock are applied. See the 'scan' branch.
+            'scan':           self.scan,
         }
 
     # ------------------------------------------------------------------ #
@@ -2717,6 +3106,35 @@ def main(args):
         except ServoBusyError:
             print("Neck group busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
+    elif args.action == 'scan':
+        # Scan is a MODE: a continuous neck tracker PLUS a concurrent arm-only
+        # responder (which may drive the whole arm + jaw/audio), so unlike
+        # tracking it holds the WHOLE-ROBOT servo_lock() for its whole run. This
+        # dedicated branch is placed BEFORE the generic `args.action in
+        # action_map` branch so it shadows the generic path (which would call
+        # a.scan() with no timeout). The call is allowlist-gated: 'scan' is an
+        # explicit key in action_map and this is an explicit branch — args.action
+        # is never passed to getattr/eval/shell. The timeout minutes are clamped
+        # to [1, 120] here (and converted to seconds). Fail fast if the servos
+        # are already in use.
+        try:
+            with servo_lock():
+                a.scan(
+                    camera_url=args.camera_url,
+                    timeout_seconds=max(1, min(120, args.scan_timeout_min)) * 60,
+                    max_step=args.max_step,
+                    deadband=args.deadband,
+                    conf=args.conf,
+                    scan_timeout=args.scan_timeout,
+                    aim_frac=args.aim_frac,
+                    tilt_center=args.tilt_center,
+                    tilt_min=args.tilt_min,
+                    tilt_max=args.tilt_max,
+                    settle_gain=args.settle_gain,
+                )
+        except ServoBusyError:
+            print("Servos busy - another routine is already running. Aborting.")
+            sys.exit(BUSY_EXIT_CODE)
     elif args.action in action_map:
         # SAFETY: hold the system-wide servo lock for the whole routine so no
         # other process can drive the servos at the same time. Two concurrent
@@ -2784,6 +3202,14 @@ if __name__ == '__main__':
                         help='Tracking mode: Scan_Sweep reacquire timeout in '
                              'seconds, clamped to 1-120 (default: 10). Only '
                              'used with --action=tracking.')
+    # Scan Mode timeout (only used with --action=scan). DISTINCT from
+    # --scan-timeout above (the tracking Scan_Sweep reacquire timeout in
+    # SECONDS): this is the whole-Mode wind-down timeout in MINUTES.
+    parser.add_argument('--scan-timeout-min', dest='scan_timeout_min', type=int,
+                        default=60,
+                        help='Scan mode: minutes before the timeout winds the '
+                             'mode down, clamped 1-120 (default 60). Only used '
+                             'with --action=scan.')
     parser.add_argument('--max-step', dest='max_step', type=int, default=None,
                         help='Tracking mode: max neck angle change per update '
                              'in degrees, clamped to 1-30 (default: 5). Only '

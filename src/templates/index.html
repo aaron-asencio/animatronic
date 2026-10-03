@@ -233,6 +233,7 @@
     <button class="tab-btn" data-tab="automation">Automation</button>
     <button class="tab-btn" data-tab="napping">Napping</button>
     <button class="tab-btn" data-tab="awake">Awake</button>
+    <button class="tab-btn" data-tab="scan">Scan</button>
     <button class="tab-btn" data-tab="camera">Camera</button>
   </div>
 
@@ -490,6 +491,29 @@
         ⏹ Stop awake
       </button>
       <span class="val" id="awake-status" style="color:var(--muted);"></span>
+    </div>
+  </div>
+
+  <!-- SCAN -->
+  <div class="panel" id="scan">
+    <div class="section-title">Scan mode</div>
+    <p class="hint" style="margin-top:0;">The head uses the camera to scan for
+       people (and dogs). When someone is detected the head keeps tracking them
+       while an arm-only gesture or routine runs — gestures fire ~5x more often
+       than routines. Runs until the timeout elapses or you stop it; pressing any
+       routine or movement button also winds it down so your action runs.</p>
+    <div class="row">
+      <label>Scan timeout<br><small style="color:var(--muted)">minutes before the mode winds down (1–120)</small></label>
+      <input type="number" id="scan-timeout-min" min="1" max="120" step="1" value="60">
+    </div>
+    <div class="fx-actions" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+      <button class="action" id="scan-start-btn" onclick="startScan()"
+              title="Start scan mode with the timeout above.">🔎 Start scan</button>
+      <button class="action" id="scan-stop-btn" onclick="stopScan()" disabled
+              title="Wind down scan mode: it cancels any in-flight response, recenters the head, and releases the servos.">
+        ⏹ Stop scan
+      </button>
+      <span class="val" id="scan-status" style="color:var(--muted);"></span>
     </div>
   </div>
 
@@ -853,6 +877,38 @@
       if (status) status.textContent = active ? 'awake…' : '';
     }
 
+    // ── Scan mode ──────────────────────────────────────────────────────────
+    async function startScan() {
+      const minutes = +document.getElementById('scan-timeout-min').value;
+      const res = await fetch('/scan/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({timeout_min: minutes}),
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (res.ok && data.status === 'success') {
+        toast('Scan (' + minutes + ' min)');
+        setScanActive(true);
+      } else {
+        toast(data.message || 'Could not start scan', true);
+      }
+    }
+    async function stopScan() {
+      await fetch('/scan/stop', {method: 'POST'});
+      toast('Winding down…');
+      // The mode winds down on its own; the status poll flips the buttons back.
+    }
+    // Reflect scan active/idle state in the Start/Stop buttons + label.
+    function setScanActive(active) {
+      const startBtn = document.getElementById('scan-start-btn');
+      const stopBtn = document.getElementById('scan-stop-btn');
+      const status = document.getElementById('scan-status');
+      if (startBtn) startBtn.disabled = active;
+      if (stopBtn) stopBtn.disabled = !active;
+      if (status) status.textContent = active ? 'scanning…' : '';
+    }
+
     // ── Status poll ────────────────────────────────────────────────────────
     async function pollStatus() {
       try {
@@ -881,6 +937,8 @@
         setNapActive(data.last_action === 'napping' && !!data.servos_busy);
         // Same for awake mode.
         setAwakeActive(data.last_action === 'awake' && !!data.servos_busy);
+        // Same for scan mode.
+        setScanActive(data.last_action === 'scan' && !!data.servos_busy);
         // Reflect persisted jaw tuning (both profiles) in the sliders.
         if (data.mic && data.mic.profiles) populateJaw(data.mic.profiles);
         // Keep the Revert button state fresh, but DON'T repopulate the FX
