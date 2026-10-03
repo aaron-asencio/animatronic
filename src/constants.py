@@ -213,7 +213,7 @@ ARM_DESTINATION_POSES = {
         RT_SHOULDER_TILT:    55,   # wave center; oscillates tilt in [45, 65]
         RT_ELBOW_TILT:       0,    # flat while the arm is extended
         RT_ELBOW_ROTATOR:    30,   # forearm up; the flap wave oscillates in [22, 38]
-        RT_WRIST_TILT:       90,   # rest (wave never drives the wrist)
+        RT_WRIST_TILT:       50,   # bent while the arm is up (raises with the rotator, returns to rest=90 on lower)
     },
     "facePalm": {
         RT_SHOULDER_ROTATOR: 200,

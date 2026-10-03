@@ -223,11 +223,13 @@ class Movements:
                   NECK_PAN (0).
 
         Hardware-measured arm-up pose: shoulder rotator=270 (this is what lifts
-        the arm), shoulder tilt=55, elbow tilt=0 (arm extended), forearm=30.
-        With the arm up, the wave flaps the elbow rotator (22<->38) and swings
-        the shoulder tilt (45<->65) TOGETHER a random 1-2 times, then returns to
-        center and lowers. The elbow tilt stays flat at 0 throughout. All
-        keyframes validated collision-free.
+        the arm), shoulder tilt=55, elbow tilt=0 (arm extended), forearm=30. The
+        wrist tilt bends to 50 as the rotator raises and returns to its rest
+        (90) as the rotator lowers, so the wrist is only bent while the arm is
+        up. With the arm up, the wave flaps the elbow rotator (22<->38) and
+        swings the shoulder tilt (45<->65) TOGETHER a random 1-2 times, then
+        returns to center and lowers. The elbow tilt stays flat at 0 throughout.
+        All keyframes validated collision-free.
 
         Args:
             include_neck: When True, the head pans (84<->96) in sync with the
@@ -239,6 +241,7 @@ class Movements:
         TILT_REST, TILT_CENTER = 55, 55      # shoulder tilt stays ~55 (rest == wave center)
         ELBOW_REST, ELBOW_UP = 5, 0          # rest at 5 (REST_POSITIONS); 0 while arm extended
         FOREARM_REST, FOREARM_CENTER = 150, 30
+        WRIST_REST, WRIST_UP = 90, 50        # rest at 90 (REST_POSITIONS); bent to 50 while arm is up
         # Wave oscillation extremes (paired so the joints swing together).
         TILT_LO, TILT_HI = 45, 65            # shoulder tilt
         FOREARM_LO, FOREARM_HI = 22, 38      # elbow rotator (ch4) = the wave flap
@@ -255,6 +258,7 @@ class Movements:
             constants.RT_SHOULDER_TILT: TILT_CENTER,
             constants.RT_ELBOW_TILT: ELBOW_UP,
             constants.RT_ELBOW_ROTATOR: FOREARM_CENTER,
+            constants.RT_WRIST_TILT: WRIST_UP,   # bend the wrist while the rotator raises the arm
         }
         if include_neck:
             raise_targets[constants.NECK_TILT] = NECK_TILT_LEVEL
@@ -290,13 +294,14 @@ class Movements:
             recenter[constants.NECK_PAN] = PAN_CENTER
         await self.trunkController.move_to(recenter, steps=16, delay=0.02)
 
-        # LOWER: rotator back down, elbow/forearm back to rest, together.
+        # LOWER: rotator back down, elbow/forearm/wrist back to rest, together.
         await self.trunkController.move_to(
             {
                 constants.RT_SHOULDER_ROTATOR: ROT_REST,
                 constants.RT_SHOULDER_TILT: TILT_REST,
                 constants.RT_ELBOW_TILT: ELBOW_REST,
                 constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                constants.RT_WRIST_TILT: WRIST_REST,   # wrist unbends as the rotator lowers
             },
             steps=56, delay=0.02,
         )
