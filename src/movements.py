@@ -791,12 +791,19 @@ class Movements:
         channel via verified_pose_override. All keyframes validated
         collision-free against the kinematic model.
 
-        This standalone gesture delegates to the same phase primitives the
-        Performance_Framework drives (reach lead-in, one menace swing, retract
-        return), so composing ``menacing_reach_lead_in`` + eight
+        After the eight menace swings, the extended wrist curls in to 125 and
+        back to rest (90) three times (``_menacing_reach_wrist_flex``) before the
+        arm retracts.
+
+        This standalone gesture delegates to the same reach/swing/retract phase
+        primitives the Performance_Framework drives (reach lead-in, one menace
+        swing, retract return); composing ``menacing_reach_lead_in`` + eight
         ``menacing_reach_loop_body`` + ``menacing_reach_return`` reproduces the
-        exact same servo command sequence WHEN THE RNG IS SEEDED IDENTICALLY
-        before each run (the swings draw from the shared ``random`` module)
+        same swing/reach/retract command sequence WHEN THE RNG IS SEEDED
+        IDENTICALLY before each run (the swings draw from the shared ``random``
+        module). The wrist flex is specific to this standalone gesture and is NOT
+        part of the phased ``brains`` performance, so that one extra block of
+        channel-3 writes is the only divergence between the two paths
         (Requirement 9.3).
         """
         # tilt dips to 25, below the global floor of 45; operator-verified safe
@@ -804,9 +811,25 @@ class Movements:
         # gesture holds the override across the whole reach/swing/retract span.
         with TrunkController.verified_pose_override(self._MENACING_REACH_OVERRIDE):
             await self._menacing_reach_reach()
-            # MENACE: swing the shoulder tilt slowly within [25, 60], eight times.
-            for _ in range(8):
-                await self._menacing_reach_swing()
+
+            # MENACE + WRIST FLEX run CONCURRENTLY once the reach lands the
+            # rotator at its destination (209):
+            #   - shoulder tilt swings slowly within [25, 60], eight times (6, 7)
+            #   - the wrist curls in to 125 and back to rest, a random 3-5 times (ch 3)
+            # The two use DISJOINT channels (swings own 6+7, wrist owns 3), so
+            # gathering them is a safe concurrent gesture.
+            # The wrist flex uses its OWN independent RNG (not the shared
+            # ``random`` module) so (a) the concurrent gather's event-loop
+            # interleaving can't scramble the order of shared-stream draws, and
+            # (b) the swings' shared-stream draws stay byte-identical to the
+            # phased ``brains`` path, which has no wrist flex. See
+            # ``_menacing_reach_wrist_flex``.
+            async def _swings():
+                for _ in range(8):
+                    await self._menacing_reach_swing()
+
+            await asyncio.gather(_swings(), self._menacing_reach_wrist_flex())
+
             await self._menacing_reach_retract()
 
     # --- menacing_reach shared primitives + phase adapters ---------------- #
@@ -830,6 +853,17 @@ class Movements:
     # shoulder_tilt dips to 25, below the global floor; operator-verified safe
     # in the arm-out pose only, so widen just that channel.
     _MENACING_REACH_OVERRIDE = {constants.RT_SHOULDER_TILT: (25, 270)}
+    # Wrist flex (RT_WRIST_TILT, ch 3): curl in to 125, back to rest (90),
+    # repeated a RANDOM 3-5 times, with a RANDOM 0.75s-or-1.5s pause between
+    # cycles. Both endpoints are inside SAFE_LIMITS (10, 230), so no override is
+    # needed. Channel 3 is disjoint from the swing channels (6, 7). delay
+    # 0.0025 is 8x the speed of the original 0.02 wrist motion (doubled thrice).
+    # All randomness draws from the shared ``random`` module so a seeded run
+    # stays deterministic.
+    _MR_WRIST_FLEX, _MR_WRIST_REST = 125, 90
+    _MR_WRIST_FLEX_COUNT_RANGE = (3, 5)      # inclusive: random 3, 4, or 5 cycles
+    _MR_WRIST_FLEX_DELAY = 0.0025            # per-step delay (8x the original 0.02 speed)
+    _MR_WRIST_FLEX_PAUSE_CHOICES = (0.75, 1.5)  # seconds held between cycles (random)
 
     async def _menacing_reach_reach(self):
         """REACH: rotate the extended arm out and forward together.
@@ -913,6 +947,58 @@ class Movements:
             delay_jitter=0.006,
             companion=rotator_jitter,
         )
+
+    async def _menacing_reach_wrist_flex(self):
+        """WRIST FLEX: curl the wrist in to 125 and back to rest, 3 times.
+
+        Runs CONCURRENTLY with the menace swings (``asyncio.gather`` in
+        ``menacing_reach``), both starting the instant ``_menacing_reach_reach``
+        lands RT_SHOULDER_ROTATOR at its destination (209). Flexes
+        RT_WRIST_TILT (channel 3) from rest (90) in to 125 and back, a RANDOM
+        ``_MR_WRIST_FLEX_COUNT_RANGE`` (3-5) number of times, as a menacing
+        "come-hither" curl of the extended hand, with a RANDOM
+        ``_MR_WRIST_FLEX_PAUSE_CHOICES`` (0.75s or 1.5s) hold between each cycle.
+        Both endpoints lie inside the channel's SAFE_LIMITS (10, 230), so no
+        verified_pose_override is required. Channel 3 is disjoint from the
+        shoulder channels (6, 7) the swings drive, so running the two together
+        never writes a shared channel from two coroutines.
+
+        Each half-stroke is an eased ``move_to`` at ``_MR_WRIST_FLEX_DELAY``
+        (0.0025s/step -- 8x the speed of the original 0.02 motion; every write
+        clamped to SAFE_LIMITS). The wrist is left at rest (90) on completion,
+        matching REST_POSITIONS so the subsequent retract leaves nothing
+        off-rest.
+
+        RNG ISOLATION: the flex count and each inter-cycle pause draw from a
+        DEDICATED ``random.Random()`` instance, NOT the shared ``random``
+        module. This matters because the flex runs concurrently with the menace
+        swings (``asyncio.gather``) and the swings draw from the shared module.
+        A separate RNG means (a) the event loop's interleaving of the two
+        coroutines can never scramble the ORDER of shared-stream draws, so the
+        swings stay reproducible under ``random.seed``; and (b) the flex
+        consumes none of the shared stream, so the swings' draws -- and thus the
+        channel 6/7 command sequence -- stay byte-identical to the phased
+        ``brains`` path, which has no wrist flex. The wrist's own count/pauses
+        vary run-to-run (its RNG is entropy-seeded); this is a cosmetic,
+        standalone-only flourish on an isolated channel (3), deliberately kept
+        OUT of the shared, test-covered swing stream.
+
+        Channels: RT_WRIST_TILT (3).
+        """
+        rng = random.Random()  # independent of the shared ``random`` stream
+        count = rng.randint(*self._MR_WRIST_FLEX_COUNT_RANGE)
+        for i in range(count):
+            await self.trunkController.move_to(
+                {constants.RT_WRIST_TILT: self._MR_WRIST_FLEX},
+                steps=25, delay=self._MR_WRIST_FLEX_DELAY,
+            )
+            await self.trunkController.move_to(
+                {constants.RT_WRIST_TILT: self._MR_WRIST_REST},
+                steps=25, delay=self._MR_WRIST_FLEX_DELAY,
+            )
+            # Random hold between cycles (not after the final one).
+            if i < count - 1:
+                await asyncio.sleep(rng.choice(self._MR_WRIST_FLEX_PAUSE_CHOICES))
 
     async def _menacing_reach_retract(self):
         """RETRACT: return the arm to rest, lowering ~40% faster.
