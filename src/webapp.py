@@ -83,6 +83,7 @@ ROUTINE_ACTIONS = {
 
 MOVEMENT_ACTIONS = {
     'wave', 'comeHere', 'beckon', 'menacingReach', 'yawnCover', 'facePalm',
+    'fanButt',
     'yes', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
     'swivelHead', 'shakeHead', 'smno',
     'handVisor',

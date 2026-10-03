@@ -1866,7 +1866,7 @@ class Movements:
         The three fan joints oscillate between an UP keyframe (shoulder
         rotator=10, elbow tilt=5, wrist tilt=10) and a DOWN keyframe (shoulder
         rotator=0, elbow tilt=60, wrist tilt=160) for 3 reps (one up + one down
-        = one rep), then return toward rest. All three joints move at SPEED 8;
+        = one rep), then return toward rest. All three joints move at SPEED 14;
         because they share one speed they go in a SINGLE move_to per stroke over
         one shared step count, sized from the LONGEST-travel joint (the wrist,
         150 deg) via speed_to_steps so they arrive together. The fan channels
@@ -1878,7 +1878,7 @@ class Movements:
         and the gesture ends by moving the fan joints back toward REST_POSITIONS;
         controller.py additionally drives everything home on the error path.
         """
-        FAN_SPEED = 8
+        FAN_SPEED = 14  # 75% faster than the original speed 8
         DELAY = 0.02
 
         # Start pose: settle all seven joints before fanning begins.
@@ -1905,7 +1905,7 @@ class Movements:
         }
 
         # Size each stroke from the LONGEST joint's travel so all three arrive
-        # together at speed 8. Both legs (up<->down) share the same longest
+        # together at speed 14. Both legs (up<->down) share the same longest
         # travel: the wrist swings 10<->160 = 150 deg (elbow 55, rotator 10).
         up_steps = speed_to_steps(
             max(abs(down[ch] - up[ch]) for ch in up), FAN_SPEED, delay=DELAY)
