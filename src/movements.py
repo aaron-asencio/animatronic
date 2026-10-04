@@ -4012,6 +4012,7 @@ class Movements:
     _HF_PAN_CENTER = 90        # NECK_PAN centering band center (86-94)
     _HF_PAN_HALF = 4           # NECK_PAN half_range -> band [86, 94]
     _HF_DEFAULT_REPS = 3       # default repetitions of the concurrent phase
+    _HF_PERF_REPS = 3          # phased-performance rep count (matches _HF_DEFAULT_REPS)
     _HF_JITTER_PCT = 0.3       # endpoint jitter as a fraction of half_range
     # Centering-phase tempo: a slow, deliberate "focused" pace (same ballpark as
     # awaken's sleepy head bob). randomized_centering_move has no literal speed
@@ -4112,6 +4113,101 @@ class Movements:
                 },
                 steps=24, delay=0.03,
             )
+
+    # --- Phased adapters for head_focus (Performance Framework) ---------- #
+    # These split standalone head_focus into lead-in / loop-body / return so a
+    # Routine (e.g. maximus) can drive it audio-synced via PerformanceRunner.
+    # Each adapter calls the SAME shared primitives with the SAME _HF_* constants
+    # and parameters as standalone head_focus, so a seeded run (random.seed)
+    # reproduces an identical command sequence. Standalone head_focus is
+    # unchanged. See menacing_reach / present_palm for the adapter-trio shape.
+
+    async def head_focus_lead_in(self):
+        """Lead-in phase: lower NECK_TILT to the hold angle and AWAIT it.
+
+        Owns NECK_PAN (0), NECK_TILT (1). Performs ONLY the initial discrete
+        lower-NECK_TILT-to-hold move from standalone head_focus and awaits it to
+        completion -- so NECK_TILT has REACHED its hold destination when this
+        returns, which is what opens the audio gate (``supplies_gate=True``).
+        Seeds the pan/tilt centering transition state exactly as standalone
+        head_focus does, so the subsequent loop body classifies correctly.
+        Contains no audio logic.
+        """
+        # Size the discrete lower move from the actual starting angle at
+        # Speed 3 (snap_head pattern) -- identical to standalone head_focus.
+        start = getattr(
+            self.trunkController.kit.servo[constants.NECK_TILT], "angle",
+            None)
+        if start is None:
+            start = constants.REST_POSITIONS[constants.NECK_TILT]
+        lower_steps = speed_to_steps(
+            abs(self._HF_TILT_HOLD - start), self._HF_LOWER_SPEED,
+            delay=self._HF_DELAY)
+        print(f"[head_focus] lower NECK_TILT {start} -> {self._HF_TILT_HOLD} "
+              f"(speed {self._HF_LOWER_SPEED}), then {self._HF_PERF_REPS} focus reps")
+        await self.trunkController.move_to(
+            {constants.NECK_TILT: self._HF_TILT_HOLD},
+            steps=lower_steps, delay=self._HF_DELAY)
+
+        # Seed each centering branch's transition state from where the joints
+        # now sit, so the first move classifies correctly.
+        self._hf_tilt_pos = self._HF_TILT_HOLD
+        self._hf_pan_pos = self._HF_PAN_CENTER
+
+    async def head_focus_loop_body(self):
+        """Loop-body phase: run all ``_HF_PERF_REPS`` concurrent pan+tilt reps.
+
+        Owns NECK_PAN (0), NECK_TILT (1). One invocation runs the FULL body of
+        standalone head_focus's ``for _ in range(reps)`` loop with
+        ``reps == _HF_PERF_REPS`` (3): each iteration gathers one NECK_TILT and
+        one NECK_PAN ``randomized_centering_move`` on the two disjoint head
+        channels. The step uses ``loop_for_audio=False`` so this body runs
+        exactly once -- giving a deterministic 3 reps regardless of audio length.
+        Calls the SAME primitives with the SAME _HF_* params as standalone
+        head_focus. Contains no audio logic.
+        """
+        async def tilt_move():
+            await self.randomized_centering_move(
+                constants.NECK_TILT,
+                center=self._HF_TILT_CENTER, half_range=self._HF_TILT_HALF,
+                jitter_pct=self._HF_JITTER_PCT, state_attr="_hf_tilt_pos",
+                steps_range=self._HF_STEPS_RANGE,
+                delay_base=self._HF_DELAY_BASE,
+                delay_jitter=self._HF_DELAY_JITTER,
+            )
+
+        async def pan_move():
+            await self.randomized_centering_move(
+                constants.NECK_PAN,
+                center=self._HF_PAN_CENTER, half_range=self._HF_PAN_HALF,
+                jitter_pct=self._HF_JITTER_PCT, state_attr="_hf_pan_pos",
+                steps_range=self._HF_STEPS_RANGE,
+                delay_base=self._HF_DELAY_BASE,
+                delay_jitter=self._HF_DELAY_JITTER,
+            )
+
+        for _ in range(self._HF_PERF_REPS):
+            await asyncio.gather(
+                asyncio.create_task(tilt_move()),
+                asyncio.create_task(pan_move()),
+            )
+
+    async def head_focus_return(self):
+        """Return phase: return the head to REST (90/90).
+
+        Owns NECK_PAN (0), NECK_TILT (1). Drives both head channels back to
+        REST exactly as standalone head_focus's ``finally`` block does. Contains
+        no audio logic.
+        """
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN:
+                    constants.REST_POSITIONS[constants.NECK_PAN],
+                constants.NECK_TILT:
+                    constants.REST_POSITIONS[constants.NECK_TILT],
+            },
+            steps=24, delay=0.03,
+        )
 
 
 if __name__ == '__main__':
