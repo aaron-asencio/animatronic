@@ -201,6 +201,10 @@ FORBIDDEN_COMBINATIONS = [
 #   coverMouth       RT_SHOULDER_TILT: (35, 270), RT_ELBOW_TILT: (0, 170)
 #                                                    (also NECK_PAN=90, NECK_TILT=90)
 #                    (same override as yawnCover; _YAWN_COVER_OVERRIDE in movements.py)
+#   noseCover        RT_SHOULDER_TILT: (35, 270), RT_ELBOW_TILT: (0, 170)
+#                                                    (also NECK_PAN=90, NECK_TILT=90)
+#                    (sneeze fork of coverMouth; same override, _NOSE_COVER_OVERRIDE
+#                     in movements.py; only RT_ELBOW_ROTATOR differs: 185 -> 190)
 #
 # Format: action_name -> {channel: destination_angle_deg}
 ARM_DESTINATION_POSES = {
@@ -265,6 +269,19 @@ ARM_DESTINATION_POSES = {
         RT_SHOULDER_TILT:    35,
         RT_ELBOW_TILT:       162,
         RT_ELBOW_ROTATOR:    185,
+        RT_WRIST_TILT:       90,
+    },
+    # sneeze cover-mouth FORK (Movements.nose_cover_* adapters, _NC_*_COVER
+    # constants). Mirrors coverMouth exactly except RT_ELBOW_ROTATOR, bumped
+    # +5 (185 -> 190) so the forearm sits a touch differently for the sneeze.
+    # Documentation only; the _NC_*_COVER constants are the runtime source of
+    # truth. Does NOT change coverMouth / yawnCover (yawn, clearThroat, the
+    # coughs, burp, and fart stay on the shared cover pose).
+    "noseCover": {
+        RT_SHOULDER_ROTATOR: 200,
+        RT_SHOULDER_TILT:    35,
+        RT_ELBOW_TILT:       162,
+        RT_ELBOW_ROTATOR:    190,
         RT_WRIST_TILT:       90,
     },
 }

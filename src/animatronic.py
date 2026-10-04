@@ -527,8 +527,9 @@ class Animatronic:
     def sneeze(self):
         """Sneeze reaction — cover-mouth arm held until sneeze.wav ends, head snap 5s in.
 
-        Reuses the yawn cover-mouth arm phases (``Movements.yawn_cover_*``)
-        paired with ``sneeze.wav`` played UNGATED: the arm begins rising at t≈0
+        Uses the nose_cover arm phases (``Movements.nose_cover_*``) -- a fork of
+        the yawn cover-mouth family with RT_ELBOW_ROTATOR bumped +5 -- paired
+        with ``sneeze.wav`` played UNGATED: the arm begins rising at t≈0
         the instant audio starts (no gate, no ``_YC_MOTION_DELAY``), the hand is
         HELD at the mouth for the full ``sneeze.wav`` duration, then lowers the
         moment the audio finishes. Concurrently, 5 seconds after audio start, the
@@ -3164,17 +3165,17 @@ class Animatronic:
         ``snap_head`` owns NECK_TILT {1}.
 
         hold_cover():
-            1. ``yawn_cover_lead_in_settled`` raises the hand to the mouth. There
+            1. ``nose_cover_lead_in_settled`` raises the hand to the mouth. There
                is NO pre-motion delay — the ungated, non-delayed ``_settled``
                lead-in centers the head and folds the hand with no
                ``_YC_MOTION_DELAY`` hold and no gate-lead sleep, so the FIRST arm
                servo write happens at t≈0 the instant audio starts.
             2. HOLD at the mouth: ``while playback.is_active(): await
-               yawn_cover_loop_body()`` — the hand stays folded (no servo re-
+               nose_cover_loop_body()`` — the hand stays folded (no servo re-
                commanded) for the full ``sneeze.wav`` duration, driven by the
                real playback-completion signal (``is_active()`` is ``True`` until
                the WAV thread drains), NOT a hardcoded sleep.
-            3. ``yawn_cover_return`` lowers the hand to rest and releases the
+            3. ``nose_cover_return`` lowers the hand to rest and releases the
                verified-pose override the instant audio finishes.
 
         head_snap():
@@ -3190,7 +3191,7 @@ class Animatronic:
         waits for BOTH so the routine always runs through the 5s snap.
 
         Safety: every servo write still goes through ``move_to``/``set_angle``
-        (clamped to ``SAFE_LIMITS`` / the scoped ``_YAWN_COVER_OVERRIDE``). On
+        (clamped to ``SAFE_LIMITS`` / the scoped ``_NOSE_COVER_OVERRIDE``). On
         any exception, and always on completion, everything is swept to safe rest
         via ``return_to_rest`` so no servo is left energized; the audio thread is
         joined (``wait_finished``) so the daemon track is never killed mid-clip.
@@ -3199,15 +3200,15 @@ class Animatronic:
         """
         playback.start()
         start = time.monotonic()
-        print(f"Playing audio: {playback.audio_path} (ungated, arm raises at t≈0)")
+        print(f"Playing audio: {playback.audio_path} (ungated, arm raises at t~0)")
 
         async def hold_cover():
             # Non-delayed lead-in: first arm servo write at t≈0, no gate/motion
             # delay. Hold at the mouth while audio plays, lower when it ends.
-            await mv.yawn_cover_lead_in_settled()
+            await mv.nose_cover_lead_in_settled()
             while playback.is_active():
-                await mv.yawn_cover_loop_body()
-            await mv.yawn_cover_return()
+                await mv.nose_cover_loop_body()
+            await mv.nose_cover_return()
 
         async def head_snap():
             # Fire snapHead at ~5s after audio start, regardless of whether the
