@@ -419,10 +419,35 @@ class Movements:
     _YC_TILT_REST, _YC_TILT_COVER = 55, 35
     _YC_ROT_REST, _YC_ROT_COVER = 0, 200
     _YC_ELBOW_REST, _YC_ELBOW_COVER = 5, 162
-    _YC_FOREARM_REST, _YC_FOREARM_COVER = 150, 185
+    # RT_ELBOW_ROTATOR (channel 4) cover destination.
+    _YC_ELBOW_ROT_REST, _YC_ELBOW_ROT_COVER = 150, 185
     # Same two sub-limit channels yawn_cover widens, operator-verified safe in
     # THIS folded-to-the-mouth pose only. Held across lead-in -> loop -> return.
     _YAWN_COVER_OVERRIDE = {
+        constants.RT_SHOULDER_TILT: (35, 270),
+        constants.RT_ELBOW_TILT: (0, 170),
+    }
+
+    # --- nose_cover fork of the cover-mouth pose -------------------------- #
+    #
+    # A genuine FORK of the yawn_cover cover-mouth pose (not an alias), used by
+    # the ``sneeze`` routine via its own phased adapters below. Every value
+    # mirrors the yawn_cover ``_YC_*_COVER`` constants EXCEPT RT_ELBOW_ROTATOR
+    # (channel 4), whose cover destination is bumped +15 (185 -> 200), and
+    # RT_SHOULDER_TILT, whose cover destination is bumped +15 (35 -> 50), so the
+    # pose sits a touch differently for the sneeze. The fork keeps its own
+    # constants/override so this one change cannot leak into yawn_cover,
+    # clearThroat, the coughs, burp, or fart.
+    _NC_TILT_REST, _NC_TILT_COVER = 55, 50  # RT_SHOULDER_TILT cover: yawn_cover 35 + 15
+    _NC_ROT_REST, _NC_ROT_COVER = 0, 200
+    _NC_ELBOW_REST, _NC_ELBOW_COVER = 5, 162
+    # RT_ELBOW_ROTATOR (channel 4) cover destination.
+    _NC_ELBOW_ROT_REST, _NC_ELBOW_ROT_COVER = 150, 200  # 200 = yawn_cover 185 + 15
+    # Same two sub-limit channels the yawn fork widens; copied verbatim from
+    # _YAWN_COVER_OVERRIDE (does NOT touch RT_ELBOW_ROTATOR, so 200 is governed
+    # purely by its global SAFE_LIMITS clamp (0, 270)). Held across the
+    # nose_cover lead-in -> loop -> return span on its own AsyncExitStack.
+    _NOSE_COVER_OVERRIDE = {
         constants.RT_SHOULDER_TILT: (35, 270),
         constants.RT_ELBOW_TILT: (0, 170),
     }
@@ -461,7 +486,7 @@ class Movements:
                 constants.RT_SHOULDER_TILT: self._YC_TILT_COVER,
                 constants.RT_SHOULDER_ROTATOR: self._YC_ROT_COVER,
                 constants.RT_ELBOW_TILT: self._YC_ELBOW_COVER,
-                constants.RT_ELBOW_ROTATOR: self._YC_FOREARM_COVER,
+                constants.RT_ELBOW_ROTATOR: self._YC_ELBOW_ROT_COVER,
             },
             steps=45, delay=0.02,
             start_fractions={
@@ -498,7 +523,7 @@ class Movements:
         await self.trunkController.move_to(
             {
                 constants.RT_ELBOW_TILT: self._YC_ELBOW_REST,
-                constants.RT_ELBOW_ROTATOR: self._YC_FOREARM_REST,
+                constants.RT_ELBOW_ROTATOR: self._YC_ELBOW_ROT_REST,
                 constants.RT_SHOULDER_ROTATOR: self._YC_ROT_REST,
                 constants.RT_SHOULDER_TILT: self._YC_TILT_REST,
             },
@@ -692,6 +717,146 @@ class Movements:
         await asyncio.sleep(self._YC_MOTION_DELAY)
         await self._yawn_cover_center_head()
         await self._yawn_cover_fold_up()
+
+    # --- nose_cover fork: primitives + phase adapters -------------------- #
+    #
+    # A genuine FORK of the cover-mouth phased family for the ``sneeze`` routine.
+    # These methods call ONLY the fork's own _NC_*_COVER constants and
+    # _NOSE_COVER_OVERRIDE and keep their own per-adapter stack / pending-fold
+    # task, so the +5 RT_ELBOW_ROTATOR bump cannot leak into yawn_cover or any
+    # other cover-mouth routine. Scoped to exactly the three phases _do_sneeze
+    # uses: lead_in_settled -> loop_body -> return. The pose is yawn_cover's
+    # operator-verified hand-to-face cover with only the forearm twist differing.
+
+    async def _nose_cover_center_head(self):
+        """Center the head so the mouth faces forward for the hand-to-face cover.
+
+        Channels: NECK_PAN (0), NECK_TILT (1). Neck uses global SAFE_LIMITS;
+        the arm override only covers the two arm channels.
+        """
+        await self.trunkController.move_to(
+            {
+                constants.NECK_PAN: constants.NECK_CENTER,   # 90 = forward
+                constants.NECK_TILT: 90,                     # 90 = level
+            },
+            steps=30, delay=0.02,
+        )
+
+    async def _nose_cover_fold_up(self):
+        """Fold the hand up in front of the mouth/nose (nose_cover's up-fold).
+
+        Shoulder rotates first; elbow + forearm hold until 30% through, then
+        bend the hand up to the mouth -- same staging/keyframes as the
+        cover-mouth pose, with the forearm twist at the nose_cover value.
+
+        Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
+                  RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
+        """
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_TILT: self._NC_TILT_COVER,
+                constants.RT_SHOULDER_ROTATOR: self._NC_ROT_COVER,
+                constants.RT_ELBOW_TILT: self._NC_ELBOW_COVER,
+                constants.RT_ELBOW_ROTATOR: self._NC_ELBOW_ROT_COVER,
+            },
+            steps=45, delay=0.02,
+            start_fractions={
+                constants.RT_ELBOW_TILT: 0.30,
+                constants.RT_ELBOW_ROTATOR: 0.30,
+            },
+        )
+
+    async def _nose_cover_lower(self):
+        """LOWER: unfold the hand and settle the arm back to rest.
+
+        Reverse of the up-fold: open the elbow/forearm first, then the shoulder
+        lowers (same start_fractions/steps as the cover-mouth DOWN move), so the
+        arm unfolds before it drops.
+
+        Channels: RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4),
+                  RT_SHOULDER_ROTATOR (7), RT_SHOULDER_TILT (6).
+        """
+        await self.trunkController.move_to(
+            {
+                constants.RT_ELBOW_TILT: self._NC_ELBOW_REST,
+                constants.RT_ELBOW_ROTATOR: self._NC_ELBOW_ROT_REST,
+                constants.RT_SHOULDER_ROTATOR: self._NC_ROT_REST,
+                constants.RT_SHOULDER_TILT: self._NC_TILT_REST,
+            },
+            steps=56, delay=0.02,
+            start_fractions={
+                constants.RT_SHOULDER_ROTATOR: 0.33,
+                constants.RT_SHOULDER_TILT: 0.33,
+            },
+        )
+
+    async def nose_cover_lead_in_settled(self):
+        """Lead-in: fully fold the hand to the mouth, THEN open the gate.
+
+        The ``_settled`` cover-mouth lead-in forked for ``sneeze``: the up-fold
+        is AWAITED to completion before this coroutine returns, so a gated
+        framework caller opens the audio gate only once the hand has reached its
+        final cover position. Opens the fork's own ``_NOSE_COVER_OVERRIDE`` on a
+        per-adapter ``_nose_cover_stack`` held across lead-in -> loop -> return
+        (``nose_cover_return`` closes it). No deferred fold task is created, so
+        the paired ``nose_cover_loop_body``'s ``_await_pending_nose_fold`` is a
+        harmless no-op. Contains no audio logic; owns head channels 0,1 and arm
+        channels 4-7.
+        """
+        self._nose_cover_stack = contextlib.AsyncExitStack()
+        self._nose_cover_stack.enter_context(
+            TrunkController.verified_pose_override(self._NOSE_COVER_OVERRIDE))
+        # Center the head, then fold the hand fully up BEFORE returning, so the
+        # gate opens only once the hand has settled at the mouth.
+        await self._nose_cover_center_head()
+        await self._nose_cover_fold_up()
+
+    async def nose_cover_loop_body(self):
+        """Loop-body: HOLD the hand at the mouth while audio plays.
+
+        A caller repeats this while playback is active, so the hand simply stays
+        folded at the mouth for the full audio duration and no servo is
+        re-commanded (the arm is already at the cover pose). A short sleep yields
+        control so the caller can re-check playback between holds. Contains no
+        audio logic.
+
+        First finish any pending up-fold (a no-op for the settled lead-in, which
+        awaits its fold inline) so the fork mirrors the yawn_cover family.
+        """
+        await self._await_pending_nose_fold()
+        await asyncio.sleep(0.1)
+
+    async def _await_pending_nose_fold(self):
+        """Await and clear the pending up-fold task, if one is outstanding.
+
+        The settled lead-in awaits its fold inline, so this is normally a no-op;
+        it exists to mirror the yawn_cover family's shape and to keep the fork
+        self-contained. Safe to call more than once and when no fold is pending.
+        """
+        task = getattr(self, "_nose_cover_fold_task", None)
+        if task is not None:
+            self._nose_cover_fold_task = None
+            await task
+
+    async def nose_cover_return(self):
+        """Return phase: lower the hand to rest and release the pose override.
+
+        Owns arm channels 4-7. Lowers via the fork's own ``_nose_cover_lower``
+        primitive, then closes the AsyncExitStack opened in
+        ``nose_cover_lead_in_settled`` so the ``_NOSE_COVER_OVERRIDE`` is scoped
+        to exactly the lead-in -> loop -> return span.
+
+        First finish any still-pending up-fold so the arm lowers from the fully
+        folded cover pose rather than mid-fold.
+        """
+        try:
+            await self._await_pending_nose_fold()
+            await self._nose_cover_lower()
+        finally:
+            stack = getattr(self, "_nose_cover_stack", None)
+            if stack is not None:
+                await stack.aclose()
+                self._nose_cover_stack = None
 
     async def face_palm(self):
         """Face palm: head drops into the hand, shakes 3x in dismay, then recovers.
