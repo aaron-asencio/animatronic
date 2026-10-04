@@ -235,10 +235,25 @@ class Animatronic:
         'elf_smell_ghost_burrito.wav',  # 34  (fartGhost: gated reaction after fan-nose arrives)
         'sneeze.wav',                   # 35  (sneeze: yawn-cover arm + sneeze.wav, snapHead after 5s)
         'elf_hh_get_candy.wav',       # 36  (comeGetCandy: random beckon/comeHere + candy call, gated 1.2s)
+        'elf_nice_day_walk.wav',      # 37  (niceDay: wave + "nice day for a walk", arm leads audio by 0.5s)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
     idle = 3
+
+    # --- niceDay timing (arm LEADS audio) --------------------------------- #
+    # Seconds the wave arm moves before audio for niceDay. The gesture's first
+    # servo write is immediate (move_to drives set_angle on step 1 with no
+    # preceding sleep), so 0.0 starts the raise at t=0. On hardware the operator
+    # can nudge this up if the raise still looks a beat late.
+    _NICE_DAY_ARM_LEAD = 0.0
+    # Seconds to HOLD the audio after the arm starts, so motion LEADS the sound
+    # by this much. This replaces the old 3s _run idle for niceDay — that idle
+    # was the ~2-3s the operator saw before the arm moved, and it was designed
+    # for the OPPOSITE goal (let audio start first). For niceDay the arm leads,
+    # so audio_delay = _NICE_DAY_ARM_LEAD + _NICE_DAY_AUDIO_LEAD. Operator
+    # fine-tunes on hardware.
+    _NICE_DAY_AUDIO_LEAD = 0.5
 
     # ------------------------------------------------------------------ #
     # Gesture coroutines — thin wrappers over Movements                   #
@@ -407,6 +422,27 @@ class Animatronic:
     def start_party(self):
         """Party switch audio — smooth wave + swivel head (returns to rest)."""
         self.run_action_and_audio("_do_wave_and_swivel_smooth", self.music[3])
+
+    def nice_day(self):
+        """Wave hello while saying it's a nice day for a walk.
+
+        Pairs the existing ``wave`` gesture (via ``_do_wave``) with
+        ``elf_nice_day_walk.wav``. The arm LEADS the audio: the wave starts
+        moving ~0.5s before the clip. ``_do_wave`` drops the default 3s idle so
+        the raise begins at t=0, and the audio is GATED by
+        ``audio_delay = _NICE_DAY_ARM_LEAD + _NICE_DAY_AUDIO_LEAD`` (0.0 + 0.5 =
+        0.5s) so the sound comes in 0.5s after the arm starts. The ~2-3s the
+        operator previously saw before the arm moved was the old
+        ``_run``/``self.idle`` pause, now replaced. The gesture returns to rest
+        on its own. Operator fine-tunes the two constants on hardware.
+        """
+        self.run_action_and_audio(
+            "_do_wave", self.music[37],
+            # Arm leads audio by _NICE_DAY_AUDIO_LEAD: hold the clip until the
+            # wave has been moving ~0.5s. = _NICE_DAY_ARM_LEAD (arm pre-move,
+            # ~0s) + _NICE_DAY_AUDIO_LEAD (0.5s lead).
+            audio_delay=self._NICE_DAY_ARM_LEAD + self._NICE_DAY_AUDIO_LEAD,
+        )
 
     # --- Patrol / ambient routines ---
 
@@ -3073,6 +3109,7 @@ class Animatronic:
         return {
             # Wave routines
             'startParty':     self.start_party,
+            'niceDay':        self.nice_day,
             # Patrol / ambient
             'krusty':         self.krusty,
             # Reaction
@@ -3112,8 +3149,13 @@ class Animatronic:
     # ------------------------------------------------------------------ #
 
     async def _do_wave(self):
+        # niceDay: start the wave arm almost immediately (not after the 3s
+        # self.idle) so motion LEADS the audio. nice_day() holds the clip
+        # _NICE_DAY_AUDIO_LEAD seconds via audio_delay. Only nice_day calls
+        # _do_wave, so this lead-in change affects no other routine, and
+        # mv.wave() is reused verbatim (no gesture fork).
         mv = Movements("Animatronic")
-        await self._run(mv.wave())
+        await self._run_lead(mv.wave(), self._NICE_DAY_ARM_LEAD)
 
     async def _do_wave_and_swivel_smooth(self):
         mv = Movements("Animatronic")

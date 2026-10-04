@@ -74,15 +74,16 @@ RANGE_ECHO_PIN = 24    # HC-SR04 echo (input, via voltage divider)
 #   increase -> flexion (wrist bends hand towards underside of forearm) 230
 #   decrease -> extension (wrist bends hand back towards top of forearm)
 #
-# RT_ELBOW_TILT (channel 5) — elbow bend
-#     5 = straight (arm extended). LOCKED at 5 for now (see SAFE_LIMITS).
-#     increase -> flexion (elbow bends; 145=right angle, 210=full flexion)
-#     decrease -> extension (elbow straightens toward 5)
 #
 # RT_ELBOW_ROTATOR (channel 4) — forearm twist (wrist/palm orientation)
 #     center = 150 (hand parallel to the side)
 #     increase -> rotates toward palm UP (270 = palm up)
 #     decrease -> rotates toward palm DOWN (0 = palm down)
+
+# RT_ELBOW_TILT (channel 5) — elbow bend
+#     5 = straight (arm extended). LOCKED at 5 for now (see SAFE_LIMITS).
+#     increase -> flexion (elbow bends; 145=right angle, 210=full flexion)
+#     decrease -> extension (elbow straightens toward 5)
 #
 # RT_SHOULDER_TILT (channel 6) — raise/lower the whole arm at the shoulder
 #     rest = 55 (arm down toward side)
