@@ -234,7 +234,7 @@ class Animatronic:
         'fart.wav',                # 33  (fart: lead track, no cover)
         'elf_smell_ghost_burrito.wav',  # 34  (fartGhost: gated reaction after fan-nose arrives)
         'sneeze.wav',                   # 35  (sneeze: yawn-cover arm + sneeze.wav, snapHead after 5s)
-        'happy_hw_get_candy.wav',       # 36  (comeGetCandy: random beckon/comeHere + candy call, gated 1.2s)
+        'elf_hh_get_candy.wav',       # 36  (comeGetCandy: random beckon/comeHere + candy call, gated 1.2s)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
