@@ -234,6 +234,7 @@ class Animatronic:
         'fart.wav',                # 33  (fart: lead track, no cover)
         'elf_smell_ghost_burrito.wav',  # 34  (fartGhost: gated reaction after fan-nose arrives)
         'sneeze.wav',                   # 35  (sneeze: yawn-cover arm + sneeze.wav, snapHead after 5s)
+        'elf_hh_get_candy.wav',       # 36  (comeGetCandy: random beckon/comeHere + candy call, gated 1.2s)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -546,6 +547,10 @@ class Animatronic:
         audio_path = os.path.join(self._resolve_audio_dir(), self.music[35])  # sneeze.wav
         playback = PlaybackController(audio_path)
         asyncio.run(self._do_sneeze(mv, playback))
+
+    def come_get_candy(self):
+        """Greet trick-or-treaters and call them to get candy. Randomly beckon or comeHere, with happy_hw_get_candy.wav gated 1.2s."""
+        self.run_action_and_audio("_do_come_get_candy", self.music[36], audio_delay=1.2)
 
     @staticmethod
     def _audio_duration_seconds(audio_file, default=7.0):
@@ -3089,6 +3094,7 @@ class Animatronic:
             'fartGhost':      self.fart_ghost,
             'sleep':          self.snore,
             'moreCandy':      self.more_candy,
+            'comeGetCandy':   self.come_get_candy,
             # Tracking Mode — camelCase key kept in the allowlist for parity with
             # the webapp's dispatch, but dispatched by main()'s dedicated branch
             # (NOT the generic servo_lock() path) because it takes only the
@@ -3154,6 +3160,14 @@ class Animatronic:
         mv = Movements("Animatronic")
         duration = self._audio_duration_seconds(self.music[26])  # awakened.wav
         await mv.awaken(duration=duration)
+
+    async def _do_come_get_candy(self):
+        # Randomly pick ONE of the two "come toward me" arm gestures per
+        # invocation (beckon or comeHere). Both are arm-only; happy_hw_get_candy.wav
+        # is gated 1.2s in come_get_candy() so the chosen gesture leads.
+        mv = Movements("Animatronic")
+        gesture = random.choice((mv.beckon, mv.come_here))
+        await self._run(gesture())
 
     async def _do_sneeze(self, mv, playback):
         """Sneeze gesture coroutine: cover-mouth hold until audio ends + snapHead 5s in.
