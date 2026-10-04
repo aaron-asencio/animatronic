@@ -3653,6 +3653,130 @@ class Movements:
         await self.trunkController.move_to(
             {constants.NECK_TILT: TILT_REST}, steps=rest_steps, delay=DELAY)
 
+    # ================================================================== #
+    # HEAD FOCUS — lower head, then minor pan/tilt centering while held   #
+    # ================================================================== #
+
+    # CHANNEL-NAME MAPPING (spec term -> code constant): the operator spec says
+    # "NECK_ROTATE" for the left/right head rotation axis; that name does not
+    # exist in this codebase. The left/right rotation channel is NECK_PAN
+    # (channel 0), so NECK_PAN is used everywhere the spec says NECK_ROTATE.
+    # NECK_TILT (channel 1) is the up/down tilt axis, same name in both.
+    #
+    # TILT DIRECTION: on this build NECK_TILT=90 is level and HIGHER angles
+    # LOWER the head (chin toward chest), while angles BELOW 90 RAISE it (chin
+    # up) — see the AXIS DIRECTION REFERENCE and the SAFE_LIMITS comment in
+    # constants.py. The operator confirmed the intent is to LOWER the head, so
+    # the hold angle (95) and centering band (94-97) sit just above 90, giving
+    # a slight chin-down "focus" lower. All values are inside SAFE_LIMITS
+    # (NECK_TILT 30-160, NECK_PAN 5-175), so no verified_pose_override is needed.
+    _HF_TILT_HOLD = 95         # NECK_TILT: lower-and-hold target (chin slightly down)
+    _HF_TILT_CENTER = 95.5     # NECK_TILT centering band center (94-97)
+    _HF_TILT_HALF = 1.5        # NECK_TILT half_range -> band [94, 97]
+    _HF_PAN_CENTER = 90        # NECK_PAN centering band center (86-94)
+    _HF_PAN_HALF = 4           # NECK_PAN half_range -> band [86, 94]
+    _HF_DEFAULT_REPS = 3       # default repetitions of the concurrent phase
+    _HF_JITTER_PCT = 0.3       # endpoint jitter as a fraction of half_range
+    # Centering-phase tempo: a slow, deliberate "focused" pace (same ballpark as
+    # awaken's sleepy head bob). randomized_centering_move has no literal speed
+    # dial, so Speed 3 is honored on the initial lower-and-hold leg below and
+    # matched here by a deliberately slow centering tempo.
+    _HF_STEPS_RANGE = (24, 34)
+    _HF_DELAY_BASE = 0.03
+    _HF_DELAY_JITTER = 0.006
+    # Speed-3 knobs for the initial discrete lower-to-95 move (snap_head leg
+    # pattern): speed_to_steps(distance, speed=3, delay=0.02).
+    _HF_LOWER_SPEED = 3
+    _HF_DELAY = 0.02
+
+    async def head_focus(self, reps=None):
+        """Head focus: lower the head, then minor pan/tilt moves while held.
+
+        Channels: NECK_PAN (0), NECK_TILT (1).
+
+        Lowers NECK_TILT to the hold angle, then for ``reps`` repetitions runs
+        two "randomize within range with centering" moves CONCURRENTLY on the
+        two disjoint head channels — NECK_TILT within its small band and
+        NECK_PAN within a slightly wider band — to give small, organic
+        "focusing" head movements. Returns the head to REST (90/90) on
+        completion AND on error.
+
+        NOTE — tilt direction: on this build NECK_TILT=90 is level and angles
+        ABOVE 90 LOWER the head (chin toward chest); angles BELOW 90 RAISE it.
+        The hold angle (95) and centering band (94-97) sit just above 90 to
+        lower the head slightly, as intended. All angles stay within
+        SAFE_LIMITS, so no verified_pose_override is needed.
+
+        Args:
+            reps: Number of concurrent pan+tilt centering iterations to run.
+                Defaults to ``_HF_DEFAULT_REPS`` (3) when None, so a no-arg CLI
+                call runs the default. Configurable.
+        """
+        if reps is None:
+            reps = self._HF_DEFAULT_REPS
+
+        try:
+            # (1) Lower NECK_TILT to the hold angle and hold. Size the discrete
+            # move from the actual starting angle at Speed 3 (snap_head pattern).
+            start = getattr(
+                self.trunkController.kit.servo[constants.NECK_TILT], "angle",
+                None)
+            if start is None:
+                start = constants.REST_POSITIONS[constants.NECK_TILT]
+            lower_steps = speed_to_steps(
+                abs(self._HF_TILT_HOLD - start), self._HF_LOWER_SPEED,
+                delay=self._HF_DELAY)
+            print(f"[head_focus] lower NECK_TILT {start} -> {self._HF_TILT_HOLD} "
+                  f"(speed {self._HF_LOWER_SPEED}), then {reps} focus reps")
+            await self.trunkController.move_to(
+                {constants.NECK_TILT: self._HF_TILT_HOLD},
+                steps=lower_steps, delay=self._HF_DELAY)
+
+            # Seed each centering branch's transition state from where the
+            # joints now sit, so the first move classifies correctly.
+            self._hf_tilt_pos = self._HF_TILT_HOLD
+            self._hf_pan_pos = self._HF_PAN_CENTER
+
+            # (2) THEN run the two centering moves CONCURRENTLY for `reps`
+            # iterations. NECK_TILT (ch1) and NECK_PAN (ch0) own DISJOINT
+            # channels, so gathering one move each per iteration is safe.
+            async def tilt_move():
+                await self.randomized_centering_move(
+                    constants.NECK_TILT,
+                    center=self._HF_TILT_CENTER, half_range=self._HF_TILT_HALF,
+                    jitter_pct=self._HF_JITTER_PCT, state_attr="_hf_tilt_pos",
+                    steps_range=self._HF_STEPS_RANGE,
+                    delay_base=self._HF_DELAY_BASE,
+                    delay_jitter=self._HF_DELAY_JITTER,
+                )
+
+            async def pan_move():
+                await self.randomized_centering_move(
+                    constants.NECK_PAN,
+                    center=self._HF_PAN_CENTER, half_range=self._HF_PAN_HALF,
+                    jitter_pct=self._HF_JITTER_PCT, state_attr="_hf_pan_pos",
+                    steps_range=self._HF_STEPS_RANGE,
+                    delay_base=self._HF_DELAY_BASE,
+                    delay_jitter=self._HF_DELAY_JITTER,
+                )
+
+            for _ in range(reps):
+                await asyncio.gather(
+                    asyncio.create_task(tilt_move()),
+                    asyncio.create_task(pan_move()),
+                )
+        finally:
+            # Return the head to REST (90/90) on completion AND on error.
+            await self.trunkController.move_to(
+                {
+                    constants.NECK_PAN:
+                        constants.REST_POSITIONS[constants.NECK_PAN],
+                    constants.NECK_TILT:
+                        constants.REST_POSITIONS[constants.NECK_TILT],
+                },
+                steps=24, delay=0.03,
+            )
+
 
 if __name__ == '__main__':
     # Quick interactive testing — uncomment the gesture you want to run.

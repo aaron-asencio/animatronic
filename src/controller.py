@@ -14,7 +14,7 @@ ARM gestures (channels 4–7):
 
 HEAD gestures (channels 0–1):
     yes, lookAroundSmall, lookAroundRandom, neckEllipse,
-    swivelHead, shakeHead, smallShakeNo
+    swivelHead, shakeHead, smallShakeNo, headFocus
 
 COMPOSITE gestures (arm + head simultaneously):
     waveAndSwivelSmooth
@@ -67,6 +67,7 @@ def main(args):
         'smno':             mv.small_shake_no,
         'snuckUp':          mv.snuck_up,
         'awaken':           mv.awaken,
+        'headFocus':        mv.head_focus,
 
         # --- COMPOSITE gestures ---
         'waveAndSwivelSmooth': mv.wave_and_swivel_smooth,
