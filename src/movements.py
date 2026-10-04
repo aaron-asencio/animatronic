@@ -419,7 +419,8 @@ class Movements:
     _YC_TILT_REST, _YC_TILT_COVER = 55, 35
     _YC_ROT_REST, _YC_ROT_COVER = 0, 200
     _YC_ELBOW_REST, _YC_ELBOW_COVER = 5, 162
-    _YC_FOREARM_REST, _YC_FOREARM_COVER = 150, 185
+    # RT_ELBOW_ROTATOR (channel 4) cover destination.
+    _YC_ELBOW_ROT_REST, _YC_ELBOW_ROT_COVER = 150, 185
     # Same two sub-limit channels yawn_cover widens, operator-verified safe in
     # THIS folded-to-the-mouth pose only. Held across lead-in -> loop -> return.
     _YAWN_COVER_OVERRIDE = {
@@ -432,16 +433,18 @@ class Movements:
     # A genuine FORK of the yawn_cover cover-mouth pose (not an alias), used by
     # the ``sneeze`` routine via its own phased adapters below. Every value
     # mirrors the yawn_cover ``_YC_*_COVER`` constants EXCEPT RT_ELBOW_ROTATOR
-    # (channel 4), whose cover destination is bumped +5 (185 -> 190) so the
-    # forearm sits a touch differently for the sneeze. The fork keeps its own
+    # (channel 4), whose cover destination is bumped +15 (185 -> 200), and
+    # RT_SHOULDER_TILT, whose cover destination is bumped +15 (35 -> 50), so the
+    # pose sits a touch differently for the sneeze. The fork keeps its own
     # constants/override so this one change cannot leak into yawn_cover,
     # clearThroat, the coughs, burp, or fart.
-    _NC_TILT_REST, _NC_TILT_COVER = 55, 35
+    _NC_TILT_REST, _NC_TILT_COVER = 55, 50  # RT_SHOULDER_TILT cover: yawn_cover 35 + 15
     _NC_ROT_REST, _NC_ROT_COVER = 0, 200
     _NC_ELBOW_REST, _NC_ELBOW_COVER = 5, 162
-    _NC_FOREARM_REST, _NC_FOREARM_COVER = 150, 190  # 190 = yawn_cover 185 + 5
+    # RT_ELBOW_ROTATOR (channel 4) cover destination.
+    _NC_ELBOW_ROT_REST, _NC_ELBOW_ROT_COVER = 150, 200  # 200 = yawn_cover 185 + 15
     # Same two sub-limit channels the yawn fork widens; copied verbatim from
-    # _YAWN_COVER_OVERRIDE (does NOT touch RT_ELBOW_ROTATOR, so 190 is governed
+    # _YAWN_COVER_OVERRIDE (does NOT touch RT_ELBOW_ROTATOR, so 200 is governed
     # purely by its global SAFE_LIMITS clamp (0, 270)). Held across the
     # nose_cover lead-in -> loop -> return span on its own AsyncExitStack.
     _NOSE_COVER_OVERRIDE = {
@@ -483,7 +486,7 @@ class Movements:
                 constants.RT_SHOULDER_TILT: self._YC_TILT_COVER,
                 constants.RT_SHOULDER_ROTATOR: self._YC_ROT_COVER,
                 constants.RT_ELBOW_TILT: self._YC_ELBOW_COVER,
-                constants.RT_ELBOW_ROTATOR: self._YC_FOREARM_COVER,
+                constants.RT_ELBOW_ROTATOR: self._YC_ELBOW_ROT_COVER,
             },
             steps=45, delay=0.02,
             start_fractions={
@@ -520,7 +523,7 @@ class Movements:
         await self.trunkController.move_to(
             {
                 constants.RT_ELBOW_TILT: self._YC_ELBOW_REST,
-                constants.RT_ELBOW_ROTATOR: self._YC_FOREARM_REST,
+                constants.RT_ELBOW_ROTATOR: self._YC_ELBOW_ROT_REST,
                 constants.RT_SHOULDER_ROTATOR: self._YC_ROT_REST,
                 constants.RT_SHOULDER_TILT: self._YC_TILT_REST,
             },
@@ -754,7 +757,7 @@ class Movements:
                 constants.RT_SHOULDER_TILT: self._NC_TILT_COVER,
                 constants.RT_SHOULDER_ROTATOR: self._NC_ROT_COVER,
                 constants.RT_ELBOW_TILT: self._NC_ELBOW_COVER,
-                constants.RT_ELBOW_ROTATOR: self._NC_FOREARM_COVER,
+                constants.RT_ELBOW_ROTATOR: self._NC_ELBOW_ROT_COVER,
             },
             steps=45, delay=0.02,
             start_fractions={
@@ -776,7 +779,7 @@ class Movements:
         await self.trunkController.move_to(
             {
                 constants.RT_ELBOW_TILT: self._NC_ELBOW_REST,
-                constants.RT_ELBOW_ROTATOR: self._NC_FOREARM_REST,
+                constants.RT_ELBOW_ROTATOR: self._NC_ELBOW_ROT_REST,
                 constants.RT_SHOULDER_ROTATOR: self._NC_ROT_REST,
                 constants.RT_SHOULDER_TILT: self._NC_TILT_REST,
             },
