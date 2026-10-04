@@ -196,6 +196,8 @@ FORBIDDEN_COMBINATIONS = [
 #   facePalm         RT_SHOULDER_TILT: (40, 270)      (also NECK_TILT=140)
 #   menacingReach    RT_SHOULDER_TILT: (25, 270)
 #   beckon           none
+#   tapSide          none
+#   talkingWithHands none
 #   comeHere         RT_SHOULDER_TILT: (14, 270)
 #   yawnCover        RT_SHOULDER_TILT: (35, 270), RT_ELBOW_TILT: (0, 170)
 #                                                    (also NECK_PAN=90, NECK_TILT=90)
@@ -239,6 +241,32 @@ ARM_DESTINATION_POSES = {
         RT_ELBOW_TILT:       105,  # curl arc swings 105<->135
         RT_ELBOW_ROTATOR:    270,
         RT_WRIST_TILT:       90,
+    },
+    # Idle "bored" tap of the hand against the side of the body
+    # (Movements.tap_side). Peak/"up" extreme of the tap oscillation: the elbow
+    # tilts to 10 and the wrist flexes to 120 while the shoulder holds the tap
+    # start pose (tilt in to 45, rotator 0 = arm at side). All values inside the
+    # global SAFE_LIMITS, so no verified_pose_override. The tap oscillates the
+    # elbow 5<->10 and wrist 75<->120 about this pose before returning to rest.
+    "tapSide": {
+        RT_SHOULDER_ROTATOR: 0,    # arm at the side of the body
+        RT_SHOULDER_TILT:    45,   # tilted in toward the body (tap start pose)
+        RT_ELBOW_TILT:       10,   # tap "up" extreme; oscillates in [5, 10]
+        RT_ELBOW_ROTATOR:    150,  # forearm neutral (== rest)
+        RT_WRIST_TILT:       120,  # tap "up" extreme; oscillates in [75, 120]
+    },
+    # Idle "talking with your hands" gesture (Movements.talking_with_hands):
+    # arm bent out, palm up, destination/hold pose before the sway. The arm
+    # comes up to this pose, then the shoulder tilt sways (carrying the
+    # shoulder rotator and elbow as eased companions) with a wrist down-up
+    # flick per swing, before returning to REST_POSITIONS. All values inside
+    # the global SAFE_LIMITS, so no verified_pose_override.
+    "talkingWithHands": {
+        RT_SHOULDER_ROTATOR: 55,   # arm up/out (sways in [50, 60])
+        RT_SHOULDER_TILT:    100,  # bent out; sways in [46, 100]
+        RT_ELBOW_TILT:       140,  # forearm raised; sways in [120, 140]
+        RT_ELBOW_ROTATOR:    270,  # forearm twisted to palm fully up (rest 150)
+        RT_WRIST_TILT:       70,   # wrist reach pose; flicks 65<->50 per swing
     },
     "comeHere": {
         RT_SHOULDER_ROTATOR: 130,

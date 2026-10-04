@@ -2315,6 +2315,342 @@ class Movements:
             steps=50, delay=0.025,
         )
 
+    # tap_side pose + motion values (shared by the gesture body below).
+    # Start pose (from the operator spec) for the four right-arm channels: the
+    # arm hangs at the side with the elbow straight and the shoulder tilted
+    # slightly in (45, below its rest of 55) so the hand sits against the body.
+    _TS_WRIST_START = 90                   # RT_WRIST_TILT establish angle
+    _TS_ELBOW_ROT_START = 150              # RT_ELBOW_ROTATOR (== rest)
+    _TS_ELBOW_START = 5                    # RT_ELBOW_TILT (== rest, elbow straight)
+    _TS_SHOULDER_TILT_START = 45           # RT_SHOULDER_TILT (in toward the body)
+    _TS_SHOULDER_ROT_START = 0             # RT_SHOULDER_ROTATOR (== rest, arm at side)
+    # Tap oscillation extremes. Both joints tap TOGETHER, one sweep per elbow
+    # half-cycle: the elbow up-swing (5->10) drives the wrist 75->120, the elbow
+    # down-swing (10->5) drives the wrist 120->75. All endpoints inside
+    # SAFE_LIMITS (wrist 10-230, elbow 0-160), so no verified_pose_override.
+    _TS_WRIST_LO, _TS_WRIST_HI = 75, 120   # RT_WRIST_TILT tap arc
+    _TS_ELBOW_LO, _TS_ELBOW_HI = 5, 10     # RT_ELBOW_TILT tap arc
+    # Relative speed (1-10 dial) from the spec. The wrist leads at speed 7 (a
+    # touch faster than the elbow's nominal 5); because the two tap TOGETHER in
+    # one move_to they share a single arrival time, so the shared half-cycle
+    # pace is sized from the faster wrist via speed_to_steps (larger speed =>
+    # fewer steps => faster move). The elbow eases its small 5-degree arc across
+    # that same window, so it still reads as the slower-feeling joint.
+    _TS_WRIST_SPEED = 7
+    _TS_TAP_DELAY = 0.02                   # per-step delay for the tap half-cycles
+    _TS_REPS_RANGE = (3, 5)                # inclusive random reps when reps=None
+
+    async def tap_side(self, reps=None):
+        """Tap side: idly tap the hand against the side of the body, as if bored.
+
+        Channels (owned set {3,4,5,6,7}): RT_WRIST_TILT (3),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+
+        A pure, audio-free idle Gesture on the right-arm channels (4-7, plus the
+        wrist on 3) -- it never touches the jaw/audio path, so it is safe to
+        layer over a live mic stream. First the arm settles into the tap start
+        pose (shoulder tilt in to 45, elbow straight at 5, wrist at 90), then the
+        wrist and elbow oscillate TOGETHER against the body, then the moved
+        joints return to REST_POSITIONS.
+
+        Tap motion (wrist and elbow phased as one tap per elbow half-cycle):
+          - RT_WRIST_TILT (ch 3): 75 <-> 120 at relative speed 7.
+          - RT_ELBOW_TILT (ch 5): 5 <-> 10 at relative speed 5.
+        Each elbow up-swing (5->10) drives the wrist 75->120, and each elbow
+        down-swing (10->5) drives the wrist 120->75, so the two tap together --
+        one wrist sweep per elbow half-cycle. The wrist (speed 7) runs a touch
+        faster than the elbow (speed 5); both channels are disjoint, so the pair
+        moves concurrently in a single ``move_to``. All commanded angles sit
+        inside SAFE_LIMITS, so no verified_pose_override is needed.
+
+        Repetitions default to 4 but are configurable; when ``reps`` is None a
+        random 3-5 is chosen from the shared ``random`` module (so a seeded run
+        stays deterministic). The SAME count drives both joints.
+
+        Args:
+            reps: Number of tap cycles (one up-swing + one down-swing each). When
+                None (the default call), a random count in [3, 5] is used;
+                pass an int to force a specific count. Defaults to 4 when the
+                caller passes 4 explicitly.
+        """
+        # Resolve the repetition count ONCE and use it for both joints. Default
+        # to 4; when unspecified (None), randomize within [3, 5] via the shared
+        # random module so a seeded run is reproducible.
+        if reps is None:
+            reps = random.randint(*self._TS_REPS_RANGE)
+
+        # Size each tap half-cycle's step count via speed_to_steps (the 1-10
+        # speed-dial convention: higher speed = fewer steps = faster). The wrist
+        # and elbow share one move_to per half-cycle and so must arrive together
+        # on a single shared step count -- a move_to interpolates every joint
+        # across the SAME steps. Size that shared count from the WRIST, the
+        # faster joint (speed 7 vs the elbow's 5), so the tap reads as brisk;
+        # the elbow eases across its small 5-degree arc over the same window,
+        # keeping it the slower-feeling joint. Both half-cycles cover the same
+        # distances, so one step count serves the up- and down-swing.
+        wrist_travel = abs(self._TS_WRIST_HI - self._TS_WRIST_LO)
+        tap_steps = speed_to_steps(
+            wrist_travel, self._TS_WRIST_SPEED, delay=self._TS_TAP_DELAY)
+
+        print(f"[tap_side] tapping {reps} time(s)")
+
+        # SETTLE into the start pose: shoulder tilts in to 45, elbow straight at
+        # 5, forearm/rotator at rest, wrist at 90 -- all together for a smooth
+        # settle before the tapping loop begins.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._TS_SHOULDER_ROT_START,
+                constants.RT_SHOULDER_TILT: self._TS_SHOULDER_TILT_START,
+                constants.RT_ELBOW_TILT: self._TS_ELBOW_START,
+                constants.RT_ELBOW_ROTATOR: self._TS_ELBOW_ROT_START,
+                constants.RT_WRIST_TILT: self._TS_WRIST_START,
+            },
+            steps=40, delay=0.02,
+        )
+
+        # TAP: wrist and elbow oscillate TOGETHER, one tap per elbow half-cycle.
+        # Up-swing: elbow 5->10 drives wrist 75->120. Down-swing: elbow 10->5
+        # drives wrist 120->75. Both channels (3, 5) are disjoint, so the pair
+        # moves concurrently in one move_to.
+        for _ in range(reps):
+            await self.trunkController.move_to(
+                {
+                    constants.RT_ELBOW_TILT: self._TS_ELBOW_HI,
+                    constants.RT_WRIST_TILT: self._TS_WRIST_HI,
+                },
+                steps=tap_steps, delay=self._TS_TAP_DELAY,
+            )
+            await self.trunkController.move_to(
+                {
+                    constants.RT_ELBOW_TILT: self._TS_ELBOW_LO,
+                    constants.RT_WRIST_TILT: self._TS_WRIST_LO,
+                },
+                steps=tap_steps, delay=self._TS_TAP_DELAY,
+            )
+
+        # RETURN TO REST: ease every moved joint back to REST_POSITIONS so
+        # nothing is left energized off-rest (wrist 90, elbow rotator 150, elbow
+        # tilt 5, shoulder tilt 55, shoulder rotator 0).
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+                constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_ELBOW_ROTATOR: constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+                constants.RT_WRIST_TILT: constants.REST_POSITIONS[constants.RT_WRIST_TILT],
+            },
+            steps=40, delay=0.02,
+        )
+
+    # --- talking_with_hands ("talking with hands") -----------------------
+    # Pure audio-free idle Gesture: right arm comes up bent out palm-up, then
+    # sways as if gesturing while speaking. Owned channels {3,5,6,7};
+    # RT_ELBOW_ROTATOR (4) held at rest 150 (palm orientation). All endpoints
+    # inside SAFE_LIMITS -> no verified_pose_override. hand-to-face
+    # FORBIDDEN_COMBINATION cannot trigger (elbow <=140<150, rotator <=60<210).
+    _TWH_WRIST_REACH      = 70    # RT_WRIST_TILT destination/hold (rest 90)
+    _TWH_ELBOW_ROT_HOLD   = 270   # RT_ELBOW_ROTATOR held at 270 = palm fully up (rest 150)
+    _TWH_ELBOW_REACH      = 140   # RT_ELBOW_TILT destination (rest 5)
+    _TWH_SHOULDER_REACH   = 100   # RT_SHOULDER_TILT destination (rest 55)
+    _TWH_ROTATOR_REACH    = 55    # RT_SHOULDER_ROTATOR destination (rest 0)
+    # Shoulder-tilt sway band: center 73 +/- 27 = [46, 100], inside (45,270)
+    # (chosen so the floor sits 1deg above the SAFE_LIMITS 45 floor rather
+    # than relying on the clamp; preserves the operator's 45-100 intent).
+    _TWH_SHOULDER_CENTER, _TWH_SHOULDER_HALF, _TWH_SHOULDER_JITTER = 73, 27, 0.25
+    # Shoulder-rotator sway band: center 55 +/- 5 = [50, 60].
+    _TWH_ROTATOR_CENTER,  _TWH_ROTATOR_HALF,  _TWH_ROTATOR_JITTER  = 55, 5, 0.25
+    # Elbow companion sway band: center 130 +/- 10 = [120, 140].
+    _TWH_ELBOW_CENTER,    _TWH_ELBOW_HALF,    _TWH_ELBOW_JITTER     = 130, 10, 0.25
+    # Swing timing (speed-7 feel, matching menacing_reach's swing cadence).
+    _TWH_SWING_STEPS_RANGE = (18, 30)
+    _TWH_SWING_DELAY_BASE  = 0.03
+    _TWH_SWING_DELAY_JITTER = 0.006
+    # Wrist flick endpoints + speed (down-up, no dwell). speed_to_steps(7).
+    _TWH_WRIST_DOWN, _TWH_WRIST_UP = 50, 65
+    _TWH_WRIST_SPEED = 7
+    _TWH_WRIST_DELAY = 0.02
+    _TWH_REPS_RANGE  = (6, 9)   # inclusive random reps when reps=None
+    # Random beat between swings (a natural speaking pause). Drawn per
+    # iteration from the shared random module via uniform(), so a seeded run
+    # stays deterministic.
+    _TWH_PAUSE_MIN, _TWH_PAUSE_MAX = 0.5, 1.25
+
+    def _twh_next_centered_target(self, center, half, jitter_pct, state_attr):
+        """Pick this joint's next centered-swing target, tracking its own state.
+
+        Replicates ``randomized_centering_move``'s LT/CENTER/RT transition math
+        for ONE joint so the result can be merged into another joint's
+        ``move_to`` as a ``companion`` (an eased move on the SAME timeline over a
+        disjoint channel) while still oscillating within its own centered band
+        and keeping its own transition state. Classifies the joint's current
+        logical position (nearest of LT/CENTER/RT, ties -> CENTER), transitions
+        to one of the two OTHER positions, applies endpoint jitter of
+        ``+/- (jitter_pct * half)``, clamps back into ``[center-half, center+half]``,
+        stores the result in ``state_attr``, and returns it. All randomness is
+        drawn from the shared ``random`` module, so a seeded run is deterministic.
+
+        Args:
+            center: Band center angle in degrees.
+            half: Half the band width; the band is ``[center-half, center+half]``.
+            jitter_pct: Endpoint jitter as a fraction of ``half`` (0..1).
+            state_attr: Name of the per-joint attribute tracking the last
+                commanded target (read via ``getattr`` defaulting to ``center``).
+
+        Returns:
+            The commanded target angle (int), clamped into the band.
+        """
+        lt, rt = center - half, center + half
+        nominals = {"LT": lt, "CENTER": center, "RT": rt}
+        current = getattr(self, state_attr, center)
+        current_pos = min(("CENTER", "LT", "RT"),
+                          key=lambda p: abs(current - nominals[p]))
+        dest = random.choice({"RT": ("LT", "CENTER"),
+                              "LT": ("RT", "CENTER"),
+                              "CENTER": ("RT", "LT")}[current_pos])
+        nominal = nominals[dest]
+        jitter = round(random.uniform(-1, 1) * jitter_pct * half)
+        target = int(round(max(lt, min(rt, nominal + jitter))))
+        setattr(self, state_attr, target)
+        return target
+
+    async def talking_with_hands(self, reps=None):
+        """Talking with hands: raise the arm bent out palm-up, then sway as if
+        gesturing while speaking, then lower.
+
+        Channels (owned set {3,5,6,7}): RT_WRIST_TILT (3), RT_ELBOW_TILT (5),
+                  RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7).
+                  RT_ELBOW_ROTATOR (4) is held at 270 (palm fully up; rest 150)
+                  and never oscillated.
+
+        A pure, audio-free idle Gesture on the right-arm channels -- it never
+        touches the jaw/audio path, so it is safe to layer over a live mic
+        stream. First one eased ``move_to`` raises all four moving channels
+        together to the bent-out palm-up destination pose (shoulder tilt 100,
+        shoulder rotator 55, elbow tilt 140, wrist 70) with the forearm held at
+        270. Then, for ``reps`` iterations, the arm sways: the shoulder
+        tilt runs a ``randomized_centering_move`` over the band [46, 100]
+        (center 73, half_range 27) at speed-7 cadence, CARRYING the shoulder
+        rotator (band [50, 60]) AND the elbow (band [120, 140]) as eased
+        ``companion`` targets in the SAME move_to on disjoint channels; a wrist
+        down-up flick (65 -> 50 -> 65, no dwell) runs CONCURRENTLY on the
+        disjoint channel 3 via ``asyncio.gather`` -- one flick per shoulder
+        swing. Each swing is followed by a random beat (a natural speaking
+        pause) of ``uniform(0.5, 1.25)`` seconds. On completion every moved
+        joint eases back to REST_POSITIONS.
+
+        Both the shoulder-rotator and elbow companions oscillate within their
+        own centered bands and track their own transition state
+        (``_twh_rotator_state`` / ``_twh_elbow_state``), distinct from the
+        shoulder tilt's ``_twh_shoulder_state``. All randomness is drawn from the
+        shared ``random`` module, so a seeded run is deterministic. All commanded
+        angles sit inside SAFE_LIMITS, so no verified_pose_override is needed, and
+        the hand-to-face FORBIDDEN_COMBINATION cannot trigger (elbow <= 140 < 150,
+        rotator <= 60 < 210).
+
+        Args:
+            reps: Number of shoulder swings (each with a companion rotator/elbow
+                move and one concurrent wrist flick). When None (the default
+                call), a random count in [6, 9] is chosen from the shared
+                ``random`` module; pass an int to force a specific count. The
+                SAME count drives the shoulder sway, rotator companion, elbow
+                companion, and wrist flick.
+        """
+        # Resolve the repetition count ONCE and use the SAME count for every
+        # joint. When unspecified (None), randomize within [6, 9] via the shared
+        # random module so a seeded run is reproducible.
+        if reps is None:
+            reps = random.randint(*self._TWH_REPS_RANGE)
+
+        # Initialize per-joint centering state at band centers so the first
+        # swing transitions from a known position (as _menacing_reach_reach /
+        # _present_palm_raise do).
+        self._twh_shoulder_state = self._TWH_SHOULDER_CENTER
+        self._twh_rotator_state  = self._TWH_ROTATOR_CENTER
+        self._twh_elbow_state    = self._TWH_ELBOW_CENTER
+
+        print(f"[talking_with_hands] swaying {reps} time(s)")
+
+        # 1. REACH: raise the arm to the bent-out palm-up destination pose, all
+        #    four moving channels together, eased. RT_ELBOW_ROTATOR holds at rest
+        #    150 (palm orientation) and is written here to lock it.
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._TWH_ROTATOR_REACH,
+                constants.RT_SHOULDER_TILT:    self._TWH_SHOULDER_REACH,
+                constants.RT_ELBOW_TILT:       self._TWH_ELBOW_REACH,
+                constants.RT_ELBOW_ROTATOR:    self._TWH_ELBOW_ROT_HOLD,
+                constants.RT_WRIST_TILT:       self._TWH_WRIST_REACH,
+            },
+            steps=45, delay=0.02,
+        )
+
+        # Wrist flick travel -> shared step count (speed-7 dial). Same delay is
+        # passed here and to the flick's move_to calls so the pace matches.
+        flick_steps = speed_to_steps(
+            abs(self._TWH_WRIST_UP - self._TWH_WRIST_DOWN),
+            self._TWH_WRIST_SPEED, delay=self._TWH_WRIST_DELAY)
+
+        # 2. SWAY: one iteration per shoulder swing. The shoulder-tilt swing
+        #    carries the shoulder-rotator AND the elbow as companions (both ease
+        #    inside the SAME move_to on disjoint channels). The wrist flick
+        #    (channel 3, disjoint) runs CONCURRENTLY via gather: one down-up
+        #    flick (70->45->70) per swing, no dwell at 45.
+        for _ in range(reps):
+            def _companions():
+                # Rotator + elbow centered swing targets, each tracking its own
+                # state, merged into the shoulder swing's move_to.
+                return {
+                    constants.RT_SHOULDER_ROTATOR: self._twh_next_centered_target(
+                        self._TWH_ROTATOR_CENTER, self._TWH_ROTATOR_HALF,
+                        self._TWH_ROTATOR_JITTER, "_twh_rotator_state"),
+                    constants.RT_ELBOW_TILT: self._twh_next_centered_target(
+                        self._TWH_ELBOW_CENTER, self._TWH_ELBOW_HALF,
+                        self._TWH_ELBOW_JITTER, "_twh_elbow_state"),
+                }
+
+            async def _swing():
+                await self.randomized_centering_move(
+                    constants.RT_SHOULDER_TILT,
+                    center=self._TWH_SHOULDER_CENTER,
+                    half_range=self._TWH_SHOULDER_HALF,
+                    jitter_pct=self._TWH_SHOULDER_JITTER,
+                    state_attr="_twh_shoulder_state",
+                    steps_range=self._TWH_SWING_STEPS_RANGE,
+                    delay_base=self._TWH_SWING_DELAY_BASE,
+                    delay_jitter=self._TWH_SWING_DELAY_JITTER,
+                    companion=_companions,
+                )
+
+            async def _flick():
+                await self.trunkController.move_to(
+                    {constants.RT_WRIST_TILT: self._TWH_WRIST_DOWN},
+                    steps=flick_steps, delay=self._TWH_WRIST_DELAY)
+                await self.trunkController.move_to(
+                    {constants.RT_WRIST_TILT: self._TWH_WRIST_UP},
+                    steps=flick_steps, delay=self._TWH_WRIST_DELAY)
+
+            await asyncio.gather(_swing(), _flick())
+
+            # Beat between swings: a natural speaking pause, random per
+            # iteration (shared random module -> deterministic under seed).
+            await asyncio.sleep(
+                random.uniform(self._TWH_PAUSE_MIN, self._TWH_PAUSE_MAX))
+
+        # 3. RETURN TO REST: ease every moved joint back to REST_POSITIONS so
+        #    nothing is left energized off-rest (wrist 90, elbow rotator 150,
+        #    elbow tilt 5, shoulder tilt 55, shoulder rotator 0).
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+                constants.RT_SHOULDER_TILT:    constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_ELBOW_TILT:       constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_ELBOW_ROTATOR:    constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+                constants.RT_WRIST_TILT:       constants.REST_POSITIONS[constants.RT_WRIST_TILT],
+            },
+            steps=45, delay=0.02,
+        )
+
     # ================================================================== #
     # HEAD gestures  (channels: NECK_PAN (0), NECK_TILT (1))             #
     # Safe to gather with any ARM gesture.                                #

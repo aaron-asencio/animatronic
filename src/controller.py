@@ -10,7 +10,8 @@ Usage:
     python3 controller.py --action=<action_name>
 
 ARM gestures (channels 4–7):
-    wave, beckon, comeHere, menacingReach, yawnCover, facePalm, fanButt, fanNose
+    wave, beckon, comeHere, menacingReach, yawnCover, facePalm, fanButt, fanNose,
+    tapSide, talkingWithHands
 
 HEAD gestures (channels 0–1):
     yes, lookAroundSmall, lookAroundRandom, neckEllipse,
@@ -55,6 +56,8 @@ def main(args):
         'facePalm':         mv.face_palm,
         'fanButt':          mv.fan_butt,
         'fanNose':          mv.fan_nose,
+        'tapSide':          mv.tap_side,
+        'talkingWithHands': mv.talking_with_hands,
 
         # --- HEAD gestures ---
         'yes':              mv.nod,

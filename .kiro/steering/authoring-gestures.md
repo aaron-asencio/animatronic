@@ -47,6 +47,42 @@ the coughs, `burp`, and `fart`): elbow cover **162**, shoulder tilt 35, rotator
 200, forearm 185, under the `RT_SHOULDER_TILT: (35,270)` / `RT_ELBOW_TILT:
 (0,170)` override.
 
+## 1.5 Validate the spec BEFORE launching any work
+
+A motion spec with internal contradictions is the single biggest source of
+wasted iterations — each inconsistency surfaced one at a time means one
+clarification round apiece. Before writing code or launching a workflow,
+cross-check the whole request against `constants.py` in ONE pass and surface
+EVERY inconsistency at once, rather than fixing them serially.
+
+Check all of the following against the spec:
+
+- **One range per joint.** Each joint's oscillation band must be stated once
+  and consistently. Watch for a second, different range hidden in the timing
+  section (e.g. a wrist "Move: 75 ⇒ 120" line plus a timing line that moves the
+  same wrist "90 ⇒ 110"). Flag the conflict and ask which band is authoritative.
+- **Timing triggers reference only MOVING joints.** A "when joint X reaches
+  angle A" trigger is meaningless if X holds a fixed angle for the whole
+  gesture. If the named joint doesn't move, the operator almost certainly meant
+  the joint that DOES oscillate through that angle — name the likely intended
+  joint and confirm.
+- **Every named angle is inside `SAFE_LIMITS`.** Validate BOTH oscillation
+  endpoints AND trigger thresholds against the channel's `constants.SAFE_LIMITS`.
+  An out-of-range trigger value (e.g. "`RT_SHOULDER_TILT` reaches 5" when its
+  floor is 40) is itself a strong signal the wrong joint was named.
+- **Start pose is self-consistent.** Each start angle is inside its channel's
+  `SAFE_LIMITS`, and any channel the motion later drives starts somewhere the
+  first move can reach without a jump through a forbidden zone.
+- **Repetition / count semantics are unambiguous.** If two joints "share" a
+  count, confirm it is resolved once; if a count is "random within range",
+  confirm the range and that it uses the shared `random` module.
+
+Surface the full list in a single reply with the proposed interpretation for
+each, so the operator fixes everything in one edit. Do NOT drip-feed one
+inconsistency per round, and do NOT silently pick an interpretation for a
+safety-relevant value (an out-of-range angle or an ambiguous moving joint) —
+confirm those explicitly.
+
 ## 2. Reuse, don't re-derive
 
 - Compose from existing primitives: `_wave_arm`, `randomized_centering_move`,
