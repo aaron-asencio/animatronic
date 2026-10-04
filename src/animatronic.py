@@ -236,6 +236,7 @@ class Animatronic:
         'sneeze.wav',                   # 35  (sneeze: yawn-cover arm + sneeze.wav, snapHead after 5s)
         'elf_hh_get_candy.wav',       # 36  (comeGetCandy: random beckon/comeHere + candy call, gated 1.2s)
         'elf_nice_day_walk.wav',      # 37  (niceDay: wave + "nice day for a walk", arm leads audio by 0.5s)
+        'maximus.wav',                # 38  (maximus: headFocus x3 + audio, gated until NECK_TILT settles)
     ]
 
     # Seconds to pause before movement begins, giving audio time to start.
@@ -1136,6 +1137,63 @@ class Animatronic:
         is held at the mouth. See ``_run_cover_mouth_settled`` for the mechanics.
         """
         self._run_cover_mouth_settled(self.music[30], name="coughMedium")  # cough_medium.wav
+
+    def maximus(self):
+        """"Maximus" -- head focus (3 reps) with audio gated until the head settles.
+
+        Pairs the existing ``head_focus`` gesture with ``maximus.wav`` via the
+        Performance_Framework (gate-until-settled). The phased ``head_focus``
+        adapters supply the gate: ``head_focus_lead_in`` lowers NECK_TILT to its
+        hold angle and AWAITS it, so with ``supplies_gate=True`` the audio starts
+        the instant NECK_TILT has REACHED its destination -- the head has settled
+        before the clip begins.
+
+        * ``head_focus_lead_in`` lowers NECK_TILT to the hold angle (the gate).
+        * ``head_focus_loop_body`` runs the fixed ``_HF_PERF_REPS`` (3) concurrent
+          pan+tilt centering reps. The step uses ``loop_for_audio=False`` so the
+          body runs exactly ONCE: the user asked for a deterministic 3 reps, not
+          audio-length looping, and the body itself iterates all 3 reps. (Using
+          ``loop_for_audio=True`` would instead couple the rep count to
+          ``maximus.wav``'s length, which is not what the routine wants.)
+        * ``head_focus_return`` returns the head to REST (90/90).
+
+        The single movement owns head channels {0,1}; with no concurrent movement
+        the group is trivially channel-disjoint. The runner sweeps residual
+        channels home on completion or failure. A single ``Movements`` instance
+        backs the phase callables so they share one ``TrunkController``; the
+        runner is launched with ``asyncio.run`` at the top of the call stack
+        (never inside a running event loop).
+        """
+        mv = Movements("Animatronic")
+        audio_dir = self._resolve_audio_dir()
+
+        MAXIMUS = PerformanceDefinition(
+            name="maximus",
+            audio_file=self.music[38],  # maximus.wav
+            # head_focus supplies the gate: audio starts the moment the lead-in
+            # completes, i.e. once NECK_TILT has SETTLED at the hold angle.
+            gate=GateSpec(movement_name="head_focus"),
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=False,  # fixed 3 reps (see head_focus_loop_body)
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name="head_focus",
+                            owned_channels=frozenset({
+                                constants.NECK_PAN,
+                                constants.NECK_TILT,   # 0,1
+                            }),
+                            lead_in=mv.head_focus_lead_in,      # lower NECK_TILT to hold (gate)
+                            loop_body=mv.head_focus_loop_body,   # 3 concurrent pan+tilt reps
+                            do_return=mv.head_focus_return,      # head to REST 90/90
+                            supplies_gate=True,                  # settled lead-in opens gate
+                        ),
+                    )),
+                ),
+            ),
+        )
+
+        asyncio.run(PerformanceRunner(MAXIMUS, mv, audio_dir).run())
 
     def burp(self):
         """"Burp" — cover the mouth, burp, then an "excuse me" follow-on.
@@ -3126,6 +3184,7 @@ class Animatronic:
             'clearThroat':    self.clear_throat,
             'coughLong':      self.cough_long,
             'coughMedium':    self.cough_medium,
+            'maximus':        self.maximus,
             'burp':           self.burp,
             'fart':           self.fart,
             'fartGhost':      self.fart_ghost,
