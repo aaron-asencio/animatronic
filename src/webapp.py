@@ -42,6 +42,12 @@ import config_store
 # Defined next to the mode methods in animatronic.py so there is one source of
 # truth; this app only displays it (passed to the index template below).
 from animatronic import MODE_INTERRUPT_REFERENCE
+# The arm-only-safe Scan action allowlist (name -> ScanActionKind). This is the
+# single source of truth for what Scan may actually run while the neck tracks a
+# person, so the Scan response-pool UI is built from it — the operator can only
+# select from the arm-only-safe set, never the full routine/gesture lists (which
+# include head-coupled actions Scan would silently filter out anyway).
+from detection_routine_map import SCAN_SAFE_ARM_ACTIONS, ScanActionKind
 
 app = Flask(__name__)
 
@@ -107,6 +113,19 @@ TRACKING_ACTIONS = {'tracking'}
 # the action is passed as a separate, fixed argv entry (never interpolated into
 # a shell) (Req 9.1-9.3).
 SCAN_ACTIONS = {'scan'}
+
+# The arm-only-safe Scan response-pool candidates, split by kind from the single
+# source of truth (SCAN_SAFE_ARM_ACTIONS). Only these appear in the Scan
+# response-pool UI: an operator can select/weight only actions Scan can actually
+# run arm-only while the neck tracks a person. Sorted for stable UI ordering.
+SCAN_POOL_ROUTINES = sorted(
+    name for name, kind in SCAN_SAFE_ARM_ACTIONS.items()
+    if kind is ScanActionKind.ROUTINE
+)
+SCAN_POOL_GESTURES = sorted(
+    name for name, kind in SCAN_SAFE_ARM_ACTIONS.items()
+    if kind is ScanActionKind.GESTURE
+)
 
 # IR control modes. The only permitted values for a `POST /camera/ir` request
 # (which becomes an IR mode name, Req 10.3). Kept here with the other allowlists
@@ -610,6 +629,11 @@ def index():
         'index.html',
         routines=sorted(ROUTINE_ACTIONS),
         movements=sorted(MOVEMENT_ACTIONS),
+        # The Scan response pool is built ONLY from the arm-only-safe set, not
+        # the full routine/gesture lists above, so the operator can't select a
+        # head-coupled action Scan would silently drop.
+        scan_pool_routines=SCAN_POOL_ROUTINES,
+        scan_pool_gestures=SCAN_POOL_GESTURES,
         scan_pools=config_store.load_scan_pools(),
         styles=VOICE_STYLES,
         effects=VOICE_EFFECTS,
