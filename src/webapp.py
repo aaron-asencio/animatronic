@@ -40,6 +40,10 @@ from servo_lock import is_locked
 import nap_signal
 import range_publish
 import config_store
+# Read-only reference data for the mode panels (sensors + interrupt allowlists).
+# Defined next to the mode methods in animatronic.py so there is one source of
+# truth; this app only displays it (passed to the index template below).
+from animatronic import MODE_INTERRUPT_REFERENCE
 
 app = Flask(__name__)
 
@@ -661,6 +665,7 @@ def index():
         movements=sorted(MOVEMENT_ACTIONS),
         styles=VOICE_STYLES,
         effects=VOICE_EFFECTS,
+        mode_reference=MODE_INTERRUPT_REFERENCE,
     )
 
 

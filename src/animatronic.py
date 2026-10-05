@@ -1542,6 +1542,14 @@ class Animatronic:
     # Snore tracks the nap randomly alternates between, one per sleep segment.
     _NAP_SNORE_TRACKS = ("snore.wav", "sb_snore.wav")
 
+    # Routines the napping Mode may run on a sensor wake (startle), chosen at
+    # random. All own audio, own their event loop, and return to rest. Unlike
+    # scan, napping holds the WHOLE-ROBOT lock and the head is level at wake
+    # (sleep_snore_return leaves REST), so head-coupled reactions are safe here.
+    # Names are hard-coded constants, so getattr(self, <constant>) in _startle
+    # stays inside the allowlist boundary.
+    _NAP_STARTLE_REACTIONS = ("awaken", "snuck_up", "brains")
+
     # Distance (meters) beyond which an object never wakes the nap. An approach
     # is only significant once the object is within this gate AND getting closer
     # across several readings (see ApproachDetector / _poll_nap_sensor).
@@ -1858,24 +1866,32 @@ class Animatronic:
                     print(f"[nap] could not release {attr}: {e}")
 
     def _startle(self):
-        """Wake response to a nap interruption: run the AWAKEN Routine.
+        """Wake response to a nap interruption: run ONE random startle Routine.
 
-        When the nap is interrupted, the figure reacts with a groggy "just woke
-        up" — a gentle arm stir (snuck_up's arm with the shoulder motion halved)
-        while the head lolls around lazily until the ``awakened.wav`` audio
-        finishes, then the arm lowers to rest. The nap loop's wake
-        (``sleep_snore_return``) has already brought the figure to REST and
-        released the sleep pose override before this runs, which is the start
-        pose the ``awaken`` gesture expects.
+        Chosen at random from ``_NAP_STARTLE_REACTIONS`` (``awaken``,
+        ``snuckUp``, ``brains``). ``awaken`` is a groggy "just woke up" (a gentle
+        arm stir while the head lolls lazily); ``snuckUp`` is a sharper startle;
+        ``brains`` a zombie reach. The nap loop's wake (``sleep_snore_return``)
+        has already brought the figure to REST and released the sleep pose
+        override before this runs, which is the start pose ``snuck_up`` /
+        ``awaken`` expect, so each reaction can run from the post-wake pose
+        without a jump.
 
         This runs INSIDE the napping mode, which already holds the servo lock,
-        so it must NOT re-acquire it — ``run_action_and_audio`` does not take the
-        lock, so delegating to the shared runner (rather than duplicating the
-        audio-thread logic) is safe here. The runner drives everything back to
-        REST on error, so the figure never ends energized against a jam.
+        so it must NOT re-acquire it — ``run_action_and_audio`` / the Performance
+        Framework do not take the lock. ``reaction`` is only ever one of the
+        three hard-coded constant strings, so ``getattr(self, reaction)`` stays
+        inside the allowlist boundary (no raw external input). Each reaction
+        returns to REST on its own; the ``except`` drives everything back to rest
+        on failure so the figure never ends energized against a jam.
         """
-        print("[nap] awaken: groggy wake-up")
-        self.run_action_and_audio("_do_awaken", self.music[26])  # awakened.wav
+        reaction = random.choice(self._NAP_STARTLE_REACTIONS)
+        print(f"[nap] startle: {reaction}")
+        try:
+            getattr(self, reaction)()  # name is a hard-coded constant -> allowlist-safe
+        except Exception as e:
+            print(f"[nap] startle reaction '{reaction}' failed: {e}")
+            self._safe_rest()
 
     # ------------------------------------------------------------------ #
     # Awake — a MODE (continuous active "filler" behaviour until interrupted) #
@@ -1890,22 +1906,35 @@ class Animatronic:
     # iteration. Each entry is (weight, method_name); weights are relative and
     # need not sum to 100. The robot spends MOST of its time just looking around
     # and only occasionally does something bigger:
-    #   - lookAroundRandom  70%  (gesture, no audio)
-    #   - handVisor         20%  (gesture, no audio)
+    #   - lookAroundRandom  60%  (gesture, no audio) — stays dominant
+    #   - handVisor         15%  (gesture, no audio)
+    #   - fanNose            8%  (gesture, no audio) — occasional
+    #   - tapSide            7%  (gesture, no audio) — occasional
     #   - yawn / clearThroat 10% (routines, with audio) — split evenly below
     # All of these return to rest cleanly on their own. Extend as new ambient
     # gestures/routines land, keeping the weights relative.
     _AWAKE_AMBIENT_POOL = (
-        (70, "_do_look_around_random"),  # gesture
-        (20, "_do_hand_visor"),          # gesture
+        (60, "_do_look_around_random"),  # gesture — stays dominant
+        (15, "_do_hand_visor"),          # gesture
+        (8,  "_do_fan_nose"),            # gesture (new, occasional)
+        (7,  "_do_tap_side"),            # gesture (new, occasional)
         (10, "_AWAKE_OCCASIONAL"),       # placeholder → picks yawn|clearThroat
     )
     # The 10% "occasional" bucket splits evenly between these two Routines.
     _AWAKE_OCCASIONAL_ROUTINES = ("yawn", "clear_throat")
 
-    # On a confirmed sensor approach the mode reacts with ONE of these Routines,
-    # chosen at random, before winding down (mirrors napping's startle response).
-    _AWAKE_APPROACH_REACTIONS = ("snuck_up", "brains", "hypnotic", "more_candy")
+    # On a confirmed sensor approach the mode reacts with ONE reaction, chosen at
+    # random across BOTH typed sets below, before resuming (mirrors napping's
+    # startle response). Split by kind so a GESTURE (no audio, driven via the
+    # _do_* coroutine under asyncio.run) and a ROUTINE (owns audio + its own
+    # event loop, called directly) can both be reactions — a single list +
+    # getattr()() cannot drive both. Both lists are hard-coded module constants,
+    # so getattr(self, <constant>) stays inside the allowlist boundary.
+    #
+    # Approach-reaction ROUTINES (own audio + their own event loop; called directly).
+    _AWAKE_APPROACH_REACTION_ROUTINES = ("snuck_up", "brains", "hypnotic", "more_candy")
+    # Approach-reaction GESTURES (no audio; gesture-only _do_* coroutine via asyncio.run).
+    _AWAKE_APPROACH_REACTION_GESTURES = ("_do_face_palm",)
 
     # Seconds to pause between ambient actions ("run ... separated by 30s
     # pauses"). The pause is INTERRUPTIBLE: it is slept in small slices so a
@@ -1951,8 +1980,10 @@ class Animatronic:
         - **Sensor** (HC-SR04 in PRESENCE mode via ``_open_nap_sensor`` /
           ``_poll_nap_sensor``): an object simply STANDING within the gate — no
           approach motion required — does NOT end the mode; the figure runs ONE
-          random reaction Routine from ``_AWAKE_APPROACH_REACTIONS`` (``snuckUp``,
-          ``brains``, ``hypnotic``, ``moreCandy``) via
+          random reaction (gesture OR routine) from
+          ``_AWAKE_APPROACH_REACTION_GESTURES`` (``facePalm``) /
+          ``_AWAKE_APPROACH_REACTION_ROUTINES`` (``snuckUp``, ``brains``,
+          ``hypnotic``, ``moreCandy``) via
           ``_awake_approach_reaction``, the detector latch is reset (so it fires
           once per detected presence), and the ambient loop RESUMES. The mode
           keeps running until the admin console stops it (or the timeout). A PIR
@@ -2072,8 +2103,9 @@ class Animatronic:
         """Pick the next ambient action by weight; return (kind, method_name).
 
         Draws from ``_AWAKE_AMBIENT_POOL`` by relative weight (lookAroundRandom
-        70% / handVisor 20% / occasional 10%). The 10% "occasional" bucket then
-        splits evenly between the ``yawn`` and ``clearThroat`` Routines.
+        60% / handVisor 15% / fanNose 8% / tapSide 7% / occasional 10%). The
+        "occasional" bucket then splits evenly between the ``yawn`` and
+        ``clearThroat`` Routines.
 
         Returns:
             A tuple ``(kind, method_name)`` where ``kind`` is ``"gesture"`` (a
@@ -2161,21 +2193,44 @@ class Animatronic:
                 return reason  # stop or timeout ends the mode
 
     def _awake_approach_reaction(self):
-        """React to a sensor approach with ONE random reaction Routine.
+        """React to a sensor approach with ONE random reaction (gesture OR routine).
 
-        Chosen at random from ``_AWAKE_APPROACH_REACTIONS`` (``snuckUp``,
-        ``brains``, ``hypnotic``, ``moreCandy``) — the figure "notices" the
-        approaching visitor and performs a reaction before the mode winds down,
+        Chosen uniformly at random across the UNION of
+        ``_AWAKE_APPROACH_REACTION_GESTURES`` (``facePalm``) and
+        ``_AWAKE_APPROACH_REACTION_ROUTINES`` (``snuckUp``, ``brains``,
+        ``hypnotic``, ``moreCandy``) — the figure "notices" the approaching
+        visitor and performs a reaction before the ambient loop resumes,
         mirroring how napping runs ``_startle`` on a sensor wake.
 
+        A GESTURE is a gesture-only ``_do_*`` coroutine driven via
+        ``asyncio.run`` (this loop is synchronous, not inside an event loop),
+        identical to the ambient gesture path. A ROUTINE owns its own audio +
+        event loop, so it is called directly. Both lists are hard-coded module
+        constants, so ``getattr(self, <constant>)`` stays inside the allowlist
+        boundary (no ``getattr``/``eval`` on raw external input).
+
         Runs INSIDE the awake mode, which already holds the servo lock, so it
-        must NOT re-acquire it: these routines use ``run_action_and_audio`` /
-        the Performance_Framework, neither of which takes the lock. Each returns
-        to rest on its own, and the caller's ``_safe_rest`` is a final backstop.
+        must NOT re-acquire it: the routines use ``run_action_and_audio`` /
+        the Performance Framework and the gesture's ``_do_*`` coroutine, none of
+        which takes the lock. Each returns to rest on its own; the ``except``
+        below drives everything back to rest on failure so the arm/head is never
+        left energized, and the caller's ``_safe_rest`` is a final backstop.
         """
-        reaction = random.choice(self._AWAKE_APPROACH_REACTIONS)
-        print(f"[awake] approach detected -> reacting with routine: {reaction}")
-        getattr(self, reaction)()
+        gestures = self._AWAKE_APPROACH_REACTION_GESTURES
+        routines = self._AWAKE_APPROACH_REACTION_ROUTINES
+        choice = random.choice(gestures + routines)  # uniform over the union
+        print(f"[awake] approach detected -> reacting with: {choice}")
+        try:
+            if choice in gestures:
+                # Gesture-only _do_* coroutine: drive it with asyncio.run like
+                # the ambient gesture path (this loop is not inside an event loop).
+                asyncio.run(getattr(self, choice)())
+            else:
+                # Routine: owns its audio + event loop; call the method directly.
+                getattr(self, choice)()
+        except Exception as e:
+            print(f"[awake] approach reaction '{choice}' failed: {e}")
+            self._safe_rest()
 
     # ------------------------------------------------------------------ #
     # Tracking — a MODE (continuous head-tracking of a person until stopped) #
@@ -2869,6 +2924,7 @@ class Animatronic:
             'beckon':   lambda: mv.beckon(),
             'comeHere': lambda: mv.come_here(),
             'wave':     lambda: mv._wave_arm(include_neck=False),
+            'tapSide':  lambda: mv.tap_side(),  # NEW — arm-only gesture {3,4,5,6,7}
             'brains':   lambda: self._run_scan_performance(
                 self._brains_performance(mv, scan=True), mv
             ),
@@ -2876,6 +2932,8 @@ class Animatronic:
                 self._hypnotic_performance(mv, scan=True), mv
             ),
             # 'burp' intentionally omitted — head-coupled, see SCAN_SAFE_ARM_ACTIONS.
+            # Head-coupled items (fanNose/snuckUp/moreCandy/awaken/facePalm) are
+            # likewise omitted — see the FLAGGED block in SCAN_SAFE_ARM_ACTIONS.
         }
 
         # Clear any stale stop request from a previous Mode run (mirrors
@@ -3364,6 +3422,28 @@ class Animatronic:
         mv = Movements("Animatronic")
         await mv.hand_visor(duration=self._AWAKE_GESTURE_DURATION_S)
 
+    async def _do_fan_nose(self):
+        # Gesture-only (no audio): fan the hand in front of the nose, then rest.
+        # No idle lead-in; kept short for responsiveness (see
+        # _do_look_around_random). fan_nose takes no duration arg and ends at
+        # REST_POSITIONS on its own.
+        mv = Movements("Animatronic")
+        await mv.fan_nose()
+
+    async def _do_tap_side(self):
+        # Gesture-only (no audio): idly tap the hand against the side, then rest.
+        # No idle lead-in. tap_side(reps=None) self-randomizes 3-5 reps, takes no
+        # duration arg, and ends at REST_POSITIONS on its own.
+        mv = Movements("Animatronic")
+        await mv.tap_side()
+
+    async def _do_face_palm(self):
+        # Gesture-only (no audio): head-into-hand dismay, then recover to rest.
+        # No idle lead-in. face_palm takes no duration arg and ends at
+        # REST_POSITIONS on its own.
+        mv = Movements("Animatronic")
+        await mv.face_palm()
+
 
 def _dispatch_detection_trigger(action_map, pending_trigger):
     """Dispatch a detection-triggered Routine AFTER the Neck_Group is released.
@@ -3418,6 +3498,169 @@ def _dispatch_detection_trigger(action_map, pending_trigger):
         # whether the Routine ran or was skipped busy, so a busy miss doesn't
         # hammer the servos every frame.
         routine_map.mark_completed(rule, time.monotonic())
+
+
+# --------------------------------------------------------------------------- #
+# MODE INTERRUPT / ALLOWLIST REFERENCE                                          #
+# --------------------------------------------------------------------------- #
+# DISPLAY-ONLY reference data for the web control panel (src/webapp.py renders
+# it under each mode's panel). For each Mode this lists, besides the mode's
+# timer, the sensor(s) that can interrupt it and the allowlist of actions it may
+# run on interrupt, split into sounds (.wav), gestures (no audio), and routines
+# (audio). It is NOT consumed by any mode logic and triggers no servo motion.
+#
+# Honesty rule (do NOT invent entries): every name below is sourced from the
+# actual mode implementation in THIS file (and detection_routine_map.py) — see
+# the inline citation on each entry. Where a module/class constant already holds
+# the names, the list is BUILT from it so it tracks code changes; literals that
+# have no constant (e.g. the yawn.wav played at nap start, routine->wav
+# mappings) carry a comment citing the symbol/line they come from. An empty list
+# renders as "(N/A)" in the template (the template owns that presentation).
+#
+# Display names use the project's camelCase action convention
+# (clearThroat / snuckUp / moreCandy / lookAroundRandom / handVisor) so they
+# match the ROUTINE_ACTIONS / MOVEMENT_ACTIONS allowlists in webapp.py.
+
+# Map the internal snake_case ambient-pool / reaction names used by the awake
+# mode to the camelCase action names shown in the UI (and in webapp allowlists).
+_AWAKE_ROUTINE_DISPLAY = {
+    "yawn": "yawn",                 # music[19] yawn.wav
+    "clear_throat": "clearThroat",  # clearThroat routine, music[28] clear_throat.wav
+    "snuck_up": "snuckUp",          # snuckUp routine, music[25] snuck_up.wav
+    "brains": "brains",             # brains routine, music[20] brains.wav
+    "hypnotic": "hypnotic",         # hypnotic routine, music[21] + music[27]
+    "more_candy": "moreCandy",      # moreCandy routine, music[23] more_candy.wav
+    "awaken": "awaken",             # awaken routine, music[26] awakened.wav (nap startle)
+}
+# Map the awake ambient-pool / approach-reaction gesture coroutine names (_do_*)
+# to camelCase.
+_AWAKE_GESTURE_DISPLAY = {
+    "_do_look_around_random": "lookAroundRandom",  # MOVEMENT_ACTIONS lookAroundRandom
+    "_do_hand_visor": "handVisor",                 # MOVEMENT_ACTIONS handVisor
+    "_do_fan_nose": "fanNose",                     # MOVEMENT_ACTIONS fanNose
+    "_do_tap_side": "tapSide",                     # MOVEMENT_ACTIONS tapSide
+    "_do_face_palm": "facePalm",                   # MOVEMENT_ACTIONS facePalm (approach reaction)
+}
+
+MODE_INTERRUPT_REFERENCE = {
+    # --- NAPPING: Animatronic.napping ---------------------------------------
+    "Napping": {
+        # napping() calls self._open_nap_sensor() with the default
+        # detect_mode="approach" (Animatronic._open_nap_sensor); an approach
+        # within NAP_WAKE_GATE_M wakes the nap.
+        "sensors": ["HC-SR04 proximity (approach)"],
+        "sounds": [
+            "yawn.wav",      # nap start: run_action_and_audio("_do_yawn", music[19])
+            *Animatronic._NAP_SNORE_TRACKS,  # snore.wav, sb_snore.wav (sleep loop)
+            "awakened.wav",  # sensor-wake _startle -> _do_awaken, music[26]
+        ],
+        # napping fires no standalone gesture — all motion lives inside routines.
+        "gestures": [],
+        # The Routines napping dispatches on a sensor wake (_startle), derived
+        # from the live _NAP_STARTLE_REACTIONS constant → awaken, snuckUp, brains.
+        "routines": [
+            _AWAKE_ROUTINE_DISPLAY[name]
+            for name in Animatronic._NAP_STARTLE_REACTIONS  # awaken, snuck_up, brains
+        ],
+        # Planned-but-unwired wake sensor: animation-vocabulary.md (Sleep mode)
+        # says the mode is "interrupted by a sensor (sensor TBD)".
+        "planned_sensors": ["motion/proximity sensor (planned)"],
+        # Ambient (looping) behavior: _run_nap_loop repeats the head-lowered
+        # sleep bob/rock (Movements.sleep_snore_loop_body, animatronic.py:1522).
+        "ambient_gestures": ["Sleep bob/rock (snore loop)"],
+        # The nap loop drives audio directly via AudioPlayer, not a named Routine.
+        "ambient_routines": [],
+        # Each segment plays a track chosen from _NAP_SNORE_TRACKS (line 1543).
+        "ambient_sounds": [*Animatronic._NAP_SNORE_TRACKS],  # snore.wav, sb_snore.wav
+    },
+    # --- AWAKE: Animatronic.awake -------------------------------------------
+    "Awake": {
+        # awake() calls self._open_nap_sensor(source="awake",
+        # detect_mode="presence"); presence within the gate triggers one random
+        # reaction Routine (does not end the mode).
+        "sensors": ["HC-SR04 proximity (presence)"],
+        "sounds": [
+            # Reachable through awake's occasional ambient routines + approach
+            # reactions (the ambient gestures carry no audio).
+            "yawn.wav",          # occasional routine yawn, music[19]
+            "clear_throat.wav",  # occasional routine clearThroat, music[28]
+            "snuck_up.wav",      # approach reaction snuckUp, music[25]
+            "brains.wav",        # approach reaction brains, music[20]
+            "hypnotic.wav",      # approach reaction hypnotic, music[21]
+            "in_my_power.wav",   # hypnotic follow-on, music[27]
+            "more_candy.wav",    # approach reaction moreCandy, music[23]
+        ],
+        # INTERRUPT gestures: the approach-reaction GESTURES only (NOT the
+        # ambient pool) → facePalm. lookAroundRandom/handVisor stay ambient.
+        "gestures": [
+            _AWAKE_GESTURE_DISPLAY[name]
+            for name in Animatronic._AWAKE_APPROACH_REACTION_GESTURES  # _do_face_palm
+        ],
+        # INTERRUPT routines: the approach-reaction ROUTINES only (NOT the
+        # occasional ambient routines) → snuckUp, brains, hypnotic, moreCandy.
+        # yawn/clearThroat are ambient, not interrupt reactions.
+        "routines": [
+            _AWAKE_ROUTINE_DISPLAY[name]
+            for name in Animatronic._AWAKE_APPROACH_REACTION_ROUTINES  # snuck_up, brains, hypnotic, more_candy
+        ],
+        # Planned-but-unwired wake sensor: animation-vocabulary.md (Awake mode)
+        # says the mode is "interrupted by a sensor (sensor TBD)".
+        "planned_sensors": ["motion/proximity sensor (planned)"],
+        # Ambient (looping) behavior: _pick_ambient_action weight-picks the
+        # gesture-only entries of _AWAKE_AMBIENT_POOL (line 1898) each tick.
+        "ambient_gestures": [
+            _AWAKE_GESTURE_DISPLAY[name]
+            for _, name in Animatronic._AWAKE_AMBIENT_POOL
+            if name in _AWAKE_GESTURE_DISPLAY
+        ],
+        # The 10% "occasional" bucket loops a Routine from _AWAKE_OCCASIONAL_ROUTINES
+        # (line 1904) — these carry audio, unlike the ambient gestures.
+        "ambient_routines": [
+            _AWAKE_ROUTINE_DISPLAY[name]
+            for name in Animatronic._AWAKE_OCCASIONAL_ROUTINES  # yawn, clear_throat
+        ],
+        # Audio owned by the occasional looping routines (yawn / clearThroat).
+        "ambient_sounds": ["yawn.wav", "clear_throat.wav"],
+    },
+    # --- SCAN: Animatronic.scan ---------------------------------------------
+    "Scan": {
+        # scan polls CameraClient.get_detections() against Camera_Service and
+        # fires responses via scan_rules() (person / person+dog). It never calls
+        # _open_nap_sensor, so it uses NO HC-SR04 range sensor.
+        "sensors": ["Camera person/dog detection (Camera_Service)"],
+        # Sounds reachable through scan's ROUTINE responses (GESTURE responses
+        # carry no audio). The only ScanActionKind.ROUTINE entries are brains and
+        # hypnotic (burp is deliberately withheld — see SCAN_SAFE_ARM_ACTIONS).
+        "sounds": [
+            "brains.wav",        # scan response brains, music[20]
+            "hypnotic.wav",      # scan response hypnotic, music[21]
+            "in_my_power.wav",   # hypnotic follow-on, music[27]
+        ],
+        # SCAN_SAFE_ARM_ACTIONS entries that are ScanActionKind.GESTURE.
+        "gestures": [
+            name
+            for name, kind in SCAN_SAFE_ARM_ACTIONS.items()
+            if kind is ScanActionKind.GESTURE
+        ],
+        # SCAN_SAFE_ARM_ACTIONS entries that are ScanActionKind.ROUTINE.
+        # (walkYourDog for the person+dog rule is a logged placeholder only — not
+        # in any allowlist/dispatch — so it is intentionally NOT listed.)
+        "routines": [
+            name
+            for name, kind in SCAN_SAFE_ARM_ACTIONS.items()
+            if kind is ScanActionKind.ROUTINE
+        ],
+        # No planned sensor named for scan in steering/code (it already uses the
+        # camera) → empty; the template renders this as "(none planned)".
+        "planned_sensors": [],
+        # Ambient (looping) behavior: when select_target finds no person the loop
+        # runs _run_scan_sweep (animatronic.py:2631), a slow NECK_PAN sweep.
+        "ambient_gestures": ["Scan_Sweep (NECK_PAN sweep)"],
+        # The sweep carries no audio (audio only on detection responses, above).
+        "ambient_routines": [],
+        "ambient_sounds": [],
+    },
+}
 
 
 def main(args):

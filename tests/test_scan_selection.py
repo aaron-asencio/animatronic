@@ -64,17 +64,22 @@ def _det(label):
 # --- weighted pool / picker --------------------------------------------------
 
 
-def test_weighted_scan_pool_has_17_slots_with_5_to_1_ratio():
-    """The shipped pool is 3 Gestures x5 + 2 Routines x1 = 17 slots, 5:1 ratio."""
-    pool = weighted_scan_pool()
+def test_weighted_scan_pool_slots_follow_5_to_1_ratio():
+    """The shipped pool is 4 Gestures x5 + 2 Routines x1 = 22 slots, 5:1 ratio.
 
-    # 3 gestures * 5 + 2 routines * 1 = 17.
-    assert len(pool) == 17
+    (Gestures: beckon, comeHere, wave, tapSide; Routines: brains, hypnotic.)
+    Counts are derived from the allowlist so adding a scan-safe action keeps the
+    invariant asserted without re-hardcoding the total.
+    """
+    pool = weighted_scan_pool()
 
     gestures = [n for n, k in SCAN_SAFE_ARM_ACTIONS.items() if k is ScanActionKind.GESTURE]
     routines = [n for n, k in SCAN_SAFE_ARM_ACTIONS.items() if k is ScanActionKind.ROUTINE]
-    assert len(gestures) == 3
+    assert len(gestures) == 4
     assert len(routines) == 2
+
+    # 4 gestures * 5 + 2 routines * 1 = 22.
+    assert len(pool) == len(gestures) * GESTURE_WEIGHT + len(routines) * ROUTINE_WEIGHT == 22
 
     for name in gestures:
         assert pool.count(name) == GESTURE_WEIGHT == 5
