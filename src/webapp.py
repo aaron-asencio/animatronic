@@ -10,7 +10,6 @@ It provides the same controls the Node-RED flow did:
   - Mic stream : start/stop live mic passthrough (proxied to micwebcontroller)
   - Voice FX   : style preset + per-effect toggles/sliders (proxied)
   - Jaw Tuning : adaptive envelope (silence floor / open+close ratio / adapt speed / close hold), proxied
-  - Automation : timed random routine + movement loops (background threads)
 
 Design notes:
   - Routines and movements run as subprocesses using the venv Python, exactly
@@ -29,7 +28,6 @@ Usage:
 from flask import Flask, render_template, request, jsonify, Response
 import subprocess
 import threading
-import random
 import time
 import os
 import json
@@ -121,21 +119,6 @@ VOICE_STYLES = ['natural', 'demon', 'ghost', 'robot', 'possessed']
 VOICE_EFFECTS = ['pitch', 'distortion', 'echo', 'reverb', 'tremolo',
                  'bitcrush', 'ring_mod']
 
-# Pools the automation loops draw from (mirrors the old Node-RED Switch nodes).
-ROUTINE_POOL = ['blah', 'startParty', 'krusty']
-# Only valid MOVEMENT_ACTIONS. The head-nod action is now 'yes' (renamed from
-# the old 'nod'); the redundant 'no' head-shake action was removed in favor of
-# 'shakeHead'. Using canonical controller action names here.
-MOVEMENT_POOL = ['yes', 'lookAroundSmall',
-                 'neckEllipse', 'swivelHead', 'wave']
-
-# ── Automation state ─────────────────────────────────────────────────────────
-automation = {
-    'routine_enabled': False,
-    'movement_enabled': False,
-    'routine_interval': 300,   # seconds (5 min) — matches old looptimer
-    'movement_interval': 45,   # seconds        — matches old looptimer
-}
 _last_action = {'value': 'idle'}   # for status display
 
 # Max wall-clock seconds any single gesture subprocess may run. No legitimate
@@ -474,42 +457,6 @@ def launch_gesture(kind, action, launcher):
         return True, f'{kind} started: {action}'
 
 
-# ── Automation loops (background daemon threads) ─────────────────────────────
-def _routine_loop():
-    """Fire a random full routine every routine_interval seconds when enabled."""
-    while True:
-        if automation['routine_enabled']:
-            action = random.choice(ROUTINE_POOL)
-            # Skip this tick if the servos are already busy — never stack routines.
-            ok, message = launch_gesture('routine', action, run_routine)
-            if not ok:
-                print(f"[auto-routine] skipped: {message}")
-        # Sleep in 1s slices so interval/toggle changes take effect quickly.
-        for _ in range(automation['routine_interval']):
-            if not automation['routine_enabled']:
-                break
-            time.sleep(1)
-        if not automation['routine_enabled']:
-            time.sleep(1)
-
-
-def _movement_loop():
-    """Fire a random gesture-only movement every movement_interval seconds."""
-    while True:
-        if automation['movement_enabled']:
-            action = random.choice(MOVEMENT_POOL)
-            # Skip this tick if the servos are already busy — never stack gestures.
-            ok, message = launch_gesture('movement', action, run_movement)
-            if not ok:
-                print(f"[auto-movement] skipped: {message}")
-        for _ in range(automation['movement_interval']):
-            if not automation['movement_enabled']:
-                break
-            time.sleep(1)
-        if not automation['movement_enabled']:
-            time.sleep(1)
-
-
 # ── Mic controller proxy helper ──────────────────────────────────────────────
 def _proxy(method, path, json_body=None):
     """Forward a request to micwebcontroller.py and return (json, status).
@@ -663,6 +610,7 @@ def index():
         'index.html',
         routines=sorted(ROUTINE_ACTIONS),
         movements=sorted(MOVEMENT_ACTIONS),
+        scan_pools=config_store.load_scan_pools(),
         styles=VOICE_STYLES,
         effects=VOICE_EFFECTS,
         mode_reference=MODE_INTERRUPT_REFERENCE,
@@ -694,17 +642,13 @@ def movement(action):
 # ── Route: force stop ────────────────────────────────────────────────────────
 @app.route('/stop', methods=['POST'])
 def stop():
-    """Emergency stop: kill any running gesture and disable automation.
+    """Emergency stop: kill any running gesture.
 
-    Killing the gesture subprocess releases the servo lock. Automation is turned
-    off too, so the loops don't immediately relaunch something.
+    Killing the gesture subprocess releases the servo lock.
     """
-    # Turn off automation first so a loop can't relaunch between kill and reply.
-    automation['routine_enabled'] = False
-    automation['movement_enabled'] = False
     message = stop_active_gesture(reason='force stop from UI')
-    print(f"[stop] {message} (automation disabled)")
-    return jsonify({'status': 'success', 'message': message, 'automation': automation})
+    print(f"[stop] {message}")
+    return jsonify({'status': 'success', 'message': message})
 
 
 # ── Route: napping mode ──────────────────────────────────────────────────────
@@ -996,6 +940,60 @@ def scan(state):
     return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
 
 
+# ── Routes: scan response pool (config read/write; NO servo command) ─────────
+@app.route('/scan/pool', methods=['GET'])
+def scan_pool_get():
+    """Return the persisted Scan response pool.
+
+    Read-only: emits ``{"routine_pool": {name: weight}, "gesture_pool":
+    {name: weight}}`` straight from ``config_store.load_scan_pools()``. Issues
+    no servo command and dispatches no action — this only reads config.
+    """
+    return jsonify(config_store.load_scan_pools())
+
+
+@app.route('/scan/pool', methods=['POST'])
+def scan_pool_post():
+    """Persist the operator-selected Scan response pool (SECURITY BOUNDARY).
+
+    Body: ``{"routine_pool": {name: weight}, "gesture_pool": {name: weight}}``.
+    EVERY submitted routine name is validated against ``ROUTINE_ACTIONS`` and
+    every gesture name against ``MOVEMENT_ACTIONS`` via :func:`_validate_allowlist`
+    BEFORE anything is persisted. If ANY name is unknown the whole request is
+    rejected with 400 and nothing is written — a raw submitted name is never
+    passed to ``getattr``/``eval``/``subprocess`` and this handler runs NO servo
+    command (config read/write only). Validated maps are then sanitized
+    (weights coerced to int, clamped to [1,10], <1 dropped) and saved via
+    ``config_store.save_scan_pools``, which preserves ``scan.timeout_min``.
+    """
+    data = request.json or {}
+    routine_pool = data.get('routine_pool') or {}
+    gesture_pool = data.get('gesture_pool') or {}
+    if not isinstance(routine_pool, dict) or not isinstance(gesture_pool, dict):
+        return jsonify({'status': 'error',
+                        'message': 'pool must be an object'}), 400
+
+    # Allowlist gate: reject the WHOLE request if any name is unknown, persist
+    # nothing. Names are the single security boundary — only known action names
+    # may ever be written to tuning.json or later dispatched by Scan.
+    for name in routine_pool:
+        if _validate_allowlist(name, ROUTINE_ACTIONS) is None:
+            print(f"[scan/pool] rejected unknown routine name: {name!r}")
+            return jsonify({'status': 'error',
+                            'message': f'Unknown routine: {name}'}), 400
+    for name in gesture_pool:
+        if _validate_allowlist(name, MOVEMENT_ACTIONS) is None:
+            print(f"[scan/pool] rejected unknown gesture name: {name!r}")
+            return jsonify({'status': 'error',
+                            'message': f'Unknown gesture: {name}'}), 400
+
+    clean_r = config_store.sanitize_scan_pool(routine_pool, ROUTINE_ACTIONS)
+    clean_g = config_store.sanitize_scan_pool(gesture_pool, MOVEMENT_ACTIONS)
+    stored = config_store.save_scan_pools(clean_r, clean_g)
+    print(f"[scan/pool] saved routine_pool={clean_r} gesture_pool={clean_g}")
+    return jsonify({'status': 'success', **stored})
+
+
 # ── Routes: mic stream (proxied) ─────────────────────────────────────────────
 @app.route('/mic/<state>', methods=['POST'])
 def mic(state):
@@ -1045,29 +1043,12 @@ def effects_revert():
     return jsonify(body), code
 
 
-# ── Routes: automation ───────────────────────────────────────────────────────
-@app.route('/automation', methods=['POST'])
-def set_automation():
-    data = request.json or {}
-    if 'routine_enabled' in data:
-        automation['routine_enabled'] = bool(data['routine_enabled'])
-    if 'movement_enabled' in data:
-        automation['movement_enabled'] = bool(data['movement_enabled'])
-    if 'routine_interval' in data:
-        automation['routine_interval'] = max(5, int(data['routine_interval']))
-    if 'movement_interval' in data:
-        automation['movement_interval'] = max(5, int(data['movement_interval']))
-    print(f"[automation] {automation}")
-    return jsonify({'status': 'success', 'automation': automation})
-
-
 # ── Routes: status ───────────────────────────────────────────────────────────
 @app.route('/status', methods=['GET'])
 def status():
-    """Aggregate local automation state with the mic controller's status."""
+    """Aggregate local run state with the mic controller's status."""
     mic_body, _ = _proxy('GET', '/status')
     return jsonify({
-        'automation': automation,
         'last_action': _last_action['value'],
         'servos_busy': _gesture_busy(),
         'mic': mic_body,
@@ -1361,10 +1342,12 @@ def _range_poll_loop():
         time.sleep(RANGE_POLL_INTERVAL_S)
 
 
-def _start_automation_threads():
-    """Start the automation loops as daemon threads (die with the process)."""
-    threading.Thread(target=_routine_loop, daemon=True).start()
-    threading.Thread(target=_movement_loop, daemon=True).start()
+def _start_background_threads():
+    """Start the background daemon threads (die with the process).
+
+    Currently just the HC-SR04 range poller, which owns the sensor and
+    publishes readings for the dashboard gauge and the background Modes.
+    """
     threading.Thread(target=_range_poll_loop, daemon=True).start()
 
 
@@ -1378,10 +1361,10 @@ if __name__ == '__main__':
 
     # With the reloader active, this module is imported in two processes: the
     # watcher (parent) and the worker (child, where WERKZEUG_RUN_MAIN == 'true').
-    # Only start the automation threads in the process that actually serves
-    # requests, otherwise the loops would run twice.
+    # Only start the background threads in the process that actually serves
+    # requests, otherwise the range poller would run twice.
     if not dev_reload or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        _start_automation_threads()
+        _start_background_threads()
 
     # In dev, also watch the sibling project modules so edits to e.g.
     # servo_lock.py / animatronic.py trigger a restart too. (webapp.py itself is
