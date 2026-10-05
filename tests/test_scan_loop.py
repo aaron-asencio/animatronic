@@ -132,6 +132,18 @@ def _new_animatronic():
     return animatronic.Animatronic.__new__(animatronic.Animatronic)
 
 
+def _picker():
+    """A 0-arg picker mirroring scan()'s picker contract for the loop tests.
+
+    ``_run_scan_loop`` dispatches ``_, name = picker()``; only ``name`` is used.
+    These tests already control the pick by monkeypatching
+    ``animatronic.choose_scan_action``, so this picker returns
+    ``(ScanActionKind, name)`` with ``name`` taken from that patched function
+    (the kind is dispatch-irrelevant — the loop ignores it).
+    """
+    return ScanActionKind.ROUTINE, animatronic.choose_scan_action()
+
+
 def _fast_loop(monkeypatch):
     """Make the loop iterate quickly: zero the inter-iteration/sweep sleeps."""
     monkeypatch.setattr(animatronic.Animatronic, "_TRACKING_LOOP_PERIOD_S", 0.0)
@@ -214,7 +226,7 @@ def test_neck_keeps_stepping_across_a_response(monkeypatch):
 
     asyncio.run(
         a._run_scan_loop(client, cfg, routine_map, scan_responses,
-                         animatronic.Movements("x"), deadline)
+                         animatronic.Movements("x"), deadline, _picker)
     )
 
     assert started["n"] == 1  # response started exactly once
@@ -259,7 +271,7 @@ def test_only_one_response_in_flight(monkeypatch):
     _clock(monkeypatch, step=0.05)
     asyncio.run(
         a._run_scan_loop(client, cfg, routine_map, scan_responses,
-                         animatronic.Movements("x"), 0.6)
+                         animatronic.Movements("x"), 0.6, _picker)
     )
 
     assert inflight["max"] == 1
@@ -295,7 +307,7 @@ def test_person_dog_logs_placeholder_and_uses_weighted_choice(monkeypatch, capsy
     _clock(monkeypatch, step=0.05)
     asyncio.run(
         a._run_scan_loop(client, cfg, routine_map, scan_responses,
-                         animatronic.Movements("x"), 0.6)
+                         animatronic.Movements("x"), 0.6, _picker)
     )
 
     out = capsys.readouterr().out
@@ -431,7 +443,7 @@ def test_winddown_cancels_and_awaits_before_recenter(monkeypatch):
 
     asyncio.run(
         a._run_scan_loop(client, cfg, routine_map, scan_responses,
-                         animatronic.Movements("x"), None)
+                         animatronic.Movements("x"), None, _picker)
     )
 
     assert "response-cancelled" in order

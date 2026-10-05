@@ -200,6 +200,59 @@
     .cam-controls .cam-feed-state .dot { color: var(--ok); }
     .cam-controls .cam-feed-state.warn .dot { color: var(--accent); }
     .cam-controls .cam-feed-state.down .dot { color: #ff5c5c; }
+
+    /* ── New layout: full-width top controls + two-column body ───────────── */
+    /* Full-width controls region at the very top of the page. Holds the mic
+       bar and the three per-mode start/stop clusters moved out of their old
+       panels. */
+    .top-controls {
+      display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;
+    }
+    /* Row of per-mode start/stop clusters (Napping / Awake / Scan). */
+    .mode-controls { display: flex; flex-wrap: wrap; gap: 12px; }
+    .mode-control-group {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 14px;
+      display: flex; flex-direction: column; gap: 8px; min-width: 180px; flex: 1;
+    }
+    .mode-control-group .mode-control-row {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+
+    /* Two-column body: tabs/panels on the left, fixed feed column on the right. */
+    .main-cols { display: flex; gap: 16px; align-items: flex-start; }
+    .col-left { flex: 2 1 0; min-width: 0; }
+    .col-right { flex: 1 1 0; min-width: 0; position: sticky; top: 16px; }
+
+    /* Config sub-sections: a labeled block separating each consolidated area. */
+    .config-section + .config-section {
+      margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
+    }
+
+    /* Scan response pool: per-action checkbox + weight slider rows. */
+    #scanpool .scanpool-list { margin-top: 10px; }
+    #scanpool .scanpool-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 4px 6px; border-bottom: 1px solid var(--border);
+    }
+    #scanpool .scanpool-name {
+      flex: 1 1 auto; display: flex; align-items: center; gap: 8px;
+      min-width: 0; word-break: break-word;
+    }
+    #scanpool .scanpool-row input[type=range] {
+      flex: 0 0 120px;
+    }
+    #scanpool .scanpool-row input[type=range]:disabled { opacity: 0.4; }
+    #scanpool .scanpool-weight {
+      flex: 0 0 1.5em; text-align: right; color: var(--muted);
+    }
+
+    /* Stack to a single column on narrow screens; the feed drops below. */
+    @media (max-width: 900px) {
+      .main-cols { flex-direction: column; }
+      .col-left, .col-right { flex: 0 0 auto; width: 100%; }
+      .col-right { position: static; }
+    }
   </style>
 </head>
 <body>
@@ -210,58 +263,82 @@
     &nbsp;|&nbsp; last: <span id="last-action">idle</span>
   </div>
 
-  <!-- Range sensor gauge: live HC-SR04 distance. White numbers on black; the
-       number flashes green whenever the reading changes. The source label shows
-       which MODE is using the sensor (awake / napping), blank when idle. -->
-  <div class="range-gauge" title="Live distance reported by the HC-SR04 sensor">
-    <span class="range-label">RANGE</span>
-    <span class="range-value" id="range-value">--</span>
-    <span class="range-unit">cm</span>
-    <span class="range-src" id="range-src"></span>
-  </div>
-
-  <!-- Sensor sensitivity: detection gate in meters. The mode triggers on an
-       object within this distance; lower = must be closer, higher = reacts from
-       farther. Takes effect live (a running mode reads it each poll). -->
-  <div class="range-sens" title="How close an object must be to trigger a mode reaction">
-    <label for="range-sens">Sensor range</label>
-    <input type="range" id="range-sens" min="0.5" max="5.0" step="0.1" value="3.0"
-           oninput="document.getElementById('v-range-sens').textContent = (+this.value).toFixed(1)"
-           onchange="setSensitivity(+this.value)">
-    <span class="val" id="v-range-sens">3.0</span>
-    <span class="range-unit">m</span>
-  </div>
-
   <div id="busy-banner">
     <span class="spinner"></span>
     <span>Animatronic is moving — controls locked until the current routine finishes</span>
     <button class="stop-btn" onclick="forceStop()">■ Force Stop</button>
   </div>
 
+  <!-- ── TOP CONTROLS (full width) ─────────────────────────────────────────
+       The live-mic toggle plus the three per-mode start/stop clusters, moved
+       out of their old panels so they are always reachable from the top. -->
+  <div class="top-controls">
+    <!-- Persistent live-mic toggle -->
+    <div class="mic-bar">
+      <label>Live mic passthrough</label>
+      <label class="switch">
+        <input type="checkbox" id="mic-toggle" onchange="toggleMic(this.checked)">
+        <span class="slider-sw"></span>
+      </label>
+      &nbsp;|&nbsp;
+      <button id="record-btn" onclick="toggleRecord()" disabled
+              title="Record the FX-processed mic voice to audio/live_mic_<timestamp>.wav (mic must be on)">
+        ● Record
+      </button>
+    </div>
+
+    <!-- Per-mode start/stop clusters (Napping / Awake / Scan) -->
+    <div class="mode-controls">
+      <div class="mode-control-group">
+        <div class="section-title">Napping</div>
+        <div class="mode-control-row">
+          <button class="action" id="nap-start-btn" onclick="startNap()"
+                  title="Start napping mode with the timeout in Config.">😴 Start nap</button>
+          <button class="action" id="nap-stop-btn" onclick="stopNap()" disabled
+                  title="Wake the figure: the nap winds down, raises the head, and releases the servos.">
+            ⏹ Stop nap
+          </button>
+          <span class="val" id="nap-status" style="color:var(--muted);"></span>
+        </div>
+      </div>
+      <div class="mode-control-group">
+        <div class="section-title">Awake</div>
+        <div class="mode-control-row">
+          <button class="action" id="awake-start-btn" onclick="startAwake()"
+                  title="Start awake mode with the timeout in Config.">🙂 Start awake</button>
+          <button class="action" id="awake-stop-btn" onclick="stopAwake()" disabled
+                  title="Wind down awake mode: it finishes the current routine, returns to rest, and releases the servos.">
+            ⏹ Stop awake
+          </button>
+          <span class="val" id="awake-status" style="color:var(--muted);"></span>
+        </div>
+      </div>
+      <div class="mode-control-group">
+        <div class="section-title">Scan</div>
+        <div class="mode-control-row">
+          <button class="action" id="scan-start-btn" onclick="startScan()"
+                  title="Start scan mode with the timeout in Config.">🔎 Start scan</button>
+          <button class="action" id="scan-stop-btn" onclick="stopScan()" disabled
+                  title="Wind down scan mode: it cancels any in-flight response, recenters the head, and releases the servos.">
+            ⏹ Stop scan
+          </button>
+          <span class="val" id="scan-status" style="color:var(--muted);"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TWO-COLUMN BODY ───────────────────────────────────────────────────
+       Left: tabs + panels (clicking a tab changes only this column).
+       Right (fixed): range gauge on top, live camera feed below. -->
+  <div class="main-cols">
+    <div class="col-left">
+
   <div class="tabs">
     <button class="tab-btn active" data-tab="routines">Routines</button>
     <button class="tab-btn" data-tab="movements">Gestures</button>
     <button class="tab-btn" data-tab="voicefx">Voice FX</button>
-    <button class="tab-btn" data-tab="jaw">Jaw Tuning</button>
-    <button class="tab-btn" data-tab="automation">Automation</button>
-    <button class="tab-btn" data-tab="napping">Napping</button>
-    <button class="tab-btn" data-tab="awake">Awake</button>
-    <button class="tab-btn" data-tab="scan">Scan</button>
-    <button class="tab-btn" data-tab="camera">Camera</button>
-  </div>
-
-  <!-- Persistent live-mic toggle: available from every tab -->
-  <div class="mic-bar">
-    <label>Live mic passthrough</label>
-    <label class="switch">
-      <input type="checkbox" id="mic-toggle" onchange="toggleMic(this.checked)">
-      <span class="slider-sw"></span>
-    </label>
-    &nbsp;|&nbsp;
-    <button id="record-btn" onclick="toggleRecord()" disabled
-            title="Record the FX-processed mic voice to audio/live_mic_<timestamp>.wav (mic must be on)">
-      ● Record
-    </button>
+    <button class="tab-btn" data-tab="config">Config</button>
   </div>
 
   <!-- ROUTINES -->
@@ -341,8 +418,258 @@
        load <strong>demon</strong> then push Distortion above 0.8 and drop Pitch toward 0.6.</p>
   </div>
 
-  <!-- JAW TUNING -->
-  <div class="panel" id="jaw">
+  <!-- CONFIG: consolidates Napping, Awake, Scan, Sensor range, Jaw Tuning -->
+  <div class="panel" id="config">
+
+    <!-- (a) Napping -->
+    <div class="config-section">
+    <div class="section-title">Napping mode</div>
+    <p class="hint" style="margin-top:0;">Yawns, then snores with the head lowered
+       (audio alternates between snore clips) until the timeout elapses or you stop it.
+       A running routine or movement will also interrupt the nap.
+       Start/stop is in the top controls.</p>
+    <div class="tune-group">
+      <div class="section-title">Mode reference</div>
+
+      {# Audio sub-row is emitted ONLY where audio plays OUTSIDE a named routine.
+         The ONLY such case is the napping snore loop (_run_nap_loop drives
+         AudioPlayer directly, not a Routine) — see Ambient below. A Routine
+         implies its own audio, so every other section drops the Audio row. #}
+
+      <!-- Section 1: Sensors (no action sub-sections) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Sensors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Live:</span>
+            {{ mode_reference['Napping'].sensors | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Planned:</span>
+            {{ mode_reference['Napping'].planned_sensors | join(', ') or '(none planned)' }}
+        </p>
+      </div>
+
+      <!-- Section 2: Ambient (looping) behaviors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Napping'].ambient_routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Napping'].ambient_gestures | join(', ') or '(N/A)' }}<br>
+          {# KEEP: the nap snore loop is the one place audio plays outside a routine. #}
+          <span class="mode-ref-label">Audio:</span>
+            {{ mode_reference['Napping'].ambient_sounds | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+
+      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Napping'].routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Napping'].gestures | join(', ') or '(N/A)' }}
+          {# Audio row dropped: these interrupt sounds are all routine-owned. #}
+        </p>
+      </div>
+    </div>
+    <div class="row">
+      <label>Nap timeout<br><small style="color:var(--muted)">seconds before the head raises</small></label>
+      <input type="range" id="nap-timeout" min="5" max="900" step="5" value="60"
+             oninput="document.getElementById('v-nap-timeout').textContent = this.value">
+      <span class="val" id="v-nap-timeout">60</span>
+    </div>
+    </div>
+
+    <!-- (b) Awake -->
+    <div class="config-section">
+    <div class="section-title">Awake mode</div>
+    <p class="hint" style="margin-top:0;">Performs ambient routines on a loop as
+       filler until the timeout elapses or you stop it.
+       Pressing any routine or movement button also arouses it — the mode winds
+       down and yields so your action runs. Start/stop is in the top controls.</p>
+    <div class="tune-group">
+      <div class="section-title">Mode reference</div>
+
+      {# No Audio sub-row anywhere in Awake: ambient audio (yawn/clearThroat) and
+         every interrupt sound are owned by named routines (a Routine implies its
+         own audio). Audio rows appear only where audio plays OUTSIDE a routine
+         — the napping snore loop — see the Napping panel. #}
+
+      <!-- Section 1: Sensors (no action sub-sections) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Sensors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Live:</span>
+            {{ mode_reference['Awake'].sensors | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Planned:</span>
+            {{ mode_reference['Awake'].planned_sensors | join(', ') or '(none planned)' }}
+        </p>
+      </div>
+
+      <!-- Section 2: Ambient (looping) behaviors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Awake'].ambient_routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Awake'].ambient_gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+
+      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Awake'].routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Awake'].gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+    </div>
+    <div class="row">
+      <label>Awake timeout<br><small style="color:var(--muted)">seconds before the mode winds down</small></label>
+      <input type="range" id="awake-timeout" min="5" max="1800" step="5" value="300"
+             oninput="document.getElementById('v-awake-timeout').textContent = this.value">
+      <span class="val" id="v-awake-timeout">300</span>
+    </div>
+    </div>
+
+    <!-- (c) Scan -->
+    <div class="config-section">
+    <div class="section-title">Scan mode</div>
+    <p class="hint" style="margin-top:0;">The head uses the camera to scan for
+       people (and dogs). When someone is detected the head keeps tracking them
+       while an arm-only gesture or routine runs — gestures fire ~5x more often
+       than routines. Runs until the timeout elapses or you stop it; pressing any
+       routine or movement button also winds it down so your action runs.
+       Start/stop is in the top controls.</p>
+    <div class="tune-group">
+      <div class="section-title">Mode reference</div>
+
+      {# No Audio sub-row anywhere in Scan: ambient (Scan_Sweep) carries no audio
+         and every interrupt sound is owned by a routine (a Routine implies its
+         own audio). Audio rows appear only where audio plays OUTSIDE a routine
+         — the napping snore loop — see the Napping panel. #}
+
+      <!-- Section 1: Sensors (no action sub-sections) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Sensors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Live:</span>
+            {{ mode_reference['Scan'].sensors | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Planned:</span>
+            {{ mode_reference['Scan'].planned_sensors | join(', ') or '(none planned)' }}
+        </p>
+      </div>
+
+      <!-- Section 2: Ambient (looping) behaviors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Scan'].ambient_routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Scan'].ambient_gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+
+      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Scan'].routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Scan'].gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+    </div>
+    <div class="row">
+      <label>Scan timeout<br><small style="color:var(--muted)">minutes before the mode winds down (1–120)</small></label>
+      <input type="number" id="scan-timeout-min" min="1" max="120" step="1" value="60">
+    </div>
+
+    <!-- Scan response pool: operator-selectable + weighted routines/gestures.
+         A checked row is INCLUDED with its 1–10 weight; unchecked = excluded.
+         Server-seeded from scan_pools; names are allowlist-validated on save. -->
+    <div class="tune-group" id="scanpool">
+      <div class="section-title">Scan response pool</div>
+      <p class="hint" style="margin-top:0;">Pick which routines and gestures Scan
+         may fire, and weight each (1–10 — higher fires more often). Unchecked =
+         excluded. Saved selections bias the next (or running) Scan's random pick;
+         the backend still enforces the arm-only-safe allowlist on top.</p>
+
+      <div class="scanpool-list">
+        <div class="section-title">Routines</div>
+        {% for name in routines %}
+        {% set w = scan_pools.routine_pool.get(name) %}
+        <div class="scanpool-row">
+          <label class="scanpool-name">
+            <input type="checkbox" id="scanpool-routine-cb-{{ name }}"
+                   {% if w %}checked{% endif %}
+                   onchange="scanPoolToggle('routine', '{{ name }}')">
+            {{ name }}
+          </label>
+          <input type="range" min="1" max="10" step="1"
+                 id="scanpool-routine-w-{{ name }}"
+                 value="{{ w if w else 5 }}" {% if not w %}disabled{% endif %}
+                 oninput="scanPoolWeight('routine', '{{ name }}')">
+          <span class="scanpool-weight" id="scanpool-routine-wv-{{ name }}">{{ w if w else 5 }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="scanpool-list">
+        <div class="section-title">Gestures</div>
+        {% for name in movements %}
+        {% set w = scan_pools.gesture_pool.get(name) %}
+        <div class="scanpool-row">
+          <label class="scanpool-name">
+            <input type="checkbox" id="scanpool-gesture-cb-{{ name }}"
+                   {% if w %}checked{% endif %}
+                   onchange="scanPoolToggle('gesture', '{{ name }}')">
+            {{ name }}
+          </label>
+          <input type="range" min="1" max="10" step="1"
+                 id="scanpool-gesture-w-{{ name }}"
+                 value="{{ w if w else 5 }}" {% if not w %}disabled{% endif %}
+                 oninput="scanPoolWeight('gesture', '{{ name }}')">
+          <span class="scanpool-weight" id="scanpool-gesture-wv-{{ name }}">{{ w if w else 5 }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="fx-actions" style="margin-top:14px;">
+        <button class="action" id="scanpool-save-btn" onclick="saveScanPool(this)"
+                title="Save the selected routines/gestures and weights as Scan's response pool.">
+          💾 Save scan pool
+        </button>
+      </div>
+    </div>
+    </div>
+
+    <!-- (d) Sensor range adjustment: detection gate in meters. The mode triggers
+         on an object within this distance; lower = must be closer, higher =
+         reacts from farther. Takes effect live (a running mode reads it each
+         poll). This is the GATE slider — distinct from the live RANGE readout
+         in the right column. -->
+    <div class="config-section">
+    <div class="section-title">Sensor range adjustment</div>
+    <div class="range-sens" title="How close an object must be to trigger a mode reaction">
+      <label for="range-sens">Sensor range</label>
+      <input type="range" id="range-sens" min="0.5" max="5.0" step="0.1" value="3.0"
+             oninput="document.getElementById('v-range-sens').textContent = (+this.value).toFixed(1)"
+             onchange="setSensitivity(+this.value)">
+      <span class="val" id="v-range-sens">3.0</span>
+      <span class="range-unit">m</span>
+    </div>
+    </div>
+
+    <!-- (e) Jaw Tuning -->
+    <div class="config-section">
     <div class="section-title">Jaw motor response — two independent profiles</div>
     <p class="hint" style="margin-top:0;">The <strong>File playback</strong> profile tunes the jaw for
        recorded audio files, while the <strong>Live mic</strong> profile tunes it for the live
@@ -439,257 +766,57 @@
     </div>
 
     <p class="hint">The jaw opens on loudness swells and closes on dips, relative to a rolling average — so it articulates within continuous speech. Raise <strong>Silence Floor</strong> if quiet noise opens it; raise <strong>Close Ratio</strong> (kept below Open Ratio) so it closes more between syllables; increase <strong>Close Hold</strong> to stop rapid flutter. Tune File and Live mic independently.</p>
-  </div>
+    </div><!-- /config-section (e) Jaw -->
 
-  <!-- AUTOMATION -->
-  <div class="panel" id="automation">
-    <div class="section-title">Timed random playback</div>
-    <div class="row">
-      <label>Routine Automation<br><small style="color:var(--muted)">random routine every 5 min</small></label>
-      <label class="switch">
-        <input type="checkbox" data-auto="routine_enabled" onchange="setAuto('routine_enabled', this.checked)">
-        <span class="slider-sw"></span>
-      </label>
-    </div>
-    <div class="row">
-      <label>Movement Automation<br><small style="color:var(--muted)">random movement every 45 sec</small></label>
-      <label class="switch">
-        <input type="checkbox" data-auto="movement_enabled" onchange="setAuto('movement_enabled', this.checked)">
-        <span class="slider-sw"></span>
-      </label>
-    </div>
-  </div>
+  </div><!-- /#config panel -->
 
-  <!-- NAPPING -->
-  <div class="panel" id="napping">
-    <div class="section-title">Napping mode</div>
-    <p class="hint" style="margin-top:0;">Yawns, then snores with the head lowered
-       (audio alternates between snore clips) until the timeout elapses or you stop it.
-       A running routine or movement will also interrupt the nap.</p>
-    <div class="tune-group">
-      <div class="section-title">Mode reference</div>
+    </div><!-- /.col-left -->
 
-      {# Audio sub-row is emitted ONLY where audio plays OUTSIDE a named routine.
-         The ONLY such case is the napping snore loop (_run_nap_loop drives
-         AudioPlayer directly, not a Routine) — see Ambient below. A Routine
-         implies its own audio, so every other section drops the Audio row. #}
+    <!-- ── RIGHT COLUMN (fixed): range gauge on top, live camera feed below ─ -->
+    <div class="col-right">
 
-      <!-- Section 1: Sensors (no action sub-sections) -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Sensors</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Live:</span>
-            {{ mode_reference['Napping'].sensors | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Planned:</span>
-            {{ mode_reference['Napping'].planned_sensors | join(', ') or '(none planned)' }}
-        </p>
+      <!-- Range sensor gauge: live HC-SR04 distance. White numbers on black;
+           the number flashes green whenever the reading changes. The source
+           label shows which MODE is using the sensor (awake / napping), blank
+           when idle. This is the live RANGE readout — distinct from the GATE
+           slider in Config. -->
+      <div class="range-gauge" title="Live distance reported by the HC-SR04 sensor">
+        <span class="range-label">RANGE</span>
+        <span class="range-value" id="range-value">--</span>
+        <span class="range-unit">cm</span>
+        <span class="range-src" id="range-src"></span>
       </div>
 
-      <!-- Section 2: Ambient (looping) behaviors -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Routines:</span>
-            {{ mode_reference['Napping'].ambient_routines | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Gestures:</span>
-            {{ mode_reference['Napping'].ambient_gestures | join(', ') or '(N/A)' }}<br>
-          {# KEEP: the nap snore loop is the one place audio plays outside a routine. #}
-          <span class="mode-ref-label">Audio:</span>
-            {{ mode_reference['Napping'].ambient_sounds | join(', ') or '(N/A)' }}
-        </p>
+      <!-- Live camera feed (read-only Live_Feed proxy). Enable the overlay to
+           draw detection bounding boxes server-side. This view issues no servo
+           command. -->
+      <div class="cam-controls">
+        <label class="switch" title="Draw detection bounding boxes over the feed (server-side overlay).">
+          <input type="checkbox" id="cam-overlay" onchange="setCameraOverlay(this.checked)">
+          <span class="slider-sw"></span>
+        </label>
+        <label for="cam-overlay" style="font-size:0.9rem;">Detection overlay</label>
+        <span class="cam-feed-state" id="cam-feed-state"><span class="dot">●</span> camera: unknown</span>
       </div>
 
-      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Routines:</span>
-            {{ mode_reference['Napping'].routines | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Gestures:</span>
-            {{ mode_reference['Napping'].gestures | join(', ') or '(N/A)' }}
-          {# Audio row dropped: these interrupt sounds are all routine-owned. #}
-        </p>
+      <!-- The <img> renders the MJPEG stream directly. When the camera is
+           unavailable or the feed stalls, the image is hidden and a status
+           overlay is shown instead of a broken stream (Req 2.5, 2.6). -->
+      <div class="cam-stage" id="cam-stage">
+        <img id="cam-feed" alt="Live camera feed">
+        <div class="cam-overlay" id="cam-unavailable">
+          <span class="cam-icon">📷</span>
+          <span>camera unavailable</span>
+          <span class="cam-sub">the camera service isn't reachable — other controls still work</span>
+        </div>
+        <div class="cam-overlay" id="cam-stalled">
+          <span class="cam-icon">⏸</span>
+          <span>stalled feed</span>
+          <span class="cam-sub">no new frames from the camera</span>
+        </div>
       </div>
-    </div>
-    <div class="row">
-      <label>Nap timeout<br><small style="color:var(--muted)">seconds before the head raises</small></label>
-      <input type="range" id="nap-timeout" min="5" max="900" step="5" value="60"
-             oninput="document.getElementById('v-nap-timeout').textContent = this.value">
-      <span class="val" id="v-nap-timeout">60</span>
-    </div>
-    <div class="fx-actions" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
-      <button class="action" id="nap-start-btn" onclick="startNap()"
-              title="Start napping mode with the timeout above.">😴 Start nap</button>
-      <button class="action" id="nap-stop-btn" onclick="stopNap()" disabled
-              title="Wake the figure: the nap winds down, raises the head, and releases the servos.">
-        ⏹ Stop nap
-      </button>
-      <span class="val" id="nap-status" style="color:var(--muted);"></span>
-    </div>
-  </div>
-
-  <!-- AWAKE -->
-  <div class="panel" id="awake">
-    <div class="section-title">Awake mode</div>
-    <p class="hint" style="margin-top:0;">Performs ambient routines on a loop as
-       filler until the timeout elapses or you stop it.
-       Pressing any routine or movement button also arouses it — the mode winds
-       down and yields so your action runs.</p>
-    <div class="tune-group">
-      <div class="section-title">Mode reference</div>
-
-      {# No Audio sub-row anywhere in Awake: ambient audio (yawn/clearThroat) and
-         every interrupt sound are owned by named routines (a Routine implies its
-         own audio). Audio rows appear only where audio plays OUTSIDE a routine
-         — the napping snore loop — see the Napping panel. #}
-
-      <!-- Section 1: Sensors (no action sub-sections) -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Sensors</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Live:</span>
-            {{ mode_reference['Awake'].sensors | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Planned:</span>
-            {{ mode_reference['Awake'].planned_sensors | join(', ') or '(none planned)' }}
-        </p>
-      </div>
-
-      <!-- Section 2: Ambient (looping) behaviors -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Routines:</span>
-            {{ mode_reference['Awake'].ambient_routines | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Gestures:</span>
-            {{ mode_reference['Awake'].ambient_gestures | join(', ') or '(N/A)' }}
-        </p>
-      </div>
-
-      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Routines:</span>
-            {{ mode_reference['Awake'].routines | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Gestures:</span>
-            {{ mode_reference['Awake'].gestures | join(', ') or '(N/A)' }}
-        </p>
-      </div>
-    </div>
-    <div class="row">
-      <label>Awake timeout<br><small style="color:var(--muted)">seconds before the mode winds down</small></label>
-      <input type="range" id="awake-timeout" min="5" max="1800" step="5" value="300"
-             oninput="document.getElementById('v-awake-timeout').textContent = this.value">
-      <span class="val" id="v-awake-timeout">300</span>
-    </div>
-    <div class="fx-actions" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
-      <button class="action" id="awake-start-btn" onclick="startAwake()"
-              title="Start awake mode with the timeout above.">🙂 Start awake</button>
-      <button class="action" id="awake-stop-btn" onclick="stopAwake()" disabled
-              title="Wind down awake mode: it finishes the current routine, returns to rest, and releases the servos.">
-        ⏹ Stop awake
-      </button>
-      <span class="val" id="awake-status" style="color:var(--muted);"></span>
-    </div>
-  </div>
-
-  <!-- SCAN -->
-  <div class="panel" id="scan">
-    <div class="section-title">Scan mode</div>
-    <p class="hint" style="margin-top:0;">The head uses the camera to scan for
-       people (and dogs). When someone is detected the head keeps tracking them
-       while an arm-only gesture or routine runs — gestures fire ~5x more often
-       than routines. Runs until the timeout elapses or you stop it; pressing any
-       routine or movement button also winds it down so your action runs.</p>
-    <div class="tune-group">
-      <div class="section-title">Mode reference</div>
-
-      {# No Audio sub-row anywhere in Scan: ambient (Scan_Sweep) carries no audio
-         and every interrupt sound is owned by a routine (a Routine implies its
-         own audio). Audio rows appear only where audio plays OUTSIDE a routine
-         — the napping snore loop — see the Napping panel. #}
-
-      <!-- Section 1: Sensors (no action sub-sections) -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Sensors</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Live:</span>
-            {{ mode_reference['Scan'].sensors | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Planned:</span>
-            {{ mode_reference['Scan'].planned_sensors | join(', ') or '(none planned)' }}
-        </p>
-      </div>
-
-      <!-- Section 2: Ambient (looping) behaviors -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Routines:</span>
-            {{ mode_reference['Scan'].ambient_routines | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Gestures:</span>
-            {{ mode_reference['Scan'].ambient_gestures | join(', ') or '(N/A)' }}
-        </p>
-      </div>
-
-      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
-      <div class="mode-ref-section">
-        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
-        <p class="hint mode-ref" style="margin:0;">
-          <span class="mode-ref-label">Routines:</span>
-            {{ mode_reference['Scan'].routines | join(', ') or '(N/A)' }}<br>
-          <span class="mode-ref-label">Gestures:</span>
-            {{ mode_reference['Scan'].gestures | join(', ') or '(N/A)' }}
-        </p>
-      </div>
-    </div>
-    <div class="row">
-      <label>Scan timeout<br><small style="color:var(--muted)">minutes before the mode winds down (1–120)</small></label>
-      <input type="number" id="scan-timeout-min" min="1" max="120" step="1" value="60">
-    </div>
-    <div class="fx-actions" style="margin-top:14px; display:flex; gap:8px; align-items:center;">
-      <button class="action" id="scan-start-btn" onclick="startScan()"
-              title="Start scan mode with the timeout above.">🔎 Start scan</button>
-      <button class="action" id="scan-stop-btn" onclick="stopScan()" disabled
-              title="Wind down scan mode: it cancels any in-flight response, recenters the head, and releases the servos.">
-        ⏹ Stop scan
-      </button>
-      <span class="val" id="scan-status" style="color:var(--muted);"></span>
-    </div>
-  </div>
-
-  <!-- CAMERA -->
-  <div class="panel" id="camera">
-    <div class="section-title">Live camera feed</div>
-    <p class="hint" style="margin-top:0;">Read-only Live_Feed from the camera
-       service — this view issues no servo command. Enable the overlay to draw
-       detection bounding boxes on the feed (when detections are present).</p>
-
-    <div class="cam-controls">
-      <label class="switch" title="Draw detection bounding boxes over the feed (server-side overlay).">
-        <input type="checkbox" id="cam-overlay" onchange="setCameraOverlay(this.checked)">
-        <span class="slider-sw"></span>
-      </label>
-      <label for="cam-overlay" style="font-size:0.9rem;">Detection overlay</label>
-      <span class="cam-feed-state" id="cam-feed-state"><span class="dot">●</span> camera: unknown</span>
-    </div>
-
-    <!-- The <img> renders the MJPEG stream directly. When the camera is
-         unavailable or the feed stalls, the image is hidden and a status
-         overlay is shown instead of a broken stream (Req 2.5, 2.6). -->
-    <div class="cam-stage" id="cam-stage">
-      <img id="cam-feed" alt="Live camera feed">
-      <div class="cam-overlay" id="cam-unavailable">
-        <span class="cam-icon">📷</span>
-        <span>camera unavailable</span>
-        <span class="cam-sub">the camera service isn't reachable — other controls still work</span>
-      </div>
-      <div class="cam-overlay" id="cam-stalled">
-        <span class="cam-icon">⏸</span>
-        <span>stalled feed</span>
-        <span class="cam-sub">no new frames from the camera</span>
-      </div>
-    </div>
-  </div>
+    </div><!-- /.col-right -->
+  </div><!-- /.main-cols -->
 
   <div id="toast"></div>
 
@@ -755,14 +882,10 @@
     }
 
     // ── Force stop ───────────────────────────────────────────────────────────
-    // Kills any running gesture (releasing the servo lock) and turns automation
-    // off. Also flips any automation toggles in the UI back to off.
+    // Kills any running gesture (releasing the servo lock).
     async function forceStop() {
       const data = await post('/stop');
       setBusy(false);
-      document.querySelectorAll('input[type=checkbox][data-auto]').forEach(cb => {
-        cb.checked = false;
-      });
       if (data && data.message) toast(data.message);
     }
 
@@ -947,12 +1070,6 @@
       });
     }
 
-    // ── Automation ───────────────────────────────────────────────────────────
-    function setAuto(key, value) {
-      post('/automation', null, {[key]: value});
-      toast(key.replace('_', ' ') + ': ' + (value ? 'ON' : 'OFF'));
-    }
-
     // ── Napping mode ─────────────────────────────────────────────────────────
     async function startNap() {
       const timeout = +document.getElementById('nap-timeout').value;
@@ -1049,6 +1166,42 @@
       if (status) status.textContent = active ? 'scanning…' : '';
     }
 
+    // ── Scan response pool ─────────────────────────────────────────────────
+    // Checking a row enables its weight slider; unchecking disables/greys it
+    // (an unchecked row is omitted on save = excluded from the pool).
+    function scanPoolToggle(kind, name) {
+      const cb = document.getElementById('scanpool-' + kind + '-cb-' + name);
+      const slider = document.getElementById('scanpool-' + kind + '-w-' + name);
+      if (!cb || !slider) return;
+      slider.disabled = !cb.checked;
+    }
+    // Mirror the live slider value into its readout span.
+    function scanPoolWeight(kind, name) {
+      const slider = document.getElementById('scanpool-' + kind + '-w-' + name);
+      const out = document.getElementById('scanpool-' + kind + '-wv-' + name);
+      if (slider && out) out.textContent = slider.value;
+    }
+    // Collect CHECKED rows into {name: weight}; unchecked rows are omitted so
+    // they persist as excluded. Validation of names happens server-side.
+    function collectScanPool(kind) {
+      const pool = {};
+      document.querySelectorAll('[id^="scanpool-' + kind + '-cb-"]').forEach(cb => {
+        if (!cb.checked) return;
+        const name = cb.id.slice(('scanpool-' + kind + '-cb-').length);
+        const slider = document.getElementById('scanpool-' + kind + '-w-' + name);
+        pool[name] = slider ? +slider.value : 5;
+      });
+      return pool;
+    }
+    async function saveScanPool(btn) {
+      const body = {
+        routine_pool: collectScanPool('routine'),
+        gesture_pool: collectScanPool('gesture'),
+      };
+      const data = await post('/scan/pool', btn, body);
+      if (data && data.status === 'success') toast('Scan pool saved');
+    }
+
     // ── Status poll ────────────────────────────────────────────────────────
     async function pollStatus() {
       try {
@@ -1065,13 +1218,6 @@
         const serverRecording = data.mic && data.mic.is_recording;
         if (typeof serverRecording === 'boolean') recording = serverRecording;
         updateRecordButton(streaming);
-        // Keep automation toggles in sync with server state.
-        if (data.automation) {
-          document.querySelectorAll('input[type=checkbox][data-auto]').forEach(cb => {
-            const key = cb.getAttribute('data-auto');
-            if (typeof data.automation[key] === 'boolean') cb.checked = data.automation[key];
-          });
-        }
         // Reflect nap active/idle: the mode is running when it's the active
         // action and the servos are busy. Enables Stop / disables Start.
         setNapActive(data.last_action === 'napping' && !!data.servos_busy);
@@ -1183,9 +1329,9 @@
              (overlay ? '&' : '?') + 't=' + Date.now();
     }
 
-    // Start/stop pointing the <img> at the stream. We only load the stream while
-    // the camera tab is visible and the service is available, so a hidden or
-    // down camera doesn't hold an open MJPEG connection.
+    // Start/stop pointing the <img> at the stream. The feed lives in the fixed
+    // right column and is always visible, so we load it whenever the service is
+    // available and clear it when the camera is down/stalled.
     function setCameraFeed(on) {
       const img = document.getElementById('cam-feed');
       if (!img) return;
@@ -1229,14 +1375,8 @@
       }
     }
 
-    function cameraTabActive() {
-      const p = document.getElementById('camera');
-      return p && p.classList.contains('active');
-    }
-
     async function pollCamera() {
-      // Only poll while the camera tab is open — no need to probe otherwise.
-      if (!cameraTabActive()) { setCameraFeed(false); setTimeout(pollCamera, 2000); return; }
+      // The feed is always visible in the right column, so always probe status.
       try {
         const res = await fetch('/camera/status');
         let data = {};

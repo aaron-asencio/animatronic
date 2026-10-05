@@ -566,15 +566,20 @@ explicit allowlist (`ROUTINE_ACTIONS` / `MOVEMENT_ACTIONS` / `TRACKING_ACTIONS`
 | **Modes** | Start/stop Sleep (`/nap`), Awake (`/awake`), Tracking (`/tracking`), Scan (`/scan`) | Launches the Mode subprocess; a stop request writes the `nap_signal` to wind it down |
 | **Voice FX** | Mic start/stop, style presets, per-effect toggles/sliders | Proxied to `micwebcontroller.py` |
 | **Jaw Tuning** | Sensitivity / noise floor / drop threshold | Proxied to `micwebcontroller.py` |
-| **Camera** | Live feed, detections, status, model select, IR mode | Read-only proxy of Camera_Service (loopback `:8001`) |
-| **Range** | HC-SR04 distance gauge + detection-gate sensitivity | `/range`, `/range/sensitivity` |
-| **Automation** | Timed random routine (5 min) and movement (45 sec) loops | Background threads in `webapp.py` |
+| **Camera** | Live feed, detections, status, model select, IR mode — shown in the fixed right column (always visible) | Read-only proxy of Camera_Service (loopback `:8001`) |
+| **Range** | HC-SR04 distance gauge in the fixed right column; detection-gate sensitivity under the Config tab | `/range`, `/range/sensitivity` |
+
+The left column holds four tabs — **Routines**, **Gestures**, **Voice FX**, and
+**Config** (which consolidates Napping, Awake, Scan, the sensor-range gate, and
+Jaw Tuning). The top of the page carries the live-mic toggle and the per-mode
+Start/Stop controls; the right column always shows the range gauge and the live
+camera feed with its detection-overlay toggle.
 
 ### Running it
 
 `webapp.py` needs `micwebcontroller.py` running for the Voice FX and Jaw Tuning
-tabs (that process owns the mic stream + effects engine), and
-`camera_service.py` running for the Camera tab.
+controls (that process owns the mic stream + effects engine), and
+`camera_service.py` running for the live camera feed in the right column.
 
 ```bash
 # Run from the repo root
@@ -612,7 +617,7 @@ Two layers enforce this:
 
 - **Hardware-level lock** — `servo_lock.py` holds a cross-process file lock for
   the duration of every routine. Any second process that tries to move the
-  servos (web app, automation loop, or manual CLI) fails fast and exits with
+  servos (web app or manual CLI) fails fast and exits with
   the busy exit code. The OS releases the lock automatically if a process
   crashes, so there are no stale locks. Tracking Mode is special: it takes only
   the **Neck_Group** lock (channels 0–1), so a disjoint arm-only gesture can run
@@ -623,10 +628,8 @@ Two layers enforce this:
   If a request slips through anyway, the server rejects it with HTTP 409 and the
   UI shows a "busy" message rather than stacking a second routine.
 
-The automation loops also skip their tick if the servos are already busy, so
-timed playback never stacks on top of a running routine. A watchdog
-(`GESTURE_TIMEOUT`, 90s) kills a hung gesture subprocess so it can't hold the
-lock forever.
+A watchdog (`GESTURE_TIMEOUT`, 90s) kills a hung gesture subprocess so it can't
+hold the lock forever.
 
 ### Dev auto-reload
 
@@ -645,8 +648,9 @@ can't interrupt servo motion. Set `WEBAPP_DEV=0` (also accepts `false`/`no`/`off
 WEBAPP_DEV=0 sudo .venv/bin/python src/webapp.py
 ```
 
-(The reloader is reloader-safe: the automation threads start only in the worker
-process, never doubled across the watcher and worker.)
+(The reloader is reloader-safe: the background threads — now just the HC-SR04
+range poller — start only in the worker process, never doubled across the
+watcher and worker.)
 
 ### Running the mic controller in the background
 

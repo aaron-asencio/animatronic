@@ -59,9 +59,11 @@ Audio files must be present at `~/Music/` on the Pi. The local `audio/` director
 - Audio files must be present at `~/Music/` on the Pi. The local `audio/` directory is the source of truth.
 - The Pi path for the project is `/home/pi/workspace/animatronic/` (note: not `animatronic-v2`). All scripts now live under `src/`.
 
-## Automation Behavior
+## Background Threads
 
-The web control panel (`src/webapp.py`) includes two independent automation loops, implemented as background threads:
-
-- **Routine automation** (toggled from the control panel): Fires every 5 minutes, randomly picks a full gesture + audio routine from: `blah`, `exorcist`, `startParty`, `waiting`, `krusty`, `vaderFather`.
-- **Movement automation** (toggled from the control panel): Fires every 45 seconds, randomly picks a gesture-only movement from: `slowScan`, `yes`, `no` (and other movements defined in the automation logic).
+The web control panel (`src/webapp.py`) runs one background daemon thread: the
+HC-SR04 range poller (`_range_poll_loop`), which owns the sensor and publishes
+distance readings for the dashboard gauge and the background Modes. It starts
+only in the request-serving worker process (reloader-safe). There are no timed
+auto-playback loops — the earlier routine/movement automation feature was
+removed.
