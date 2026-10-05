@@ -110,5 +110,17 @@
         "amount": 0.0
       }
     }
+  },
+  "scan": {
+    "routine_pool": {
+      "brains": 5,
+      "hypnotic": 5
+    },
+    "gesture_pool": {
+      "beckon": 5,
+      "comeHere": 5,
+      "tapSide": 5,
+      "wave": 5
+    }
   }
 }

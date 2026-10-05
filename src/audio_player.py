@@ -10,7 +10,6 @@ from datetime import datetime
 from utils.audio_utils import AudioUtils
 from constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
 from config_store import load_profile, PROFILE_FILE
-import logging
 import sys
 
 class AudioPlayer:
@@ -69,7 +68,6 @@ class AudioPlayer:
                                (``self.led_eye_light is None``) so ``EYE_LIGHT_PIN``
                                stays free for a separate blinker to own.
         """
-        logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.drive_jaw = drive_jaw
         self.drive_eyes = drive_eyes
         # Only claim a pin when that device is enabled, so a disabled device
@@ -249,9 +247,7 @@ if __name__ == "__main__":
     #raise ValueError(f"audio_file_name: [{audio_file}]")
     try:
         print(f"Playing audio file: {audio_file}")
-        logging.info(f"Playing audio file: {audio_file}")
         p.play_audio_file(audio_file)
     except Exception as e:
         print(f"Error playing audio file: {e}")
-        logging.error(f"Error playing audio file: {e}")
     
