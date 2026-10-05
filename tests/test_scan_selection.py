@@ -42,6 +42,7 @@ from detection_routine_map import (  # noqa: E402
     SCAN_SAFE_ARM_ACTIONS,
     ScanActionKind,
     choose_scan_action,
+    choose_scan_action_weighted,
     scan_rules,
     weighted_scan_pool,
 )
@@ -124,6 +125,114 @@ def test_choose_scan_action_weights_each_gesture_about_5x_each_routine():
     assert mean_routine > 0
     ratio = mean_gesture / mean_routine
     assert abs(ratio - 5.0) < 0.6
+
+
+# --- weighted operator-pool picker (FEAT-001) --------------------------------
+
+
+def test_choose_scan_action_weighted_is_seed_reproducible():
+    """Same random.seed replays an identical (kind, name) sequence."""
+    routine_pool = {"brains": 4, "hypnotic": 2}
+    gesture_pool = {"wave": 5, "beckon": 3}
+
+    random.seed(99)
+    first = [choose_scan_action_weighted(routine_pool, gesture_pool) for _ in range(50)]
+    random.seed(99)
+    second = [choose_scan_action_weighted(routine_pool, gesture_pool) for _ in range(50)]
+    assert first == second
+
+    # Every pick is a (ScanActionKind, name) tuple with a safe name.
+    for kind, name in first:
+        assert isinstance(kind, ScanActionKind)
+        assert name in SCAN_SAFE_ARM_ACTIONS
+        assert SCAN_SAFE_ARM_ACTIONS[name] is kind
+
+
+def test_choose_scan_action_weighted_never_returns_unsafe_name():
+    """A persisted name NOT in the safe set is never returned."""
+    # 'burp' and 'facePalm' are not in SCAN_SAFE_ARM_ACTIONS; 'bogus' is unknown.
+    routine_pool = {"burp": 9, "bogus": 9, "brains": 3}
+    gesture_pool = {"facePalm": 9, "wave": 2}
+
+    random.seed(7)
+    picks = {choose_scan_action_weighted(routine_pool, gesture_pool)[1] for _ in range(500)}
+    assert "burp" not in picks
+    assert "facePalm" not in picks
+    assert "bogus" not in picks
+    assert picks <= set(SCAN_SAFE_ARM_ACTIONS)
+    # Only the two surviving safe names should ever appear.
+    assert picks <= {"brains", "wave"}
+
+
+def test_choose_scan_action_weighted_kind_mismatch_filtered():
+    """A gesture name wrongly placed in the routine pool is dropped by kind-match."""
+    # 'wave' is a GESTURE; placing it in the routine pool must filter it out.
+    routine_pool = {"wave": 9}        # wrong pool for a gesture
+    gesture_pool = {"beckon": 5}      # correct
+
+    random.seed(11)
+    picks = {choose_scan_action_weighted(routine_pool, gesture_pool)[1] for _ in range(300)}
+    assert "wave" not in picks        # kind mismatch -> filtered
+    assert picks == {"beckon"}
+
+
+def test_choose_scan_action_weighted_respects_weight_ratio():
+    """Weight 6 is drawn ~3x as often as weight 2 over many seeded draws."""
+    # Two gestures only, so the ratio reflects the weights directly.
+    gesture_pool = {"wave": 6, "beckon": 2}
+
+    random.seed(2024)
+    draws = [choose_scan_action_weighted({}, gesture_pool)[1] for _ in range(8000)]
+    heavy = draws.count("wave")
+    light = draws.count("beckon")
+
+    assert light > 0
+    ratio = heavy / light
+    assert abs(ratio - 3.0) < 0.4
+
+
+def test_choose_scan_action_weighted_empty_pool_falls_back():
+    """Empty pools fall back to choose_scan_action over the safe set; never None."""
+    random.seed(5)
+    result = choose_scan_action_weighted({}, {})
+    assert result is not None
+    kind, name = result
+    assert name in SCAN_SAFE_ARM_ACTIONS
+    assert SCAN_SAFE_ARM_ACTIONS[name] is kind
+
+    # The fallback distribution matches choose_scan_action for the same seed.
+    random.seed(123)
+    fallback = [choose_scan_action_weighted({}, {})[1] for _ in range(30)]
+    random.seed(123)
+    direct = [choose_scan_action() for _ in range(30)]
+    assert fallback == direct
+
+
+def test_choose_scan_action_weighted_filtered_empty_falls_back():
+    """A pool emptied entirely by safety filtering falls back (never None)."""
+    # All names are unsafe/unknown -> nothing survives -> fallback.
+    routine_pool = {"burp": 5, "bogus": 9}
+    gesture_pool = {"facePalm": 7}
+
+    random.seed(321)
+    fallback = [
+        choose_scan_action_weighted(routine_pool, gesture_pool)[1] for _ in range(30)
+    ]
+    random.seed(321)
+    direct = [choose_scan_action() for _ in range(30)]
+    assert fallback == direct
+
+
+def test_choose_scan_action_weighted_respects_restricted_allow():
+    """When allow is narrowed, only names in that restricted safe set are returned."""
+    allow = {"wave": ScanActionKind.GESTURE}  # only wave is dispatchable
+    gesture_pool = {"wave": 3, "beckon": 5}   # beckon not in allow
+
+    random.seed(13)
+    picks = {
+        choose_scan_action_weighted({}, gesture_pool, allow)[1] for _ in range(200)
+    }
+    assert picks == {"wave"}
 
 
 # --- channel guardrails ------------------------------------------------------

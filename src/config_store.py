@@ -52,6 +52,16 @@ SCAN_TIMEOUT_DEFAULT_MIN = 60
 SCAN_TIMEOUT_MIN = 1
 SCAN_TIMEOUT_MAX = 120
 
+# --- Scan responder pool persistence ----------------------------------------
+# Operator-selected routine/gesture pools (with per-action integer weights) that
+# bias Scan's weighted picker. Both live inside the existing ``scan`` section so
+# they coexist with ``timeout_min``. Each pool maps action-name -> int weight in
+# [SCAN_POOL_WEIGHT_MIN, SCAN_POOL_WEIGHT_MAX]; absent name = excluded.
+SCAN_ROUTINE_POOL_KEY = "routine_pool"
+SCAN_GESTURE_POOL_KEY = "gesture_pool"
+SCAN_POOL_WEIGHT_MIN = 1
+SCAN_POOL_WEIGHT_MAX = 10
+
 
 def _default_profile():
     """Return a fresh copy of the default jaw-tuning profile.
@@ -104,6 +114,47 @@ def sanitize_voice_effects(effects):
         if amount < 0:
             raise ValueError(f"effect '{name}' amount must be >= 0")
         clean[name] = {"enabled": bool(entry.get("enabled", False)), "amount": amount}
+    return clean
+
+
+def sanitize_scan_pool(pool, valid_names):
+    """Coerce an untrusted ``{name: weight}`` map to ``{name: int in [1,10]}``.
+
+    Mirrors ``sanitize_voice_effects``: this leaf module never knows the action
+    allowlist itself, so the caller supplies ``valid_names`` (the webapp passes
+    its ROUTINE_ACTIONS / MOVEMENT_ACTIONS allowlist). Any name not in
+    ``valid_names`` is dropped. Each weight is coerced via ``int()``; entries
+    whose weight is non-int or below ``SCAN_POOL_WEIGHT_MIN`` are dropped, and
+    kept weights are clamped to ``[SCAN_POOL_WEIGHT_MIN, SCAN_POOL_WEIGHT_MAX]``.
+    Bad entries are skipped rather than raising.
+
+    Args:
+        pool: An untrusted mapping of action name -> weight.
+        valid_names: A collection of known-valid action names; only these are
+            kept.
+
+    Returns:
+        A new dict keyed by the surviving names with int weights in
+        ``[SCAN_POOL_WEIGHT_MIN, SCAN_POOL_WEIGHT_MAX]``.
+
+    Raises:
+        ValueError: If ``pool`` is not a mapping.
+    """
+    if not isinstance(pool, dict):
+        raise ValueError("scan pool must be a mapping of name -> weight")
+
+    valid = set(valid_names)
+    clean = {}
+    for name, raw_weight in pool.items():
+        if name not in valid:
+            continue
+        try:
+            weight = int(raw_weight)
+        except (TypeError, ValueError):
+            continue
+        if weight < SCAN_POOL_WEIGHT_MIN:
+            continue
+        clean[name] = min(SCAN_POOL_WEIGHT_MAX, weight)
     return clean
 
 
@@ -447,10 +498,106 @@ class ConfigStore:
         clamped = max(SCAN_TIMEOUT_MIN, min(SCAN_TIMEOUT_MAX, clamped))
 
         raw = self._load_raw()
-        raw[SCAN_KEY] = {SCAN_TIMEOUT_KEY: clamped}
+        section = raw.get(SCAN_KEY)
+        if not isinstance(section, dict):
+            section = {}
+        # MERGE into the existing scan section so routine_pool/gesture_pool (and
+        # any future scan keys) survive a timeout save.
+        section[SCAN_TIMEOUT_KEY] = clamped
+        raw[SCAN_KEY] = section
         self._write_raw(raw)
         print(f"Scan timeout saved: {clamped} min")
         return clamped
+
+    def _coerce_pool(self, pool):
+        """Coerce a stored/raw pool map to ``{name: int in [1,10]}``.
+
+        Shared defensive coercion for ``load_scan_pools`` and
+        ``save_scan_pools``: weights are coerced via ``int()``, entries that are
+        non-int or below ``SCAN_POOL_WEIGHT_MIN`` are dropped, and kept weights
+        are clamped to ``[SCAN_POOL_WEIGHT_MIN, SCAN_POOL_WEIGHT_MAX]``. Names are
+        NOT allowlist-validated here (that is the webapp's job on save). Never
+        raises.
+
+        Args:
+            pool: A mapping of action name -> weight, or anything else.
+
+        Returns:
+            A new dict of surviving ``name -> int weight``. A non-mapping input
+            yields an empty dict.
+        """
+        if not isinstance(pool, dict):
+            return {}
+        clean = {}
+        for name, raw_weight in pool.items():
+            try:
+                weight = int(raw_weight)
+            except (TypeError, ValueError):
+                continue
+            if weight < SCAN_POOL_WEIGHT_MIN:
+                continue
+            clean[str(name)] = min(SCAN_POOL_WEIGHT_MAX, weight)
+        return clean
+
+    def load_scan_pools(self):
+        """Load the operator-selected scan routine/gesture pools, best-effort.
+
+        Reads ``scan.routine_pool`` and ``scan.gesture_pool`` from the
+        Config_File. Any missing file/section, corrupt JSON, or non-mapping pool
+        yields an empty dict for that pool. Weights are coerced to int, entries
+        below ``SCAN_POOL_WEIGHT_MIN`` are dropped, and kept weights are clamped
+        to ``[SCAN_POOL_WEIGHT_MIN, SCAN_POOL_WEIGHT_MAX]``. Names are NOT
+        allowlist-validated at this leaf layer. Never raises.
+
+        Returns:
+            A dict ``{"routine_pool": {name: int}, "gesture_pool": {name: int}}``.
+        """
+        raw = self._load_raw()
+        section = raw.get(SCAN_KEY, {})
+        if not isinstance(section, dict):
+            section = {}
+        return {
+            SCAN_ROUTINE_POOL_KEY: self._coerce_pool(section.get(SCAN_ROUTINE_POOL_KEY)),
+            SCAN_GESTURE_POOL_KEY: self._coerce_pool(section.get(SCAN_GESTURE_POOL_KEY)),
+        }
+
+    def save_scan_pools(self, routine_pool, gesture_pool):
+        """Persist the scan routine/gesture pools, preserving the rest.
+
+        Loads existing raw JSON via ``_load_raw()`` and MERGES the two pools into
+        the existing ``scan`` section (keeping ``scan.timeout_min`` and every
+        other top-level section such as ``profiles``/``voice_styles``). Inputs
+        are assumed already sanitized by the caller, but weights are clamped
+        defensively here as well (coerced to int, below ``SCAN_POOL_WEIGHT_MIN``
+        dropped, clamped to ``[SCAN_POOL_WEIGHT_MIN, SCAN_POOL_WEIGHT_MAX]``).
+        Written atomically (0644) via ``_write_raw()``.
+
+        Args:
+            routine_pool: A mapping of routine name -> weight.
+            gesture_pool: A mapping of gesture name -> weight.
+
+        Returns:
+            A dict ``{"routine_pool": {..}, "gesture_pool": {..}}`` as stored.
+        """
+        clean_routine = self._coerce_pool(routine_pool)
+        clean_gesture = self._coerce_pool(gesture_pool)
+
+        raw = self._load_raw()
+        section = raw.get(SCAN_KEY)
+        if not isinstance(section, dict):
+            section = {}
+        section[SCAN_ROUTINE_POOL_KEY] = clean_routine
+        section[SCAN_GESTURE_POOL_KEY] = clean_gesture
+        raw[SCAN_KEY] = section
+        self._write_raw(raw)
+        print(
+            f"Scan pools saved: {len(clean_routine)} routine(s), "
+            f"{len(clean_gesture)} gesture(s)"
+        )
+        return {
+            SCAN_ROUTINE_POOL_KEY: clean_routine,
+            SCAN_GESTURE_POOL_KEY: clean_gesture,
+        }
 
 
 # Module-level default instance + thin wrappers for simple call sites.
@@ -488,3 +635,25 @@ def save_scan_timeout(minutes):
         The clamped int that was persisted.
     """
     return _default_store.save_scan_timeout(minutes)
+
+
+def load_scan_pools():
+    """Load the scan routine/gesture pools via the default store.
+
+    Returns:
+        A dict ``{"routine_pool": {name: int}, "gesture_pool": {name: int}}``.
+    """
+    return _default_store.load_scan_pools()
+
+
+def save_scan_pools(routine_pool, gesture_pool):
+    """Persist the scan routine/gesture pools via the default store.
+
+    Args:
+        routine_pool: A mapping of routine name -> weight.
+        gesture_pool: A mapping of gesture name -> weight.
+
+    Returns:
+        A dict ``{"routine_pool": {..}, "gesture_pool": {..}}`` as stored.
+    """
+    return _default_store.save_scan_pools(routine_pool, gesture_pool)

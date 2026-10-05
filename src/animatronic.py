@@ -38,6 +38,7 @@ from performance import (
 )
 import nap_signal
 import constants
+import config_store
 from range_sensor import ApproachDetector
 from vision_models import Detection, TrackingConfig
 from tracking_controller import select_target, compute_offset, next_neck_targets
@@ -48,6 +49,7 @@ from detection_routine_map import (
     SCAN_SAFE_ARM_ACTIONS,
     ScanActionKind,
     choose_scan_action,
+    choose_scan_action_weighted,
     scan_rules,
     DEFAULT_DOG_LABEL,
 )
@@ -2936,6 +2938,20 @@ class Animatronic:
             # likewise omitted — see the FLAGGED block in SCAN_SAFE_ARM_ACTIONS.
         }
 
+        # Operator-selected weighted pool (FEAT-001). Restrict the safe-action
+        # map to the names actually wired into scan_responses so a
+        # dispatchable-but-unsafe mismatch can't occur, read the persisted pools,
+        # and pre-build a 0-arg picker bound to that safe set. The picker
+        # intersects the operator pool with this safe set and falls back to the
+        # default 5:1 behavior when no pool is saved.
+        allow = {
+            n: k for n, k in SCAN_SAFE_ARM_ACTIONS.items() if n in scan_responses
+        }
+        pools = config_store.load_scan_pools()
+        picker = lambda: choose_scan_action_weighted(
+            pools["routine_pool"], pools["gesture_pool"], allow
+        )
+
         # Clear any stale stop request from a previous Mode run (mirrors
         # napping/awake/tracking) so we start clean.
         nap_signal.clear_stop()
@@ -2954,7 +2970,7 @@ class Animatronic:
         try:
             asyncio.run(
                 self._run_scan_loop(
-                    client, cfg, routine_map, scan_responses, mv, deadline
+                    client, cfg, routine_map, scan_responses, mv, deadline, picker
                 )
             )
             print("[scan] wound down")
@@ -2970,7 +2986,7 @@ class Animatronic:
             nap_signal.clear_stop()
 
     async def _run_scan_loop(
-        self, client, cfg, routine_map, scan_responses, mv, deadline
+        self, client, cfg, routine_map, scan_responses, mv, deadline, picker
     ):
         """Neck-track continuously while running one arm-only response at a time.
 
@@ -3007,6 +3023,10 @@ class Animatronic:
                 for the fail-closed arm rest in ``_dispatch_scan_response``).
             deadline: Monotonic time at which the timeout fires, or ``None`` for
                 no timeout.
+            picker: A 0-arg callable returning ``(ScanActionKind, name)`` for the
+                next response to dispatch (the operator-weighted picker bound to
+                the dispatchable safe set; falls back to the default 5:1 draw
+                when no pool is saved).
         """
         trunk = Movements.trunkController
 
@@ -3044,7 +3064,7 @@ class Animatronic:
                         # No walkYourDog gesture/routine yet: treat the same as a
                         # person but log the placeholder for testing (per spec).
                         print("[scan] person+dog detected (walkYourDog placeholder)")
-                    name = choose_scan_action()
+                    _, name = picker()
                     self._active = (
                         asyncio.create_task(
                             self._dispatch_scan_response(name, scan_responses, mv)

@@ -175,6 +175,69 @@ def choose_scan_action(
     return random.choice(weighted_scan_pool(allow))
 
 
+def choose_scan_action_weighted(
+    routine_pool: Dict[str, int],
+    gesture_pool: Dict[str, int],
+    allow: Dict[str, ScanActionKind] = SCAN_SAFE_ARM_ACTIONS,
+    rng=random,
+):
+    """Pick ``(ScanActionKind, name)`` from the operator pool, safety-filtered.
+
+    The operator pools are advisory; this function intersects them with the
+    arm-only-safe set ``allow`` *before* the weighted draw so a persisted name
+    that is not arm-only-safe can never be returned. Kind must also match the
+    pool a name came from: a routine_pool name must map to
+    ``ScanActionKind.ROUTINE`` in ``allow`` and a gesture_pool name to
+    ``ScanActionKind.GESTURE``; a name whose kind does not match the pool it was
+    listed in is dropped.
+
+    Each surviving name is repeated by its (int, >=1) weight to build the
+    weighted list, then one is drawn via ``rng.choice``. When the weighted list
+    is empty (no pool saved, or nothing survived filtering), falls back to
+    ``choose_scan_action(allow)`` — the current default 5:1 behavior. Uses the
+    shared stdlib ``random`` module by default so ``random.seed(x)`` reproduces
+    the sequence. Never returns ``None``.
+
+    Args:
+        routine_pool: Operator routine selection ``{name: int weight}``.
+        gesture_pool: Operator gesture selection ``{name: int weight}``.
+        allow: The arm-only-safe allowlist mapping name -> ``ScanActionKind``.
+            Defaults to the shipped ``SCAN_SAFE_ARM_ACTIONS``.
+        rng: An injectable random source exposing ``choice`` (defaults to the
+            shared ``random`` module so seeding is reproducible).
+
+    Returns:
+        A tuple ``(ScanActionKind, name)`` for the chosen action.
+    """
+    weighted: List[str] = []
+    for pool, expected_kind in (
+        (routine_pool, ScanActionKind.ROUTINE),
+        (gesture_pool, ScanActionKind.GESTURE),
+    ):
+        if not isinstance(pool, dict):
+            continue
+        for name, raw_weight in pool.items():
+            # Safety intersection: name must be in the safe set AND its declared
+            # kind must match the pool it was listed in.
+            if allow.get(name) is not expected_kind:
+                continue
+            try:
+                weight = int(raw_weight)
+            except (TypeError, ValueError):
+                continue
+            if weight < 1:
+                continue
+            weighted.extend([name] * weight)
+
+    if not weighted:
+        # Fall back to the current default behavior over the safe set.
+        name = choose_scan_action(allow)
+        return allow[name], name
+
+    name = rng.choice(weighted)
+    return allow[name], name
+
+
 def scan_rules() -> List[DetectionRule]:
     """Build the scan-mode detection rules (person, and person+dog).
 

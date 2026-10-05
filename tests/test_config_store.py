@@ -41,7 +41,12 @@ from config_store import (  # noqa: E402
     SCAN_TIMEOUT_DEFAULT_MIN,
     SCAN_TIMEOUT_MIN,
     SCAN_TIMEOUT_MAX,
+    SCAN_ROUTINE_POOL_KEY,
+    SCAN_GESTURE_POOL_KEY,
+    SCAN_POOL_WEIGHT_MIN,
+    SCAN_POOL_WEIGHT_MAX,
     VOICE_STYLES_KEY,
+    sanitize_scan_pool,
 )
 
 # The environment variables that influence path resolution.
@@ -648,3 +653,206 @@ def test_module_level_scan_timeout_wrappers(tmp_path, monkeypatch):
 
     assert config_store.save_scan_timeout(75) == 75
     assert config_store.load_scan_timeout() == 75
+
+
+# ---------------------------------------------------------------------------
+# FEAT-001 — scan responder pool (sanitize_scan_pool / load/save_scan_pools)
+# ---------------------------------------------------------------------------
+
+# A small fixed allowlist used as valid_names for the sanitizer tests.
+_VALID_POOL_NAMES = frozenset({"wave", "beckon", "comeHere", "brains", "hypnotic"})
+
+# Weight values: ints in/below/above range, negatives, zero, and non-ints.
+_pool_weight = st.one_of(
+    st.integers(min_value=-5, max_value=15),
+    st.just(0),
+    st.text(max_size=4),
+    st.none(),
+    st.floats(allow_nan=False, allow_infinity=False, min_value=-5, max_value=15),
+)
+
+
+@settings(max_examples=200)
+@given(
+    pool=st.dictionaries(
+        st.one_of(st.sampled_from(sorted(_VALID_POOL_NAMES)), st.text(max_size=6)),
+        _pool_weight,
+        max_size=10,
+    )
+)
+def test_sanitize_scan_pool_keeps_only_valid_clamped(pool):
+    """Output keys subset valid_names; all values int in [1,10]; bad entries dropped."""
+    clean = sanitize_scan_pool(pool, _VALID_POOL_NAMES)
+
+    assert set(clean) <= _VALID_POOL_NAMES
+    for name, weight in clean.items():
+        assert isinstance(weight, int)
+        assert SCAN_POOL_WEIGHT_MIN <= weight <= SCAN_POOL_WEIGHT_MAX
+
+    # Any name kept must have had an int-coercible weight >= 1 in the input.
+    for name, weight in clean.items():
+        raw = pool[name]
+        coerced = int(raw)  # must not raise for a kept entry
+        assert coerced >= SCAN_POOL_WEIGHT_MIN
+
+
+def test_sanitize_scan_pool_drops_unknown_and_subone_coerces():
+    """Unknown names dropped; <1/negative/non-int dropped; >10 clamped; strings coerced."""
+    pool = {
+        "wave": 3,            # kept as-is
+        "beckon": 0,          # dropped (<1)
+        "comeHere": -4,       # dropped (negative)
+        "brains": 99,         # clamped to 10
+        "hypnotic": "5",      # coerced to 5
+        "bogus": 7,           # dropped (unknown name)
+        "wave2": 2,           # dropped (unknown name)
+    }
+    clean = sanitize_scan_pool(pool, _VALID_POOL_NAMES)
+    assert clean == {"wave": 3, "brains": SCAN_POOL_WEIGHT_MAX, "hypnotic": 5}
+
+
+def test_sanitize_scan_pool_non_mapping_raises():
+    """Only a non-mapping input raises ValueError."""
+    for bad in ([], "nope", 5, None):
+        with pytest.raises(ValueError):
+            sanitize_scan_pool(bad, _VALID_POOL_NAMES)
+
+
+def test_save_scan_pools_round_trip_preserves_timeout_profile_voice_style(tmp_path):
+    """Saving pools preserves scan.timeout_min, a profile, and a voice_style."""
+    config_file = tmp_path / "tuning.json"
+    store = ConfigStore(config_path=str(config_file))
+
+    # Seed timeout + a profile + a voice style first.
+    pair = {
+        PROFILE_FILE: _expected_default_profile(),
+        PROFILE_MIC: _expected_default_profile(),
+    }
+    store.save_profiles(pair)
+    store.save_voice_style("ghost", {})
+    store.save_scan_timeout(42)
+
+    stored = store.save_scan_pools({"brains": 5}, {"wave": 8, "beckon": 3})
+    assert stored == {
+        SCAN_ROUTINE_POOL_KEY: {"brains": 5},
+        SCAN_GESTURE_POOL_KEY: {"wave": 8, "beckon": 3},
+    }
+
+    with open(config_file, "r") as f:
+        raw = json.load(f)
+
+    # Pools stored inside the scan section alongside the preserved timeout.
+    assert raw[SCAN_KEY][SCAN_TIMEOUT_KEY] == 42
+    assert raw[SCAN_KEY][SCAN_ROUTINE_POOL_KEY] == {"brains": 5}
+    assert raw[SCAN_KEY][SCAN_GESTURE_POOL_KEY] == {"wave": 8, "beckon": 3}
+
+    # Pre-existing sections untouched.
+    assert raw["profiles"][PROFILE_FILE] == _expected_default_profile()
+    assert VOICE_STYLES_KEY in raw and "ghost" in raw[VOICE_STYLES_KEY]
+
+    # Accessors agree on reload.
+    fresh = ConfigStore(config_path=str(config_file))
+    assert fresh.load_scan_timeout() == 42
+    assert fresh.load_scan_pools() == {
+        SCAN_ROUTINE_POOL_KEY: {"brains": 5},
+        SCAN_GESTURE_POOL_KEY: {"wave": 8, "beckon": 3},
+    }
+    assert fresh.load_profiles() == pair
+
+
+def test_save_scan_timeout_after_pools_preserves_pools(tmp_path):
+    """A later save_scan_timeout merges and keeps the previously saved pools."""
+    config_file = tmp_path / "tuning.json"
+    store = ConfigStore(config_path=str(config_file))
+
+    store.save_scan_pools({"hypnotic": 2}, {"comeHere": 4})
+    store.save_scan_timeout(90)
+
+    with open(config_file, "r") as f:
+        raw = json.load(f)
+    assert raw[SCAN_KEY][SCAN_TIMEOUT_KEY] == 90
+    assert raw[SCAN_KEY][SCAN_ROUTINE_POOL_KEY] == {"hypnotic": 2}
+    assert raw[SCAN_KEY][SCAN_GESTURE_POOL_KEY] == {"comeHere": 4}
+
+
+def test_save_scan_pools_clamps_defensively(tmp_path):
+    """save_scan_pools coerces/clamps even if the caller passes raw values."""
+    store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
+    stored = store.save_scan_pools({"brains": 99, "hypnotic": 0}, {"wave": "6"})
+    assert stored == {
+        SCAN_ROUTINE_POOL_KEY: {"brains": SCAN_POOL_WEIGHT_MAX},  # 99 -> 10
+        SCAN_GESTURE_POOL_KEY: {"wave": 6},                       # "6" -> 6
+    }
+    # hypnotic weight 0 dropped (excluded).
+    assert "hypnotic" not in stored[SCAN_ROUTINE_POOL_KEY]
+
+
+def test_load_scan_pools_empty_on_missing(tmp_path):
+    """Missing file yields two empty pools without raising."""
+    store = ConfigStore(config_path=str(tmp_path / "absent.json"))
+    assert store.load_scan_pools() == {
+        SCAN_ROUTINE_POOL_KEY: {},
+        SCAN_GESTURE_POOL_KEY: {},
+    }
+
+
+def test_load_scan_pools_empty_on_corrupt_or_missing_section(tmp_path):
+    """Corrupt JSON, missing scan section, or non-dict pools yield empty maps."""
+    config_file = tmp_path / "tuning.json"
+
+    # Corrupt JSON.
+    config_file.write_text("{not valid json")
+    assert ConfigStore(config_path=str(config_file)).load_scan_pools() == {
+        SCAN_ROUTINE_POOL_KEY: {},
+        SCAN_GESTURE_POOL_KEY: {},
+    }
+
+    # Valid JSON, no scan section.
+    config_file.write_text(json.dumps({"profiles": {}}))
+    assert ConfigStore(config_path=str(config_file)).load_scan_pools() == {
+        SCAN_ROUTINE_POOL_KEY: {},
+        SCAN_GESTURE_POOL_KEY: {},
+    }
+
+    # Scan section with non-dict pools -> both empty.
+    config_file.write_text(
+        json.dumps({SCAN_KEY: {SCAN_ROUTINE_POOL_KEY: "oops", SCAN_GESTURE_POOL_KEY: 5}})
+    )
+    assert ConfigStore(config_path=str(config_file)).load_scan_pools() == {
+        SCAN_ROUTINE_POOL_KEY: {},
+        SCAN_GESTURE_POOL_KEY: {},
+    }
+
+
+def test_load_scan_pools_coerces_and_clamps(tmp_path):
+    """Stored pool weights are coerced to int, dropped if <1, clamped to [1,10]."""
+    config_file = tmp_path / "tuning.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                SCAN_KEY: {
+                    SCAN_ROUTINE_POOL_KEY: {"brains": 99, "hypnotic": 0, "x": "3"},
+                    SCAN_GESTURE_POOL_KEY: {"wave": -1, "beckon": 7},
+                }
+            }
+        )
+    )
+    pools = ConfigStore(config_path=str(config_file)).load_scan_pools()
+    assert pools[SCAN_ROUTINE_POOL_KEY] == {"brains": SCAN_POOL_WEIGHT_MAX, "x": 3}
+    assert pools[SCAN_GESTURE_POOL_KEY] == {"beckon": 7}
+
+
+def test_module_level_scan_pool_wrappers(tmp_path, monkeypatch):
+    """The thin module-level pool wrappers delegate to the default store."""
+    config_file = tmp_path / "tuning.json"
+    monkeypatch.setenv(CONFIG_PATH_OVERRIDE_ENV_PRIMARY, str(config_file))
+    monkeypatch.setattr(config_store, "_default_store", ConfigStore())
+
+    assert config_store.save_scan_pools({"brains": 4}, {"wave": 9}) == {
+        SCAN_ROUTINE_POOL_KEY: {"brains": 4},
+        SCAN_GESTURE_POOL_KEY: {"wave": 9},
+    }
+    assert config_store.load_scan_pools() == {
+        SCAN_ROUTINE_POOL_KEY: {"brains": 4},
+        SCAN_GESTURE_POOL_KEY: {"wave": 9},
+    }
