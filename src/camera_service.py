@@ -84,6 +84,40 @@ IR_HYSTERESIS_MARGIN = 5.0
 # How often, in seconds, the IR auto-switch loop re-evaluates ambient light.
 IR_AUTO_POLL_S = 1.0
 
+# --- Stall detection & self-recovery (camera watchdog) ----------------------
+# The confirmed field incident was ``capture_array()`` blocking FOREVER inside
+# the capture thread (not raising): no new frame was pushed, yet the thread
+# stayed alive and ``/status`` kept reporting ``capturing: true`` on a 37-hour
+# old frame. A wedged capture thread cannot police itself, so a SEPARATE
+# watchdog thread checks frame freshness and recovers the camera out-of-band.
+#
+# Two independent thresholds (both configurable on ``CameraService.__init__``):
+#  - the STALENESS threshold decides when ``/status`` tells the truth
+#    (``capturing: false``) — small, so status is honest quickly; and
+#  - the STALL timeout decides when the watchdog tears down and recreates the
+#    camera — larger, so status flips to "not capturing" before the watchdog
+#    takes the more drastic step of swapping hardware.
+
+# Default seconds a frame may age before the watchdog declares the feed stalled
+# and recovers the camera. Floored to a small positive value in __init__.
+DEFAULT_STALL_TIMEOUT_S = 5.0
+
+# Default seconds between watchdog freshness checks. Floored in __init__.
+DEFAULT_WATCHDOG_POLL_S = 1.0
+
+# When ``staleness_timeout_s`` is not given explicitly it is derived from the
+# capture rate as ``max(STALENESS_FLOOR_S, STALENESS_PERIOD_MULT * period)``
+# where ``period = 1 / capture_fps``. The multiple gives a slow-but-alive feed
+# some slack (a few missed frames is not "dead"); the floor keeps the derived
+# threshold sane when the capture period is tiny.
+STALENESS_PERIOD_MULT = 5.0
+STALENESS_FLOOR_S = 1.0
+
+# Floors applied to the watchdog timing knobs so a caller cannot set them to
+# zero/negative (which would make the watchdog spin or fire instantly).
+WATCHDOG_TIMEOUT_FLOOR_S = 0.01
+WATCHDOG_POLL_FLOOR_S = 0.01
+
 # The fixed, allowlisted set of IR modes accepted by ``set_mode`` / ``POST /ir``
 # (Req 10.3). Mirrors ``vision_models.IR_MODES`` but kept local so the IR owner
 # validates against its own source of truth.
@@ -652,7 +686,10 @@ class CameraService:
     """
 
     def __init__(self, config=None, picamera2_factory=None, detector=None,
-                 detector_factory=None, ir_controller=None):
+                 detector_factory=None, ir_controller=None,
+                 stall_timeout_s=DEFAULT_STALL_TIMEOUT_S,
+                 watchdog_poll_s=DEFAULT_WATCHDOG_POLL_S,
+                 staleness_timeout_s=None):
         """Initialise the service (does not start the camera or detector yet).
 
         Args:
@@ -663,6 +700,21 @@ class CameraService:
                 picamera2-like camera object, injected for hardware-free tests.
                 When None, the real ``Picamera2`` class is imported lazily and
                 used.
+            stall_timeout_s: Seconds the latest frame may age before the
+                watchdog declares the feed stalled and recovers the camera
+                (teardown + recreate). Floored to a small positive value so it
+                can never be zero/negative. Default
+                :data:`DEFAULT_STALL_TIMEOUT_S`.
+            watchdog_poll_s: Seconds between watchdog freshness checks. Floored
+                to a small positive value. Default
+                :data:`DEFAULT_WATCHDOG_POLL_S`.
+            staleness_timeout_s: Seconds the latest frame may age before
+                ``/status`` reports ``capturing: false``. When ``None`` it is
+                derived from the capture rate as
+                ``max(STALENESS_FLOOR_S, STALENESS_PERIOD_MULT / capture_fps)``.
+                Kept independent of (and typically smaller than)
+                ``stall_timeout_s`` so status tells the truth before the
+                watchdog tears down hardware.
             detector: Optional pre-built Detector-like object with a
                 ``detect(frame) -> list[Detection]`` method and an
                 ``edge_tpu_active`` attribute, injected for tests. When
@@ -686,6 +738,32 @@ class CameraService:
         self._camera = None
         self._capture_thread = None
         self._stop_event = threading.Event()
+
+        # --- Watchdog / self-recovery config (floored so timing is always sane).
+        self._stall_timeout_s = max(WATCHDOG_TIMEOUT_FLOOR_S, float(stall_timeout_s))
+        self._watchdog_poll_s = max(WATCHDOG_POLL_FLOOR_S, float(watchdog_poll_s))
+        if staleness_timeout_s is None:
+            # Derive from the capture rate: give a slow-but-alive feed a few
+            # frame-periods of slack, with a floor so a tiny period does not
+            # produce an unusably small threshold.
+            fps = self._config.capture_fps
+            period = 1.0 / fps if fps > 0 else STALENESS_FLOOR_S
+            self._staleness_timeout_s = max(
+                STALENESS_FLOOR_S, STALENESS_PERIOD_MULT * period
+            )
+        else:
+            self._staleness_timeout_s = max(
+                WATCHDOG_TIMEOUT_FLOOR_S, float(staleness_timeout_s)
+            )
+        # Guards the self._camera swap during recovery. The capture loop reads
+        # self._camera under this lock each iteration so it never dereferences a
+        # half-swapped or None camera while the watchdog is tearing one down and
+        # creating the next (see _capture_loop / _recover_camera).
+        self._camera_lock = threading.Lock()
+        self._watchdog_thread = None
+        # Number of successful camera recoveries, logged via print() (there is
+        # no logging framework). Readable by tests to confirm recovery fired.
+        self._recovery_count = 0
         # Set once the first frame has been captured, so start() can confirm the
         # camera actually began producing frames within the init timeout.
         self._first_frame_event = threading.Event()
@@ -796,6 +874,16 @@ class CameraService:
         )
         self._ir_thread.start()
 
+        # Watchdog on its OWN daemon thread: the capture thread can wedge inside
+        # a blocking capture_array() and so cannot detect its own stall. This
+        # separate thread polls frame freshness and recovers the camera when the
+        # feed stalls (task: stall detection & self-recovery). Harmless before
+        # the first frame — it short-circuits while last_frame_age is unknown.
+        self._watchdog_thread = threading.Thread(
+            target=self._watchdog_loop, name="camera-watchdog", daemon=True
+        )
+        self._watchdog_thread.start()
+
         # Confirm the camera actually started producing frames within the init
         # budget (Req 1.1). Account for any time already spent opening it.
         remaining = INIT_TIMEOUT_S - (time.monotonic() - start_t)
@@ -844,8 +932,22 @@ class CameraService:
         clobber the exposed frame — the last good frame is retained (Req 1.6).
         """
         while not self._stop_event.is_set():
+            # Swap-safety contract with the watchdog: the watchdog may tear down
+            # and replace self._camera out-of-band to break a wedged capture
+            # (see _recover_camera). Read the current camera into a local under
+            # the lock so this loop never dereferences a half-swapped or None
+            # camera. Once the old device is torn down, its wedged
+            # capture_array() returns or raises; we then re-read the fresh
+            # camera on the next iteration and frame flow resumes.
+            with self._camera_lock:
+                camera = self._camera
+            if camera is None:
+                # Mid-recovery (old device closed, new one not yet assigned).
+                # Wait briefly and re-read rather than crash on None.
+                time.sleep(0.1)
+                continue
             try:
-                frame = self._camera.capture_array()
+                frame = camera.capture_array()
             except Exception as e:
                 # Capture failure after init: report it, retain the last good
                 # frame as the exposed frame, and keep trying (Req 1.6).
@@ -864,6 +966,91 @@ class CameraService:
             self._latest.push(frame)
             if not self._first_frame_event.is_set():
                 self._first_frame_event.set()
+
+    def _watchdog_loop(self):
+        """Detect a stalled feed and recover the camera, out-of-band.
+
+        Runs on its OWN daemon thread (``camera-watchdog``) because the capture
+        thread can be wedged inside a blocking ``capture_array()`` and therefore
+        cannot detect its own stall. Each tick sleeps ``watchdog_poll_s`` first
+        (so a just-started feed gets a grace period and ``timestamp`` has a
+        chance to be set), then checks how old the latest frame is; if it has
+        aged past ``stall_timeout_s`` the camera is recovered.
+
+        The entire tick body is wrapped so that NO exception can escape and kill
+        this thread — a persistently failing camera must keep being retried on
+        the watchdog cadence, never crash the process. Before the first frame,
+        ``timestamp`` is ``None`` and the check short-circuits (nothing to
+        recover yet).
+        """
+        while not self._stop_event.is_set():
+            # Sleep first: grants a startup grace period and paces the loop.
+            if self._stop_event.wait(self._watchdog_poll_s):
+                break
+            try:
+                timestamp = self._latest.timestamp
+                if timestamp is None:
+                    # No frame yet; nothing to declare stalled.
+                    continue
+                age = max(0.0, time.monotonic() - timestamp)
+                if age > self._stall_timeout_s:
+                    self._recover_camera(age)
+            except Exception as e:
+                # Exception-proof: the watchdog must never die. Report and keep
+                # polling on the normal cadence.
+                print(
+                    f"Camera_Service WATCHDOG ERROR: unexpected error while "
+                    f"checking/recovering the feed ({e}); continuing."
+                )
+
+    def _recover_camera(self, age):
+        """Tear down and recreate the camera to break a stalled feed.
+
+        Called by the watchdog when the latest frame has aged past the stall
+        timeout. Swaps ``self._camera`` under ``self._camera_lock`` so the
+        capture loop never sees a half-swapped device: ``_close_camera()`` stops
+        and closes the old device (setting ``self._camera = None``), then
+        ``_create_camera()`` builds a fresh one and it is assigned back. Tearing
+        down the old device is what unblocks a wedged ``capture_array()`` on it
+        (the call returns or raises); the capture loop then re-reads the NEW
+        camera and frame flow resumes.
+
+        Fully guarded: any failure during teardown/recreate is caught and
+        printed, the recovery is retried on the next watchdog tick, and no
+        exception is allowed to propagate (so the watchdog thread survives a
+        persistently failing camera). On failure ``self._camera`` is left as
+        ``None`` (what ``_close_camera`` set it to), so the capture loop waits
+        and the next tick retries.
+
+        Args:
+            age: The measured age in seconds of the latest frame, for logging.
+        """
+        print(
+            f"Camera_Service WATCHDOG: feed stalled "
+            f"(last frame {age:.1f}s old > {self._stall_timeout_s:.1f}s "
+            f"timeout); recovering {CAMERA_DEVICE_NAME} "
+            f"(recovery #{self._recovery_count + 1})."
+        )
+        try:
+            with self._camera_lock:
+                # Close first (unblocks the wedged call on the old device), then
+                # create the replacement and publish it for the capture loop.
+                self._close_camera()
+                self._camera = self._create_camera()
+            self._camera_ok = True
+            self._recovery_count += 1
+            print(
+                f"Camera_Service WATCHDOG: camera recovered "
+                f"(recovery #{self._recovery_count}); frame flow should resume."
+            )
+        except Exception as e:
+            # Guarded: a failed recovery must not crash the watchdog. self._camera
+            # stays None (set by _close_camera); the next tick retries.
+            self._camera_ok = False
+            print(
+                f"Camera_Service WATCHDOG: recovery failed ({e}); will retry on "
+                f"the next watchdog tick (~{self._watchdog_poll_s:.2f}s)."
+            )
 
     def _build_detector(self):
         """Resolve the Detector to run, or None for no-detection operation.
@@ -1092,9 +1279,23 @@ class CameraService:
     def status_snapshot(self):
         """Return a point-in-time status dict for the ``/status`` endpoint.
 
-        Derives ``camera_ok`` and ``capturing`` from the capture-thread / first
-        frame state, and ``last_frame_age_s`` from the latest-frame push
-        timestamp (Req 2.6 — a stale feed is detectable from the age). The
+        Derives ``capturing`` and ``camera_ok`` from frame FRESHNESS, not from
+        latched startup flags, and ``last_frame_age_s`` from the latest-frame
+        push timestamp (Req 2.6 — a stale feed is detectable from the age).
+
+        Truthful-liveness contract (fixes the incident where a 37-hour-old feed
+        still reported ``capturing: true`` / ``camera_ok: true``):
+
+        - Before the first frame (``timestamp is None``): ``capturing`` is
+          ``False`` and ``last_frame_age_s`` is ``None`` (unchanged startup
+          semantics); ``camera_ok`` still reflects "device opened/configured"
+          so init success is visible before frames flow.
+        - Once frames have flowed: ``capturing`` is true only when the capture
+          thread is alive AND the latest frame is fresher than
+          ``staleness_timeout_s``; a stale feed also flips ``camera_ok`` to
+          ``False`` so a dead feed is never reported healthy.
+
+        ``last_frame_age_s`` is left exactly as-is — the one honest field. The
         ``edge_tpu`` field reports the active Detector's real Edge TPU state
         (False when no Detector is configured, Req 3.6, task 6.3). The ``ir``
         field reports the real IR_Illuminator state from the
@@ -1118,12 +1319,27 @@ class CameraService:
         thread_alive = (
             self._capture_thread is not None and self._capture_thread.is_alive()
         )
-        # "capturing" means the loop is alive AND at least one frame has been
-        # produced; before the first frame arrives the feed is not yet live.
-        capturing = bool(thread_alive and self._first_frame_event.is_set())
+        # "capturing" means the capture thread is alive AND the latest frame is
+        # FRESH (younger than the staleness threshold). Freshness — not a latched
+        # first-frame flag — is what keeps a wedged capture_array() from being
+        # reported as a live feed. Before the first frame (timestamp None) the
+        # feed is not yet live, so capturing is False.
+        if timestamp is None:
+            capturing = False
+        else:
+            capturing = bool(
+                thread_alive and last_frame_age_s < self._staleness_timeout_s
+            )
+
+        # camera_ok keeps meaning "device opened/configured" before the first
+        # frame, but once frames have flowed a stale feed also makes it False so
+        # a dead feed is never reported healthy (the incident condition).
+        camera_ok = bool(
+            self._camera_ok and (timestamp is None or capturing)
+        )
 
         return {
-            "camera_ok": bool(self._camera_ok),
+            "camera_ok": camera_ok,
             "capturing": capturing,
             "fps": self._config.stream_fps,
             "last_frame_age_s": last_frame_age_s,
@@ -1154,6 +1370,9 @@ class CameraService:
         if self._ir_thread is not None:
             self._ir_thread.join(timeout=2.0)
             self._ir_thread = None
+        if self._watchdog_thread is not None:
+            self._watchdog_thread.join(timeout=2.0)
+            self._watchdog_thread = None
         # Turn the illuminator off and release its GPIO pin (Req 10.5 cleanup).
         self._ir.close()
         self._close_camera()
