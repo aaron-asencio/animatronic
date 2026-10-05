@@ -604,7 +604,7 @@
 
       <div class="scanpool-list">
         <div class="section-title">Routines</div>
-        {% for name in routines %}
+        {% for name in scan_pool_routines %}
         {% set w = scan_pools.routine_pool.get(name) %}
         <div class="scanpool-row">
           <label class="scanpool-name">
@@ -624,7 +624,7 @@
 
       <div class="scanpool-list">
         <div class="section-title">Gestures</div>
-        {% for name in movements %}
+        {% for name in scan_pool_gestures %}
         {% set w = scan_pools.gesture_pool.get(name) %}
         <div class="scanpool-row">
           <label class="scanpool-name">
