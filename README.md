@@ -2,7 +2,58 @@
 
 A Raspberry Pi–based animatronic controller that synchronises servo-driven
 physical gestures with audio playback via PyAudio (`AudioPlayer` /
-`AudioStreamer`).
+`AudioStreamer`), with an optional camera vision pipeline (live feed, on-device
+object/person detection, head tracking) and an ultrasonic range sensor for
+presence/approach wake triggers.
+
+---
+
+## Table of contents
+
+- [Vocabulary](#vocabulary)
+- [Hardware](#hardware)
+  - [Servo channel assignments](#servo-channel-assignments)
+  - [GPIO pins (not PCA9685 channels)](#gpio-pins-not-pca9685-channels)
+- [Project structure](#project-structure)
+  - [Layer overview](#layer-overview)
+- [Dependencies](#dependencies)
+- [Development setup](#development-setup)
+- [Running](#running)
+  - [Routines (gesture + audio)](#routines-gesture--audio)
+  - [Movements (gesture only, no audio)](#movements-gesture-only-no-audio)
+  - [Modes (continuous background behaviours)](#modes-continuous-background-behaviours)
+  - [Audio files](#audio-files)
+- [Kinematic collision model (offline authoring aid)](#kinematic-collision-model-offline-authoring-aid)
+- [Hardware troubleshooting](#hardware-troubleshooting)
+- [ALSA audio configuration](#alsa-audio-configuration)
+- [Web control panel](#web-control-panel)
+  - [Busy interlock (safety)](#busy-interlock-safety)
+  - [Dev auto-reload](#dev-auto-reload)
+- [Voice tuning and effects](#voice-tuning-and-effects)
+- [Camera vision](#camera-vision)
+- [Range sensor](#range-sensor)
+- [Adding a new routine](#adding-a-new-routine)
+
+---
+
+## Vocabulary
+
+The motion/performance layers build on one another. These terms have precise
+meanings throughout the code and docs (full definitions in
+`.kiro/steering/animation-vocabulary.md`):
+
+| Term | Audio? | Implemented by | Interrupts live mic? |
+|------|--------|----------------|----------------------|
+| **Gesture** | No | a `Movements` coroutine (`controller.py --action=…`) | No |
+| **Gestures** | No | a chained sequence of Gestures | No |
+| **Routine** | Yes | an `Animatronic` action (`animatronic.py --action=…`) | Yes |
+| **Act** | Yes | several Routines composed into one performance | Yes |
+| **Stream** | Yes (mic) | `AudioStreamer` / `micwebcontroller.py` | — (is the stream) |
+| **Mode** | varies | a continuous background loop (mic / sleep / awake / tracking / scan) | varies |
+
+A Gesture never touches the jaw/audio path, so Gestures layer safely over a
+live mic stream. A Routine, Act, or audio-driven Mode owns the jaw motor and so
+interrupts the stream.
 
 ---
 
@@ -15,17 +66,42 @@ physical gestures with audio playback via PyAudio (`AudioPlayer` /
 | Servo channels | 16-channel, all configured for **270° actuation range** |
 | Audio output | USB audio device (`sysdefault:CARD=Device`, index 2) |
 | Mic input | USB audio device (`sysdefault:CARD=Device_1`, index 1) |
+| Camera | Raspberry Pi Camera Module 3 NoIR (imx708) — optional |
+| Range sensor | HC-SR04 ultrasonic (ECHO via a 5V→3.3V divider) — optional |
 
 ### Servo channel assignments
 
-| Channel | Constant | Joint |
-|---------|----------|-------|
-| 0 | `NECK_PAN` | Left/right head rotation |
-| 1 | `NECK_TILT` | Up-down head tilt |
-| 4 | `RT_ELBOW_ROTATOR` | Forearm rotation (wrist/palm) |
-| 5 | `RT_ELBOW_TILT` | Elbow bend |
-| 6 | `RT_SHOULDER_TILT` | Shoulder forward/back |
-| 7 | `RT_SHOULDER_ROTATOR` | Shoulder raise/lower |
+Defined in `src/constants.py`. Angles are clamped on every write to the
+per-channel `SAFE_LIMITS` (the mechanism's safe range, not the 0–270 electrical
+range).
+
+| Channel | Constant | Joint | SAFE_LIMITS | Rest |
+|---------|----------|-------|-------------|------|
+| 0 | `NECK_PAN` | Left/right head rotation (90 = forward) | 5–175 | 90 |
+| 1 | `NECK_TILT` | Up/down head tilt (90 = level, higher = chin down) | 30–160 | 90 |
+| 3 | `RT_WRIST_TILT` | Wrist bend (90 = inline with forearm) | 10–230 | 90 |
+| 4 | `RT_ELBOW_ROTATOR` | Forearm twist (150 = palm to side, 270 = palm up) | 0–270 | 150 |
+| 5 | `RT_ELBOW_TILT` | Elbow bend (5 = straight) | 0–160 | 5 |
+| 6 | `RT_SHOULDER_TILT` | Shoulder raise/lower (abduction; 135 = straight out) | 45–270 | 55 |
+| 7 | `RT_SHOULDER_ROTATOR` | Raise/lower whole arm (0 = at side, 270 = ~170° up) | 0–270 | 0 |
+
+> Arm gestures own channels 4–7; head gestures own channels 0–1. Any arm
+> gesture may run concurrently with any head gesture (disjoint channels). Per-
+> axis limits do **not** catch multi-axis collisions — `FORBIDDEN_COMBINATIONS`
+> in `constants.py` hard-guards the measured hand-to-face danger zone, and the
+> offline kinematic model (below) predicts the rest.
+
+### GPIO pins (not PCA9685 channels)
+
+Driven via `gpiozero`, separate from the servo driver:
+
+| Pin | Constant | Device |
+|-----|----------|--------|
+| 6 | `EYE_LIGHT_PIN` | Eye LED |
+| 15 | `MOUTH_MOTOR_PIN` | Jaw motor (pulsed from audio amplitude) |
+| 12 | `IR_ILLUMINATOR_PIN` | IR illuminator for NoIR night vision |
+| 23 | `RANGE_TRIG_PIN` | HC-SR04 trigger (output) |
+| 24 | `RANGE_ECHO_PIN` | HC-SR04 echo (input, via voltage divider) |
 
 ---
 
@@ -34,30 +110,44 @@ physical gestures with audio playback via PyAudio (`AudioPlayer` /
 ```
 animatronic-v2/
 ├── src/
-│   ├── constants.py            # Servo channels, SAFE_LIMITS, REST_POSITIONS
-│   ├── trunkcontroller.py      # Low-level async servo primitives
+│   ├── constants.py            # Channels, SAFE_LIMITS, REST_POSITIONS, FORBIDDEN_COMBINATIONS, GPIO pins
+│   ├── trunkcontroller.py      # Low-level async servo primitives (clamping, move_to, return_to_rest)
 │   ├── movements.py            # High-level async gesture choreography
-│   ├── concurrentMovements.py  # Thread-based gestures (ThreadPoolExecutor)
-│   ├── animatronic.py          # Named routines pairing gestures with audio
-│   ├── controller.py           # CLI entry point for gesture testing
-│   ├── audio_player.py         # WAV/MP3 file player with jaw-motor sync
-│   ├── audio_streamer.py       # Live mic passthrough + effects + jaw sync
-│   ├── config_store.py         # Shared tuning config (jaw profiles; servo limits later)
-│   ├── servo_lock.py           # Cross-process servo mutex (fcntl)
+│   ├── concurrentMovements.py  # Thread-based gestures (ThreadPoolExecutor), e.g. face_palm
+│   ├── performance.py          # Reusable runner for audio-synced concurrent gestures
+│   ├── positions.py            # Shared pose/position helpers
+│   ├── animatronic.py          # Named routines + Modes (napping/awake/tracking/scan); CLI entry point
+│   ├── controller.py           # CLI entry point for gesture-only testing
+│   ├── audio_player.py         # WAV/MP3 file player with jaw-motor + eye-LED sync
+│   ├── audio_streamer.py       # Live mic passthrough + voice effects + jaw sync
+│   ├── config_store.py         # Shared tuning config (jaw profiles, effect presets)
+│   ├── servo_lock.py           # Cross-process servo mutex (fcntl); whole-robot + Neck_Group locks
+│   ├── nap_signal.py           # Cross-process stop signal that preempts a running Mode
+│   ├── range_sensor.py         # HC-SR04 helper + ApproachDetector (presence / approach wake)
+│   ├── range_publish.py        # Publishes range readings for the dashboard gauge
+│   ├── camera_service.py       # Non-root process owning the camera + detector (loopback :8001)
+│   ├── detector.py             # TFLite COCO SSD-MobileNet object detector
+│   ├── vision_models.py        # Detection / DetectionRule / TrackingConfig data models
+│   ├── detection_routine_map.py# Detection → Routine arbitration with per-rule cooldown
+│   ├── tracking_controller.py  # Pure neck-tracking math (target select, offset, next targets)
 │   ├── calibrate.py            # Interactive single-servo limit finder
-│   ├── eyetest.py              # Flash the eye LED (EYE_LIGHT_PIN) hardware test
+│   ├── calibrate_joints.py     # Interactive kinematic-model calibration harness
+│   ├── probe_collision.py      # Supervised collision-boundary probe (model vs. hardware)
+│   ├── eyetest.py / jawtest.py # Standalone LED / jaw-motor hardware tests
 │   ├── micwebcontroller.py     # Flask: mic stream + jaw tuning + voice FX (port 5000)
 │   ├── webapp.py               # Flask control panel UI (port 8000)
+│   ├── kinematics/             # Hardware-free 3D self-collision model + CLI
 │   ├── model/  utils/  action/ # Supporting packages
 │   ├── templates/index.html    # Control-panel UI served by webapp.py
 │   └── config/
-│       ├── tuning.json         # Jaw tuning profiles (auto-created; version-controlled)
+│       ├── tuning.json         # Jaw/effect tuning profiles (version-controlled)
+│       ├── calibration.json    # Per-joint kinematic calibration (provisional seeds)
 │       └── alsa/               # ALSA sound-card configuration
 ├── tests/                      # pytest suite (hypothesis property + unit tests)
-├── audio/                      # WAV/MP3 files (deployed to ~/Music/ on the Pi)
+├── audio/                      # WAV/MP3 files — the source of truth, resolved directly at runtime
 ├── models/                     # Camera detector: coco_labels.txt (tracked) + *.tflite (gitignored)
 ├── deploy/                     # Deployment assets (systemd unit for Camera_Service)
-├── .venv/                      # Python virtualenv (repo root)
+├── .venv/                      # Python virtualenv (repo root, built --system-site-packages)
 ├── requirements.txt
 └── README.md
 ```
@@ -65,13 +155,14 @@ animatronic-v2/
 ### Layer overview
 
 ```
-animatronic.py / controller.py   ← you call these
+animatronic.py / controller.py   ← you call these (routines + Modes / gesture-only)
+        │
+        ├── performance.py        ← audio-synced concurrent gesture runner
+        ▼
+    movements.py                  ← gesture choreography (async)
         │
         ▼
-    movements.py                 ← gesture choreography (async)
-        │
-        ▼
-  trunkcontroller.py             ← servo primitives (async, adafruit_servokit)
+  trunkcontroller.py              ← servo primitives (async, adafruit_servokit)
         │
         ▼
   PCA9685 PWM board → servos
@@ -80,6 +171,11 @@ animatronic.py / controller.py   ← you call these
 `concurrentMovements.py` sits alongside `movements.py` and uses
 `ThreadPoolExecutor` instead of asyncio for gestures that need true
 thread-level parallelism (e.g. `face_palm`).
+
+The camera pipeline (`camera_service.py` → `detector.py` →
+`tracking_controller.py` / `detection_routine_map.py`) runs as a separate
+non-root process and feeds Tracking/Scan Modes and the control panel; it never
+drives servos itself.
 
 ---
 
@@ -114,7 +210,7 @@ Key packages:
 # Clone and create a virtual environment
 git clone <repo-url> animatronic-v2
 cd animatronic-v2
-python3 -m venv .venv
+python3 -m venv --system-site-packages .venv   # system packages for picamera2
 source .venv/bin/activate
 
 # Install pinned dependencies
@@ -129,38 +225,104 @@ pip install -r requirements.txt
 
 ## Running
 
-### Run a named animatronic routine (gesture + audio)
+Run everything from the repo root (the venv lives at the repo root). Prefix any
+command with `SERVO_SIM=1` for a hardware-free dry run that logs every servo
+write instead of touching I2C.
 
-Run from the repo root (the venv lives at the repo root):
+### Routines (gesture + audio)
 
 ```bash
 sudo .venv/bin/python src/animatronic.py --action=<action>
 ```
 
-Available actions:
+Routine actions (the dispatch allowlist is `Animatronic.build_action_map()`;
+only these names are dispatchable — never `getattr`/`eval` on raw input):
 
-| Action | Gesture | Audio |
-|--------|---------|-------|
-| `startParty` | Wave + swivel head | `sb_party_switch.wav` |
-| `blah` | Head-shake no | `blah.wav` |
-| `krusty` | Neck ellipse | `krusty-laugh.wav` |
-| `mic` | — | Live microphone passthrough (AudioStreamer) |
+| Action | Description |
+|--------|-------------|
+| `startParty` | Wave + swivel head |
+| `niceDay` | Wave hello, "nice day for a walk" (arm leads the audio) |
+| `krusty` | Neck ellipse + Krusty laugh |
+| `blah` | Concurrent head-shake + palm-present (Performance Framework) |
+| `vincentPrice` | Smooth reach + flowing head look-around + laugh |
+| `yawn` | Cover-mouth gesture, jaw synced to the yawn |
+| `snuckUp` | Head jerk + arm recoil + "snuck up" gasp |
+| `awaken` | Groggy stir + lazy head bob |
+| `sneeze` | Cover-mouth held through the sneeze, head snap 5s in |
+| `brains` | Menacing reach + head scan, audio-synced |
+| `hypnotic` | Arm/head sway, jaw off, eyes blink; two-track audio |
+| `clearThroat` | Hand-to-mouth throat clear (gated until near-settle) |
+| `coughLong` / `coughMedium` | Cover-mouth cough (gated until the hand settles) |
+| `maximus` | Head-focus ×3, audio gated until the head settles |
+| `burp` | Cover-mouth burp + "excuse me" follow-on (sound leads, hand follows) |
+| `fart` | Fart (pure audio) then a cover-mouth "excuse me" |
+| `fartGhost` | Gated reaction after the fan-nose gesture arrives |
+| `moreCandy` | Jittery sugar-rush shakes (four concurrent joints) |
+| `comeGetCandy` | Beckon/come-here + candy call |
+| `sleep` | Snore performance |
 
-### Test an individual gesture (no audio)
+### Movements (gesture only, no audio)
 
 ```bash
 sudo .venv/bin/python src/controller.py --action=<action>
 ```
 
-Available gesture actions: `wave`, `yes`, `smno`,
-`slowScan`, `swivelHead`, `comein`, `neckEllipse`,
-`lookAroundSmall`.
+Gesture actions (from `controller.py`'s `action_map`):
 
-### Run the face-palm concurrent movement demo
+- **Arm (channels 4–7):** `wave`, `beckon`, `comeHere`, `menacingReach`,
+  `yawnCover`, `facePalm`, `fanButt`, `fanNose`, `tapSide`, `talkingWithHands`
+- **Head (channels 0–1):** `yes`, `lookAroundSmall`, `lookAroundRandom`,
+  `neckEllipse`, `swivelHead`, `shakeHead`, `snapHead`, `smno`, `snuckUp`,
+  `awaken`, `headFocus`
+- **Composite (arm + head):** `waveAndSwivelSmooth`, `handVisor`
+
+Thread-based `face_palm` demo:
 
 ```bash
 sudo .venv/bin/python src/concurrentMovements.py
 ```
+
+### Modes (continuous background behaviours)
+
+A Mode runs continuously until interrupted (a timeout, a sensor, or an external
+stop request from the web control panel via `nap_signal`). They are launched
+through `animatronic.py` with dedicated CLI branches so each acquires the right
+lock.
+
+| Action | Mode | Lock held | Interrupted by |
+|--------|------|-----------|----------------|
+| `napping` | Sleep — resting/idle until roused | whole-robot `servo_lock()` | `--nap-timeout`, sensor, web stop |
+| `awake` | Awake — performs ambient Routines on a loop | whole-robot `servo_lock()` | `--awake-timeout`, sensor, web stop |
+| `tracking` | Head tracking (neck follows a detected person) | **Neck_Group only** (arm gestures may run concurrently) | Scan_Sweep timeout, web stop |
+| `scan` | Neck tracker + concurrent arm-only responder | whole-robot `servo_lock()` | `--scan-timeout-min` (1–120), web stop |
+| `mic` | Live mic passthrough (audio only) | **no lock** (does not move servos) | Enter key / web stop |
+
+```bash
+# Sleep mode with a 60s timeout wake
+sudo .venv/bin/python src/animatronic.py --action=napping --nap-timeout 60
+
+# Awake mode for 5 minutes
+sudo .venv/bin/python src/animatronic.py --action=awake --awake-timeout 300
+
+# Head tracking (needs Camera_Service running — see Camera vision)
+sudo .venv/bin/python src/animatronic.py --action=tracking \
+    --camera-url http://localhost:8001 --conf 0.5 --deadband 0.05
+
+# Scan mode, winding down after 30 minutes
+sudo .venv/bin/python src/animatronic.py --action=scan --scan-timeout-min 30
+```
+
+Tracking/Scan accept extra tuning flags: `--max-step`, `--deadband`, `--conf`,
+`--scan-timeout`, `--aim-frac`, `--tilt-center`, `--tilt-min`, `--tilt-max`,
+`--settle-gain`, `--camera-url`.
+
+### Audio files
+
+Audio lives in the repo's own `audio/` directory — the version-controlled
+source of truth. `Animatronic._resolve_audio_dir()` resolves it relative to the
+module (`<repo>/audio`), so it is identical regardless of the invoking user
+(sudo/pi/aaron) and there is no `~/Music/` deploy step. Override with the
+`ANIMATRONIC_AUDIO_DIR` environment variable.
 
 ---
 
@@ -389,9 +551,11 @@ arecord -l  # capture devices
 
 ## Web control panel
 
-`webapp.py` is a self-contained Flask + HTML control panel — the only UI for the
-system. It serves a single page with all the controls and talks to the same
-underlying scripts.
+`webapp.py` is a self-contained Flask + HTML control panel — the primary
+operator UI. It serves a single page with all the controls and launches the
+Python entry points as subprocesses, dispatching every action through an
+explicit allowlist (`ROUTINE_ACTIONS` / `MOVEMENT_ACTIONS` / `TRACKING_ACTIONS`
+/ `SCAN_ACTIONS` / `IR_MODES`) before any subprocess is spawned.
 
 ### What it controls
 
@@ -399,14 +563,18 @@ underlying scripts.
 |---------|--------------|-----|
 | **Routines** | Full gesture + audio routines | Runs `src/animatronic.py --action=<name>` as a subprocess |
 | **Movements** | Gesture-only tests (no audio) | Runs `src/controller.py --action=<name>` as a subprocess |
+| **Modes** | Start/stop Sleep (`/nap`), Awake (`/awake`), Tracking (`/tracking`), Scan (`/scan`) | Launches the Mode subprocess; a stop request writes the `nap_signal` to wind it down |
 | **Voice FX** | Mic start/stop, style presets, per-effect toggles/sliders | Proxied to `micwebcontroller.py` |
 | **Jaw Tuning** | Sensitivity / noise floor / drop threshold | Proxied to `micwebcontroller.py` |
+| **Camera** | Live feed, detections, status, model select, IR mode | Read-only proxy of Camera_Service (loopback `:8001`) |
+| **Range** | HC-SR04 distance gauge + detection-gate sensitivity | `/range`, `/range/sensitivity` |
 | **Automation** | Timed random routine (5 min) and movement (45 sec) loops | Background threads in `webapp.py` |
 
 ### Running it
 
-`webapp.py` still needs `micwebcontroller.py` running for the Voice FX and Jaw
-Tuning tabs to work (that process owns the mic stream and effects engine).
+`webapp.py` needs `micwebcontroller.py` running for the Voice FX and Jaw Tuning
+tabs (that process owns the mic stream + effects engine), and
+`camera_service.py` running for the Camera tab.
 
 ```bash
 # Run from the repo root
@@ -432,6 +600,7 @@ Ports at a glance:
 
 - `8000` — web control panel (`webapp.py`)
 - `5000` — mic stream + effects (`micwebcontroller.py`)
+- `8001` — Camera_Service (`camera_service.py`, loopback only)
 
 ### Busy interlock (safety)
 
@@ -441,11 +610,13 @@ which overheats and can burn out the motor and wiring (a fire hazard).
 
 Two layers enforce this:
 
-- **Hardware-level lock** — `servo_lock.py` holds a cross-process file lock
-  (`/tmp/animatronic_servo.lock`) for the duration of every routine. Any second
-  process that tries to move the servos (web app, automation loop, or manual
-  CLI) fails fast and exits with code 3. The OS releases
-  the lock automatically if a process crashes, so there are no stale locks.
+- **Hardware-level lock** — `servo_lock.py` holds a cross-process file lock for
+  the duration of every routine. Any second process that tries to move the
+  servos (web app, automation loop, or manual CLI) fails fast and exits with
+  the busy exit code. The OS releases the lock automatically if a process
+  crashes, so there are no stale locks. Tracking Mode is special: it takes only
+  the **Neck_Group** lock (channels 0–1), so a disjoint arm-only gesture can run
+  concurrently.
 - **UI interlock** — while a routine runs, the control panel shows a "moving"
   banner, disables all Routine and Movement buttons, and marks the status bar
   `servos: RUNNING`. The buttons re-enable automatically when the routine ends.
@@ -453,7 +624,9 @@ Two layers enforce this:
   UI shows a "busy" message rather than stacking a second routine.
 
 The automation loops also skip their tick if the servos are already busy, so
-timed playback never stacks on top of a running routine.
+timed playback never stacks on top of a running routine. A watchdog
+(`GESTURE_TIMEOUT`, 90s) kills a hung gesture subprocess so it can't hold the
+lock forever.
 
 ### Dev auto-reload
 
@@ -501,11 +674,13 @@ to drive the jaw motor and passed through a chain of voice effects before
 playback. Everything is tunable at runtime from the web control panel — no
 restart needed while you experiment.
 
-The control panel is split across three tabs to keep it uncluttered:
+The control panel is split across tabs to keep it uncluttered:
 
-- **Controller** — Routines and Movements
+- **Controller** — Routines, Movements, and Modes
 - **Voice FX** — voice style presets and per-effect toggles/sliders
 - **Jaw Tuning** — jaw motor sensitivity controls
+- **Camera** — live feed, detections, model/IR controls
+- **Range** — distance gauge and detection-gate sensitivity
 
 ### Jaw tuning
 
@@ -600,6 +775,8 @@ An optional camera pipeline adds a live feed, on-device object/person detection,
 head tracking, and IR night operation. It runs as a **separate, non-root
 process** — `src/camera_service.py` — that owns the Raspberry Pi Camera Module 3
 (NoIR), and the web control panel proxies its views into the **Camera** tab.
+Tracking/Scan Modes consume its detections read-only; the service never drives
+servos.
 
 ### Why the venv is built with `--system-site-packages`
 
@@ -700,11 +877,40 @@ drop-in. Tune `CAMERA_CONF_THRESHOLD` without touching code.
 
 ---
 
+## Range sensor
+
+An optional HC-SR04 ultrasonic sensor provides presence and approach detection —
+the wake trigger for Sleep mode and the dashboard distance gauge. It is wired to
+`RANGE_TRIG_PIN` (23, output) and `RANGE_ECHO_PIN` (24, input via a 5V→3.3V
+voltage divider).
+
+- `range_sensor.py` — `RangeSensor` wraps gpiozero's `DistanceSensor` and exposes
+  `distance_m()` / `distance_cm()` and `object_within(threshold_m)`.
+  `ApproachDetector` builds on it to detect an object *getting closer* across
+  consecutive readings within a range gate.
+- `range_publish.py` — publishes the latest reading for the control panel's
+  `/range` gauge; `/range/sensitivity` sets the detection-gate threshold used by
+  the Modes.
+
+> **Wiring:** the HC-SR04 ECHO pin idles at 5V, but the Pi GPIO tolerates only
+> 3.3V. A voltage divider (or level shifter) on the ECHO line is required.
+
+---
+
 ## Adding a new routine
 
-1. Add an audio file to `audio/` and copy it to `~/Music/` on the Pi.
+1. Add an audio file to `audio/` (the version-controlled source of truth; it is
+   resolved directly at runtime — no `~/Music/` copy needed).
 2. Add the filename to the `music` list in `src/animatronic.py` (with an index comment).
-3. Create a method on `Animatronic` calling `self.run_action_and_audio("gesture_name", self.music[n])`.
-4. Add the action name to the `action_map` dict in `main()` in `src/animatronic.py`.
-5. Optionally register the gesture in `src/controller.py` for audio-free testing.
-6. Test the gesture alone first: `sudo .venv/bin/python src/controller.py --action=<gesture>`.
+3. Author the routine method:
+   - Simple one-gesture / one-clip: add a `_do_*` coroutine and a method calling
+     `self.run_action_and_audio("gesture_name", self.music[n])`.
+   - Concurrent / audio-synced / multi-track: define a `PerformanceDefinition`
+     and run it via `PerformanceRunner` (see `brains` / `blah` / `hypnotic`).
+4. Register the `camelCase` action in `build_action_map()` in `src/animatronic.py`
+   (the single dispatch allowlist — never `getattr`/`eval` on raw `--action`).
+5. Add the action to `ROUTINE_ACTIONS` in `src/webapp.py` so it appears in the
+   control panel.
+6. Optionally register the gesture in `src/controller.py` for audio-free testing,
+   then test it alone first:
+   `sudo .venv/bin/python src/controller.py --action=<gesture>`.

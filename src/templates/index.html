@@ -84,6 +84,19 @@
     #toast.show { opacity: 1; }
     #toast.err { border-color: #ff5c5c; color: #ff9c9c; }
     .hint { font-size: 0.78rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    /* Mode reference block — larger + higher-contrast than .hint/<small> */
+    .mode-ref { font-size: 0.95rem; color: var(--text); line-height: 1.5; }
+    .mode-ref .mode-ref-label { color: var(--text); font-weight: 600; }
+    /* Section headers (Sensors / Ambient / Interrupt): clearly LARGER and
+       BRIGHTER than the ~0.95rem body values and the sub-row labels. */
+    .mode-ref .mode-ref-sub { color: var(--text); font-size: 1.0rem; font-weight: 700;
+                              text-transform: uppercase; letter-spacing: 0.05em;
+                              margin: 8px 0 2px; }
+    /* Visually separate the three mode-reference sections: each section after
+       the first gets top spacing + a hairline rule so they read as distinct
+       blocks (no rule above the first section). */
+    .mode-ref-section + .mode-ref-section { margin-top: 14px; padding-top: 10px;
+                              border-top: 1px solid var(--border); }
 
     /* Range sensor gauge — white numbers on a black readout, green on change */
     .range-gauge {
@@ -453,6 +466,51 @@
     <p class="hint" style="margin-top:0;">Yawns, then snores with the head lowered
        (audio alternates between snore clips) until the timeout elapses or you stop it.
        A running routine or movement will also interrupt the nap.</p>
+    <div class="tune-group">
+      <div class="section-title">Mode reference</div>
+
+      {# Audio sub-row is emitted ONLY where audio plays OUTSIDE a named routine.
+         The ONLY such case is the napping snore loop (_run_nap_loop drives
+         AudioPlayer directly, not a Routine) — see Ambient below. A Routine
+         implies its own audio, so every other section drops the Audio row. #}
+
+      <!-- Section 1: Sensors (no action sub-sections) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Sensors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Live:</span>
+            {{ mode_reference['Napping'].sensors | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Planned:</span>
+            {{ mode_reference['Napping'].planned_sensors | join(', ') or '(none planned)' }}
+        </p>
+      </div>
+
+      <!-- Section 2: Ambient (looping) behaviors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Napping'].ambient_routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Napping'].ambient_gestures | join(', ') or '(N/A)' }}<br>
+          {# KEEP: the nap snore loop is the one place audio plays outside a routine. #}
+          <span class="mode-ref-label">Audio:</span>
+            {{ mode_reference['Napping'].ambient_sounds | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+
+      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Napping'].routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Napping'].gestures | join(', ') or '(N/A)' }}
+          {# Audio row dropped: these interrupt sounds are all routine-owned. #}
+        </p>
+      </div>
+    </div>
     <div class="row">
       <label>Nap timeout<br><small style="color:var(--muted)">seconds before the head raises</small></label>
       <input type="range" id="nap-timeout" min="5" max="900" step="5" value="60"
@@ -477,6 +535,47 @@
        filler until the timeout elapses or you stop it.
        Pressing any routine or movement button also arouses it — the mode winds
        down and yields so your action runs.</p>
+    <div class="tune-group">
+      <div class="section-title">Mode reference</div>
+
+      {# No Audio sub-row anywhere in Awake: ambient audio (yawn/clearThroat) and
+         every interrupt sound are owned by named routines (a Routine implies its
+         own audio). Audio rows appear only where audio plays OUTSIDE a routine
+         — the napping snore loop — see the Napping panel. #}
+
+      <!-- Section 1: Sensors (no action sub-sections) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Sensors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Live:</span>
+            {{ mode_reference['Awake'].sensors | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Planned:</span>
+            {{ mode_reference['Awake'].planned_sensors | join(', ') or '(none planned)' }}
+        </p>
+      </div>
+
+      <!-- Section 2: Ambient (looping) behaviors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Awake'].ambient_routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Awake'].ambient_gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+
+      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Awake'].routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Awake'].gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+    </div>
     <div class="row">
       <label>Awake timeout<br><small style="color:var(--muted)">seconds before the mode winds down</small></label>
       <input type="range" id="awake-timeout" min="5" max="1800" step="5" value="300"
@@ -502,6 +601,47 @@
        while an arm-only gesture or routine runs — gestures fire ~5x more often
        than routines. Runs until the timeout elapses or you stop it; pressing any
        routine or movement button also winds it down so your action runs.</p>
+    <div class="tune-group">
+      <div class="section-title">Mode reference</div>
+
+      {# No Audio sub-row anywhere in Scan: ambient (Scan_Sweep) carries no audio
+         and every interrupt sound is owned by a routine (a Routine implies its
+         own audio). Audio rows appear only where audio plays OUTSIDE a routine
+         — the napping snore loop — see the Napping panel. #}
+
+      <!-- Section 1: Sensors (no action sub-sections) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Sensors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Live:</span>
+            {{ mode_reference['Scan'].sensors | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Planned:</span>
+            {{ mode_reference['Scan'].planned_sensors | join(', ') or '(none planned)' }}
+        </p>
+      </div>
+
+      <!-- Section 2: Ambient (looping) behaviors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Scan'].ambient_routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Scan'].ambient_gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+
+      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Scan'].routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Scan'].gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+    </div>
     <div class="row">
       <label>Scan timeout<br><small style="color:var(--muted)">minutes before the mode winds down (1–120)</small></label>
       <input type="number" id="scan-timeout-min" min="1" max="120" step="1" value="60">

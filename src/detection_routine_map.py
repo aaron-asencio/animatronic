@@ -86,6 +86,7 @@ SCAN_GESTURE_CHANNELS: Dict[str, frozenset] = {
     "beckon": frozenset({3, 4, 5, 6, 7}),
     "comeHere": frozenset({3, 4, 5, 6, 7}),
     "wave": frozenset({3, 4, 5, 6, 7}),
+    "tapSide": frozenset({3, 4, 5, 6, 7}),  # arm-only idle tap (verified arm channels)
 }
 
 
@@ -110,16 +111,20 @@ SCAN_SAFE_ARM_ACTIONS: Dict[str, ScanActionKind] = {
     "beckon": ScanActionKind.GESTURE,
     "comeHere": ScanActionKind.GESTURE,
     "wave": ScanActionKind.GESTURE,
+    "tapSide": ScanActionKind.GESTURE,  # NEW — arm-only {3,4,5,6,7}, no neck term
     "brains": ScanActionKind.ROUTINE,
     "hypnotic": ScanActionKind.ROUTINE,
-    # FLAGGED — DO NOT ENABLE without an operator bench-verification:
-    #   "burp": ScanActionKind.ROUTINE,
-    # burp is head-COUPLED. Its coverMouth hand-to-mouth fold is operator-verified
-    # safe ONLY with the head centered (NECK_PAN=90, NECK_TILT=90). Scan holds the
-    # head OFF-center to track the person, and FORBIDDEN_COMBINATIONS has no neck
-    # term, so nothing would catch the hand colliding with the off-center head.
-    # Keep burp out of the scan pool until an operator bench-verifies the fold
-    # clears the head across the FULL tracking envelope.
+    # FLAGGED — head-COUPLED, DO NOT ENABLE without operator bench-verification
+    # across the FULL off-center tracking envelope (same rationale as burp: scan
+    # holds the head OFF-center and FORBIDDEN_COMBINATIONS has no neck term, so
+    # nothing would catch a hand colliding with the off-center head). Each would
+    # drive/recenter the neck channels (0/1) the tracker owns:
+    #   "fanNose":   ScanActionKind.GESTURE,  # start pose writes NECK_PAN/NECK_TILT (ch 0/1)
+    #   "snuckUp":   ScanActionKind.ROUTINE,  # startle: head jerk (NECK_TILT) + nervous pan
+    #   "moreCandy": ScanActionKind.ROUTINE,  # cover-mouth pose verified only neck-centered; no scan builder
+    #   "awaken":    ScanActionKind.ROUTINE,  # wake: lazy head bob on NECK_PAN/NECK_TILT
+    #   "facePalm":  ScanActionKind.GESTURE,  # NECK_TILT=140 + NECK_PAN shake (head down)
+    #   "burp":      ScanActionKind.ROUTINE,  # coverMouth fold, operator-verified neck-centered only
 }
 
 # Seconds a scan response is blocked from re-firing after it completes (per-rule

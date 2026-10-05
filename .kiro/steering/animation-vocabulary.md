@@ -16,7 +16,7 @@ Gesture  →  Gestures  →  Routine  →  Act
 (motion)    (sequence)   (+audio)    (composition)
 
 Stream  = live mic passthrough (audio-driven jaw, gestures allowed)
-Mode    = a continuous background loop (Mic stream, Sleep, or Awake)
+Mode    = a continuous background loop (Mic stream, Sleep, Awake, Tracking, or Scan)
 ```
 
 Each term maps onto a specific layer of the architecture:
@@ -138,7 +138,22 @@ effects and driving the jaw motor from mic input, owned by
 ## Mode
 
 A **Mode** is a background behavior that **runs continuously until
-interrupted**. Three modes exist:
+interrupted**. Five modes exist — Mic stream, Sleep, Awake, Tracking, and Scan.
+
+The five differ in whether they drive audio and which servo lock they hold,
+which in turn decides what can run alongside them:
+
+| Mode | Audio / jaw? | Servo lock held | Interrupts live mic? |
+|------|--------------|-----------------|----------------------|
+| Mic stream | Yes (mic) | none | — (is the stream) |
+| Sleep | No | whole-robot `servo_lock()` | No |
+| Awake | Yes (runs Routines) | whole-robot `servo_lock()` | Yes |
+| Tracking | No | **Neck_Group only** (channels 0–1) | No |
+| Scan | Yes (arm-only responder may run a Routine) | whole-robot `servo_lock()` | Yes |
+
+Because Tracking owns only the Neck_Group, a disjoint arm-only Gesture (channels
+4–7) may run concurrently with it; the other servo-driving Modes hold the whole
+robot. The mode definitions follow.
 
 ### Mic stream mode
 
@@ -154,7 +169,9 @@ Continuously runs a resting/idle behavior until a sensor interrupts it. Like
 Awake mode, it is **filler**: idle behavior that fills the time until a more
 deliberate action is wanted.
 
-- **Interrupted by**: a sensor (**sensor TBD**).
+- **Interrupted by**: the HC-SR04 ultrasonic range sensor
+  (`src/range_sensor.py`) — `ApproachDetector` detects an object approaching
+  within the range gate (`object_within` / consecutive closer readings).
 - Sleep mode can also be configured with a **timeout**. When set, the timeout
   elapsing is itself the interruption signal — no sensor is required.
 - **Pressing a web action button** also interrupts it — requesting any
@@ -175,7 +192,8 @@ until a more deliberate action is wanted.
 - **Interrupted by**:
   - a **timeout** (the elapsing is itself the interruption signal, as in Sleep
     mode);
-  - a **sensor** (**sensor TBD**); or
+  - the **HC-SR04 range sensor** (`src/range_sensor.py` / `ApproachDetector`),
+    as in Sleep mode; or
   - **pressing a web action button** — requesting any Routine/Movement from the
     control panel arouses Awake mode: it winds down and yields so the requested
     action can run. This mirrors how the web app preempts the napping Mode (see
@@ -186,6 +204,44 @@ until a more deliberate action is wanted.
 - The conceptual opposite of Sleep mode: Sleep idles until roused, Awake is
   actively performing until it winds down (timeout) or is roused to a different
   behavior (sensor, or an operator's web button).
+
+### Tracking mode
+
+Continuously pans/tilts the neck to follow a detected person, reading
+detections from the non-root Camera_Service (`src/camera_service.py`) and
+driving only the neck. Launched via `animatronic.py --action=tracking`.
+
+- **Owns only the Neck_Group** (channels 0–1): it acquires the Neck_Group lock,
+  **not** the whole-robot `servo_lock()`. Because it leaves the Arm_Group
+  (channels 4–7) free, a disjoint arm-only Gesture may run concurrently.
+- **No audio / jaw.** Tracking is pure neck motion, so it does **not** interrupt
+  the live mic stream — unlike Awake/Scan, it carries no audio.
+- **Interrupted by**:
+  - a **Scan_Sweep reacquire timeout** (the person is lost and not reacquired
+    within the window); or
+  - **pressing a web action button / stop** — the cross-process stop signal
+    (`nap_signal`) winds it down, as with Sleep and Awake.
+- A detection may yield a **pending Routine trigger** (via
+  `detection_routine_map.py`), but Tracking never dispatches it itself: the
+  trigger is dispatched only **after** Tracking releases the Neck_Group, so a
+  Routine and Tracking never own the neck at the same time.
+
+### Scan mode
+
+Continuously runs the neck tracker **plus** a concurrent arm-only responder
+that can perform a Routine (so it may drive the whole arm + jaw/audio). Launched
+via `animatronic.py --action=scan`.
+
+- **Owns the whole robot**: unlike Tracking, it holds the whole-robot
+  `servo_lock()` for its entire run, because the responder may drive the arm and
+  audio.
+- **Carries audio** (the responder's Routine), so Scan **interrupts the live
+  mic stream** like Awake and any Routine.
+- **Interrupted by**:
+  - a **timeout** (wind-down after `--scan-timeout-min` minutes, clamped
+    1–120); or
+  - **pressing a web action button / stop** — the cross-process stop signal
+    (`nap_signal`) winds it down.
 
 ## Quick Reference
 
