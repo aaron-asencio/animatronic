@@ -50,14 +50,33 @@ from vision_models import TrackingConfig  # noqa: E402
 # Fakes                                                                        #
 # --------------------------------------------------------------------------- #
 class FakeTrunk:
-    """Records every ``set_angle`` write and echoes the commanded angle back."""
+    """Records every ``set_angle`` write and echoes the commanded angle back.
+
+    Also provides an async ``move_to`` stand-in: Puppeteer's idle recenter now
+    EASES the neck to rest via ``TrunkController.move_to`` instead of the old
+    one-shot ``_recenter_neck`` snap. The real ``move_to`` interpolates each
+    joint and writes every step through ``set_angle``; this fake reproduces the
+    observable contract — each listed channel's FINAL angle is its target,
+    written through ``set_angle`` — so the rest-pose assertions still hold
+    without a real ServoKit.
+    """
 
     def __init__(self):
         self.writes = []
+        self.move_to_calls = []
 
     def set_angle(self, channel, angle):
         self.writes.append((channel, angle))
         return angle
+
+    async def move_to(self, targets, steps=60, delay=0.02, start_fractions=None,
+                       ease=True):
+        # Record the call so a test can assert the eased recenter was used, then
+        # commit each joint's final target through set_angle (as the real
+        # move_to does on its last step).
+        self.move_to_calls.append(dict(targets))
+        for channel, target in targets.items():
+            self.set_angle(channel, float(target))
 
 
 class FakeClient:
@@ -222,9 +241,16 @@ def test_puppeteer_idle_hold_recenters_and_resumes(monkeypatch):
     )
 
     assert reason == animatronic.Animatronic.NAP_INTERRUPT_STOP
-    # The idle hold recentered the neck to rest: pan to global rest, tilt to the
-    # tracking level-gaze center (both written through set_angle).
+    # The idle recenter is now an EASED move_to sweep of ONLY the Neck_Group
+    # channels to the rest pose (not the one-shot _recenter_neck snap).
     rest_pan = constants.REST_POSITIONS[constants.NECK_PAN]
+    assert fake.move_to_calls, "idle hold must ease the neck home via move_to"
+    recenter = fake.move_to_calls[0]
+    assert set(recenter) == {constants.NECK_PAN, constants.NECK_TILT}
+    assert recenter[constants.NECK_PAN] == float(rest_pan)
+    assert recenter[constants.NECK_TILT] == float(cfg.tilt_center_deg)
+    # The eased sweep still ENDS at the rest pose: pan to global rest, tilt to
+    # the tracking level-gaze center (both written through set_angle).
     assert (constants.NECK_PAN, float(rest_pan)) in [
         (c, float(ang)) for (c, ang) in fake.writes
     ]

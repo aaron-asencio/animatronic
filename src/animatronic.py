@@ -2417,6 +2417,15 @@ class Animatronic:
     _SCAN_STEP_DEG = 2.0        # pan increment per sweep step (degrees)
     _SCAN_STEP_PERIOD_S = 0.05  # delay between sweep steps (seconds)
 
+    # Puppeteer idle-recenter cadence. When a leave-frame Scan_Sweep times out
+    # with no person, Puppeteer eases the Neck_Group back to rest (rather than
+    # snapping) via a smoothstep move_to. Coming from a fully-panned sweep this
+    # could be a ~85 deg pan swing; at these values a worst-case full sweep takes
+    # ~2s (100 steps x 0.02s), a deliberately slow, gentle recenter so the head
+    # does not jerk to center. Only the Neck_Group channels are driven.
+    _PUPPETEER_RECENTER_STEPS = 100    # interpolation steps for the eased recenter
+    _PUPPETEER_RECENTER_DELAY_S = 0.02  # delay between steps (seconds)
+
     def tracking(
         self,
         camera_url=DEFAULT_CAMERA_URL,
@@ -3013,11 +3022,15 @@ class Animatronic:
         leave-frame Scan_Sweep times out with no person in view. Unlike plain
         tracking — which ends the Mode on that timeout (Req 6.10) — Puppeteer is
         a live operator performance that must stay up. Rather than keep sweeping,
-        this recenters the Neck_Group to its rest pose (NECK_PAN to the global
-        rest ~90, NECK_TILT to the tracking level-gaze center) via
-        ``_recenter_neck`` (so every write is ``set_angle`` SAFE_LIMITS-clamped,
-        Req 5.5) and then IDLES there, polling ``/detections`` without moving the
-        neck. It resumes tracking the instant a Target_Person reappears.
+        this EASES the Neck_Group back to its rest pose (NECK_PAN to the global
+        rest ~90, NECK_TILT to the tracking level-gaze center) with a slow,
+        smoothstep ``move_to`` sweep — NOT the one-shot ``_recenter_neck`` snap
+        used by the wind-down/error path — so coming off a fully-panned
+        Scan_Sweep the head does not jerk to center. Every ``move_to`` step
+        writes through ``set_angle`` (SAFE_LIMITS clamp, Req 5.5) and only the
+        Neck_Group channels are driven. It then IDLES there, polling
+        ``/detections`` without moving the neck, and resumes tracking the instant
+        a Target_Person reappears.
 
         The hold checks ``nap_signal`` every tick so an explicit stop (the web
         stop button / a preempting Mode) is honored within ~1s. The Mode never
@@ -3037,12 +3050,36 @@ class Animatronic:
             rest angles the neck is now holding, so the caller's local angle
             state stays consistent with the last write.
         """
-        # Recenter to the rest pose (set_angle-clamped, Neck_Group only) and
-        # hold there — do NOT start another Scan_Sweep.
-        self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
-        cur_pan = float(constants.REST_POSITIONS[constants.NECK_PAN])
-        cur_tilt = float(cfg.tilt_center_deg)
-        print("[tracking] puppeteer: no person -> recenter + idle (hold)")
+        # Ease the Neck_Group back to the rest pose and hold there — do NOT
+        # start another Scan_Sweep. Unlike the wind-down/error path (which uses
+        # the prompt one-shot _recenter_neck snap), the idle recenter sweeps
+        # smoothly via move_to so coming off a fully-panned sweep the head does
+        # not JERK to center. move_to interpolates each joint with smoothstep
+        # easing and writes every step through set_angle (SAFE_LIMITS clamp,
+        # Req 5.5). ONLY the Neck_Group channels are driven — never an arm
+        # channel a concurrent operator Gesture may own (Req 5.8, 6.11).
+        rest_pan = float(constants.REST_POSITIONS[constants.NECK_PAN])
+        rest_tilt = float(cfg.tilt_center_deg)
+        recenter_targets = {
+            constants.NECK_PAN: rest_pan,
+            constants.NECK_TILT: rest_tilt,
+        }
+        print("[tracking] puppeteer: no person -> ease recenter + idle (hold)")
+        await Movements.trunkController.move_to(
+            recenter_targets,
+            steps=self._PUPPETEER_RECENTER_STEPS,
+            delay=self._PUPPETEER_RECENTER_DELAY_S,
+            ease=True,
+        )
+        cur_pan = rest_pan
+        cur_tilt = rest_tilt
+
+        # move_to itself does not poll nap_signal, so a stop requested DURING the
+        # ~2s eased sweep would otherwise be ignored until the first idle tick.
+        # Check it right after the sweep so an explicit stop is still honored
+        # promptly (Req 6.4, 6.5).
+        if nap_signal.stop_requested():
+            return True, cur_pan, cur_tilt
 
         while True:
             # Honor an explicit stop within ~1s (Req 6.4, 6.5).
