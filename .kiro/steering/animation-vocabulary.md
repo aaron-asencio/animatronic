@@ -16,7 +16,7 @@ Gesture  →  Gestures  →  Routine  →  Act
 (motion)    (sequence)   (+audio)    (composition)
 
 Stream  = live mic passthrough (audio-driven jaw, gestures allowed)
-Mode    = a continuous background loop (Mic stream, Sleep, Awake, Tracking, or Scan)
+Mode    = a continuous background loop (Mic stream, Sleep, Awake, Tracking, Scan, or Puppeteer)
 ```
 
 Each term maps onto a specific layer of the architecture:
@@ -138,9 +138,10 @@ effects and driving the jaw motor from mic input, owned by
 ## Mode
 
 A **Mode** is a background behavior that **runs continuously until
-interrupted**. Five modes exist — Mic stream, Sleep, Awake, Tracking, and Scan.
+interrupted**. Six modes exist — Mic stream, Sleep, Awake, Tracking, Scan, and
+Puppeteer.
 
-The five differ in whether they drive audio and which servo lock they hold,
+The six differ in whether they drive audio and which servo lock they hold,
 which in turn decides what can run alongside them:
 
 | Mode | Audio / jaw? | Servo lock held | Interrupts live mic? |
@@ -150,10 +151,11 @@ which in turn decides what can run alongside them:
 | Awake | Yes (runs Routines) | whole-robot `servo_lock()` | Yes |
 | Tracking | No | **Neck_Group only** (channels 0–1) | No |
 | Scan | Yes (arm-only responder may run a Routine) | whole-robot `servo_lock()` | Yes |
+| Puppeteer | Yes (operator live mic Stream) | **Neck_Group only** (channels 0–1) | No — it *is* the mic Stream + neck tracking |
 
-Because Tracking owns only the Neck_Group, a disjoint arm-only Gesture (channels
-4–7) may run concurrently with it; the other servo-driving Modes hold the whole
-robot. The mode definitions follow.
+Because Tracking and Puppeteer own only the Neck_Group, a disjoint arm-only
+Gesture (channels 4–7) may run concurrently with them; the other servo-driving
+Modes hold the whole robot. The mode definitions follow.
 
 ### Mic stream mode
 
@@ -242,6 +244,34 @@ via `animatronic.py --action=scan`.
     1–120); or
   - **pressing a web action button / stop** — the cross-process stop signal
     (`nap_signal`) winds it down.
+
+### Puppeteer mode
+
+A **performance** mode for a human operator who voices the figure live: it
+composes the **live mic Stream** (operator's voice drives the jaw), **neck-only
+tracking** of the detected person, and **operator-chosen arm Gestures** — three
+things that already coexist on disjoint resources. Launched via
+`animatronic.py --action=puppeteer`; the web control panel starts it (and the
+mic Stream) together from the Puppeteer start button.
+
+- **Owns only the Neck_Group** (channels 0–1), exactly like Tracking: it holds
+  the Neck_Group lock, **not** the whole-robot `servo_lock()`. The mic Stream
+  holds **no** servo lock, so a disjoint arm-only Gesture (channels 4–7) may run
+  concurrently.
+- **Audio is the operator's live mic Stream**, so Puppeteer does **not**
+  interrupt the mic — it *is* the mic Stream plus neck tracking. (Starting a
+  Routine/Act or another audio-driving Mode still interrupts it, because they
+  own the jaw/audio path.)
+- **Detection→Routine triggering is suppressed**: unlike Tracking, a detection
+  drives neck aim **only** and can never auto-dispatch a Routine, so a detection
+  never seizes the jaw/audio path from the operator's live mic. Plain Tracking's
+  trigger behavior is unchanged.
+- **Interrupted by**:
+  - **pressing the web stop button** (`/puppeteer/stop`) — winds the neck down,
+    releases the Neck_Group, and stops the mic Stream it started; or
+  - **starting a different Mode / a Routine or Movement** — the mode-switch
+    preemption (`_preempt_mode_if_running`) winds it down (and stops its mic)
+    before the new action claims servos.
 
 ## Quick Reference
 

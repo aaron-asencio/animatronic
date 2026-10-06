@@ -49,7 +49,7 @@ meanings throughout the code and docs (full definitions in
 | **Routine** | Yes | an `Animatronic` action (`animatronic.py --action=…`) | Yes |
 | **Act** | Yes | several Routines composed into one performance | Yes |
 | **Stream** | Yes (mic) | `AudioStreamer` / `micwebcontroller.py` | — (is the stream) |
-| **Mode** | varies | a continuous background loop (mic / sleep / awake / tracking / scan) | varies |
+| **Mode** | varies | a continuous background loop (mic / sleep / awake / tracking / scan / puppeteer) | varies |
 
 A Gesture never touches the jaw/audio path, so Gestures layer safely over a
 live mic stream. A Routine, Act, or audio-driven Mode owns the jaw motor and so
@@ -295,6 +295,7 @@ lock.
 | `awake` | Awake — performs ambient Routines on a loop | whole-robot `servo_lock()` | `--awake-timeout`, sensor, web stop |
 | `tracking` | Head tracking (neck follows a detected person) | **Neck_Group only** (arm gestures may run concurrently) | Scan_Sweep timeout, web stop |
 | `scan` | Neck tracker + concurrent arm-only responder | whole-robot `servo_lock()` | `--scan-timeout-min` (1–120), web stop |
+| `puppeteer` | Live mic Stream + neck-only tracking + operator arm Gestures (triggers suppressed) | **Neck_Group only** (arm gestures may run concurrently) | web stop, mode preemption |
 | `mic` | Live mic passthrough (audio only) | **no lock** (does not move servos) | Enter key / web stop |
 
 ```bash
@@ -310,9 +311,15 @@ sudo .venv/bin/python src/animatronic.py --action=tracking \
 
 # Scan mode, winding down after 30 minutes
 sudo .venv/bin/python src/animatronic.py --action=scan --scan-timeout-min 30
+
+# Puppeteer mode (live-mic performance): neck-only tracking + operator arm
+# gestures. The web control panel starts the mic Stream with it; from the CLI
+# it tracks the neck only (triggers suppressed), leaving the mic to the web app.
+sudo .venv/bin/python src/animatronic.py --action=puppeteer \
+    --camera-url http://localhost:8001
 ```
 
-Tracking/Scan accept extra tuning flags: `--max-step`, `--deadband`, `--conf`,
+Tracking/Scan/Puppeteer accept extra tuning flags: `--max-step`, `--deadband`, `--conf`,
 `--scan-timeout`, `--aim-frac`, `--tilt-center`, `--tilt-min`, `--tilt-max`,
 `--settle-gain`, `--camera-url`.
 
@@ -555,7 +562,7 @@ arecord -l  # capture devices
 operator UI. It serves a single page with all the controls and launches the
 Python entry points as subprocesses, dispatching every action through an
 explicit allowlist (`ROUTINE_ACTIONS` / `MOVEMENT_ACTIONS` / `TRACKING_ACTIONS`
-/ `SCAN_ACTIONS` / `IR_MODES`) before any subprocess is spawned.
+/ `SCAN_ACTIONS` / `PUPPETEER_ACTIONS` / `IR_MODES`) before any subprocess is spawned.
 
 ### What it controls
 
@@ -563,7 +570,7 @@ explicit allowlist (`ROUTINE_ACTIONS` / `MOVEMENT_ACTIONS` / `TRACKING_ACTIONS`
 |---------|--------------|-----|
 | **Routines** | Full gesture + audio routines | Runs `src/animatronic.py --action=<name>` as a subprocess |
 | **Movements** | Gesture-only tests (no audio) | Runs `src/controller.py --action=<name>` as a subprocess |
-| **Modes** | Start/stop Sleep (`/nap`), Awake (`/awake`), Tracking (`/tracking`), Scan (`/scan`) | Launches the Mode subprocess; a stop request writes the `nap_signal` to wind it down |
+| **Modes** | Start/stop Sleep (`/nap`), Awake (`/awake`), Tracking (`/tracking`), Scan (`/scan`), Puppeteer (`/puppeteer`) | Launches the Mode subprocess; a stop request writes the `nap_signal` to wind it down. Starting a Mode gracefully preempts a different running Mode first. Puppeteer also starts/stops the live mic Stream. |
 | **Voice FX** | Mic start/stop, style presets, per-effect toggles/sliders | Proxied to `micwebcontroller.py` |
 | **Jaw Tuning** | Sensitivity / noise floor / drop threshold | Proxied to `micwebcontroller.py` |
 | **Camera** | Live feed, detections, status, model select, IR mode — shown in the fixed right column (always visible) | Read-only proxy of Camera_Service (loopback `:8001`) |

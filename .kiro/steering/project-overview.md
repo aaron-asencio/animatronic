@@ -34,6 +34,7 @@ The Flask control panel (`src/webapp.py`, port 8000) is the primary operator UI.
 - **Routines**: run `src/animatronic.py --action=<name>` (gesture + audio).
 - **Movements**: run `src/controller.py --action=<name>` (gesture only).
 - **Mic / jaw / effects**: proxied to `src/micwebcontroller.py` (port 5000), which owns the live mic stream and audio effects.
+- **Modes**: continuous background behaviors (Mic stream, Sleep, Awake, Tracking, Scan, Puppeteer). Puppeteer is a live-mic performance mode — it starts the mic Stream and neck-only tracking together so an operator can voice the figure and trigger arm Gestures. Starting any Mode gracefully preempts a different running Mode first.
 
 Action names are dispatched through an explicit allowlist before being passed to the subprocess. Tuning changes made in the panel persist to `src/config/tuning.json`.
 
