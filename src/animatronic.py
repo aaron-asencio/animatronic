@@ -56,6 +56,7 @@ from detection_routine_map import (
 import asyncio
 import threading
 import argparse
+import functools
 import random
 import sys
 import os
@@ -484,46 +485,85 @@ class Animatronic:
         mv = Movements("Animatronic")
         audio_dir = self._resolve_audio_dir()
 
-        BLAH = PerformanceDefinition(
-            name="blah",
-            audio_file=self.music[1],            # blah.wav
+        BLAH = self._blah_performance(mv, scan=False)
+
+        asyncio.run(PerformanceRunner(BLAH, mv, audio_dir).run())
+
+    def _blah_performance(self, mv, scan=False):
+        """Build the ``blah`` ``PerformanceDefinition`` (standalone or scan).
+
+        The standalone routine (``scan=False``) runs the randomized head shake
+        (neck channels 0-1) concurrently with the palm-present forearm bob (arm
+        channels 4-7), looping both for ``blah.wav`` with audio gated ~250ms by
+        the head shake — zero behaviour change from the pre-factored ``blah``.
+
+        The scan variant (``scan=True``) is arm-only: it drops the neck
+        ``head_shake`` ``MovementSpec`` so the group owns ONLY the arm channels
+        {4,5,6,7}, leaving the neck free for the scan tracker. Because the
+        dropped movement supplied the gate, the gate is set to ``None`` so no
+        ``GateSpec`` references a movement that no longer exists and no remaining
+        spec sets ``supplies_gate=True`` (``present_palm`` is already
+        ``supplies_gate=False``). Audio therefore starts at t=0 for the scan
+        variant — an intended, operator-visible timing change for scan only.
+        Mirrors ``_hypnotic_performance(scan=True)``.
+
+        Args:
+            mv: The shared ``Movements`` instance backing every phase callable so
+                the neck and arm adapters share one ``TrunkController``.
+            scan: When ``True``, build the arm-only scan variant (neck
+                ``MovementSpec`` dropped, ``gate=None``). Defaults to ``False``.
+
+        Returns:
+            The assembled ``PerformanceDefinition``.
+        """
+        head_shake_spec = MovementSpec(
+            name="head_shake",
+            owned_channels=frozenset({
+                constants.NECK_PAN,
+                constants.NECK_TILT,          # 0,1
+            }),
+            lead_in=mv.shake_no_lead_in,      # 250ms gate + center
+            loop_body=mv.shake_no_loop_body,  # pan sweep + tilt centering (82-98)
+            do_return=mv.shake_no_return,     # neck to center
+            supplies_gate=True,               # opens the audio gate
+        )
+        present_palm_spec = MovementSpec(
+            name="present_palm",
+            owned_channels=frozenset({
+                constants.RT_SHOULDER_ROTATOR,
+                constants.RT_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+            }),
+            lead_in=mv.present_palm_lead_in,      # raise arm (t=0)
+            loop_body=mv.present_palm_loop_body,  # one gentle bob
+            do_return=mv.present_palm_return,     # lower arm
+            supplies_gate=False,
+        )
+
+        # Scan variant: arm-only, so the neck stays free for the tracker. The
+        # head_shake spec supplied the gate, so with it dropped the gate must be
+        # None (no remaining spec supplies_gate=True) and audio starts at t=0.
+        if scan:
+            movements = (present_palm_spec,)
+            gate = None
+        else:
+            movements = (head_shake_spec, present_palm_spec)
             # Head shake supplies the gate: its lead-in sleeps 250ms before
             # completing, so audio starts ~250ms after the routine begins.
-            gate=GateSpec(movement_name="head_shake"),
+            gate = GateSpec(movement_name="head_shake")
+
+        return PerformanceDefinition(
+            name="blah",
+            audio_file=self.music[1],            # blah.wav
+            gate=gate,
             steps=(
                 PerformanceStep(
                     loop_for_audio=True,
-                    group=ConcurrentGroup(movements=(
-                        MovementSpec(
-                            name="head_shake",
-                            owned_channels=frozenset({
-                                constants.NECK_PAN,
-                                constants.NECK_TILT,          # 0,1
-                            }),
-                            lead_in=mv.shake_no_lead_in,      # 250ms gate + center
-                            loop_body=mv.shake_no_loop_body,  # pan sweep + tilt centering (82-98)
-                            do_return=mv.shake_no_return,     # neck to center
-                            supplies_gate=True,               # opens the audio gate
-                        ),
-                        MovementSpec(
-                            name="present_palm",
-                            owned_channels=frozenset({
-                                constants.RT_SHOULDER_ROTATOR,
-                                constants.RT_SHOULDER_TILT,
-                                constants.RT_ELBOW_TILT,
-                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
-                            }),
-                            lead_in=mv.present_palm_lead_in,      # raise arm (t=0)
-                            loop_body=mv.present_palm_loop_body,  # one gentle bob
-                            do_return=mv.present_palm_return,     # lower arm
-                            supplies_gate=False,
-                        ),
-                    )),
+                    group=ConcurrentGroup(movements=movements),
                 ),
             ),
         )
-
-        asyncio.run(PerformanceRunner(BLAH, mv, audio_dir).run())
 
     # --- New gesture routines ---
 
@@ -588,7 +628,7 @@ class Animatronic:
         asyncio.run(self._do_sneeze(mv, playback))
 
     def come_get_candy(self):
-        """Greet trick-or-treaters and call them to get candy. Randomly beckon or comeHere, with happy_hw_get_candy.wav gated 1.2s."""
+        """Greet trick-or-treaters and call them to get candy. Randomly beckon or comeHere, with elf_hh_get_candy.wav gated 1.2s."""
         self.run_action_and_audio("_do_come_get_candy", self.music[36], audio_delay=1.2)
 
     @staticmethod
@@ -1053,6 +1093,123 @@ class Animatronic:
 
     # --- Cover-mouth bodily-noise routines ------------------------------- #
 
+    def _cover_mouth_performance(self, mv, *, scan=False, kind):
+        """Build a cover-mouth ``PerformanceDefinition`` (standalone or scan).
+
+        The ONE parameterized builder behind every cover-mouth routine
+        (``burp``, ``coughMedium``, ``coughLong``, ``fart`` phase 2,
+        ``fartGhost`` phase 2), so there is a single definition rather than five
+        near-duplicates. ``kind`` selects the per-routine audio clip, lead-in and
+        near-end cutoff from a small internal table:
+
+        * ``coughMedium`` / ``coughLong`` / ``fart`` / ``fartGhost`` — the SETTLED
+          lead-in (``yawn_cover_lead_in_settled``, ``supplies_gate=True``): the
+          clip is GATED until the hand reaches its final cover position; a single
+          clip; ``stop_loop_lead_seconds=0.9``.
+        * ``burp`` — the DELAYED lead-in (``yawn_cover_lead_in_delayed``, does NOT
+          supply the gate), ``gate=None`` (``gurgle_burp.wav`` at t=0), a
+          two-track follow-on (``excuseme_sb.wav``), ``stop_loop_lead_seconds``
+          = the "excuse me" length (~3.45s).
+
+        ``owned_channels`` is ``{0,1,4,5,6,7}`` when ``scan=False`` (the shared
+        cover pose centers the head, so it lists the neck) and ``{4,5,6,7}`` when
+        ``scan=True`` (the neck is dropped so the tracker keeps it). For
+        ``scan=True`` the selected lead-in is bound (via ``functools.partial``)
+        with ``center_head=False`` so it never writes NECK_PAN/NECK_TILT, and
+        ``elbow_cover=mv._YC_ELBOW_COVER_SCAN`` (152) for burp/coughMedium/
+        coughLong (the -10 that clears the off-center head) or ``elbow_cover=None``
+        (162) for fart/fartGhost (operator verifies those on hardware). For
+        ``scan=False`` the lead-in is used unbound (``center_head=True``,
+        ``elbow_cover=None`` → 162), so the existing routines are byte-for-byte
+        unchanged.
+
+        Args:
+            mv: The shared ``Movements`` instance backing every phase callable so
+                they share one ``TrunkController``.
+            scan: When ``True``, build the arm-only scan variant (neck dropped,
+                head-centering suppressed, -10 for burp/cough*). Defaults to
+                ``False`` (standalone).
+            kind: One of ``"burp"``, ``"coughMedium"``, ``"coughLong"``,
+                ``"fart"``, ``"fartGhost"`` — selects the audio clip, lead-in and
+                near-end cutoff.
+
+        Returns:
+            The assembled ``PerformanceDefinition``.
+
+        Raises:
+            ValueError: If ``kind`` is not a known cover-mouth routine.
+        """
+        # Per-kind table: (lead_in_method, audio_file, followup_audio_files,
+        # gate_name_or_None, stop_loop_lead_seconds, elbow_cover_scan).
+        # gate_name is the GateSpec movement name (settled lead-ins supply the
+        # gate) or None (burp is ungated). elbow_cover_scan is True when the scan
+        # variant pulls the elbow back 10 degrees (burp/cough*), False otherwise.
+        SETTLED = mv.yawn_cover_lead_in_settled
+        DELAYED = mv.yawn_cover_lead_in_delayed
+        table = {
+            "coughMedium": (SETTLED, self.music[30], (), "coughMedium", 0.9, True),
+            "coughLong":   (SETTLED, self.music[29], (), "coughLong", 0.9, True),
+            "fart":        (SETTLED, self.music[32], (), "fart", 0.9, False),
+            "fartGhost":   (SETTLED, self.music[34], (), "fartGhost", 0.9, False),
+            "burp":        (DELAYED, self.music[31], (self.music[32],),
+                            None, 3.45, True),
+        }
+        if kind not in table:
+            raise ValueError(f"unknown cover-mouth kind: {kind!r}")
+
+        lead_in, audio_file, followup, gate_name, stop_lead, elbow_scan = table[kind]
+
+        # Scan binds the lead-in keywords so it never centers the head (neck
+        # dropped) and, for burp/cough*, pulls the elbow back 10 degrees.
+        if scan:
+            elbow_cover = mv._YC_ELBOW_COVER_SCAN if elbow_scan else None
+            lead_in = functools.partial(
+                lead_in, elbow_cover=elbow_cover, center_head=False
+            )
+            owned_channels = frozenset({
+                constants.RT_SHOULDER_ROTATOR,
+                constants.RT_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+            })
+        else:
+            owned_channels = frozenset({
+                constants.NECK_PAN,
+                constants.NECK_TILT,          # 0,1
+                constants.RT_SHOULDER_ROTATOR,
+                constants.RT_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+            })
+
+        # Settled lead-ins supply the gate (audio once the hand settles); burp is
+        # ungated (gate_name None) with its arm motion delayed in the lead-in.
+        supplies_gate = gate_name is not None
+        gate = GateSpec(movement_name=gate_name) if gate_name is not None else None
+
+        return PerformanceDefinition(
+            name=kind,
+            audio_file=audio_file,
+            followup_audio_files=followup,
+            gate=gate,
+            steps=(
+                PerformanceStep(
+                    loop_for_audio=True,   # HOLD the hand until the clip ends
+                    group=ConcurrentGroup(movements=(
+                        MovementSpec(
+                            name=kind,
+                            owned_channels=owned_channels,
+                            lead_in=lead_in,                   # fold (scan: no head-center)
+                            loop_body=mv.yawn_cover_loop_body,  # hold while audio plays
+                            do_return=mv.yawn_cover_return,     # lower hand at end
+                            supplies_gate=supplies_gate,
+                            stop_loop_lead_seconds=stop_lead,
+                        ),
+                    )),
+                ),
+            ),
+        )
+
     def _run_cover_mouth_settled(self, audio_file, *, name):
         """Cover the mouth, gate audio until the hand settles, then play a clip.
 
@@ -1073,52 +1230,23 @@ class Animatronic:
           tail.
         * ``yawn_cover_return`` lowers the hand to rest and releases the override.
 
-        The single movement owns head channels {0,1} and arm channels {4,5,6,7};
-        with no concurrent movement the group is trivially channel-disjoint. A
-        single ``Movements`` instance backs the phase callables so they share one
-        ``TrunkController``; the runner is launched with ``asyncio.run`` at the
-        top of the call stack.
+        Builds via the shared ``_cover_mouth_performance`` with ``scan=False`` so
+        there is a single cover-mouth definition and the standalone cough
+        behaviour is byte-for-byte unchanged. The single movement owns head
+        channels {0,1} and arm channels {4,5,6,7}; with no concurrent movement
+        the group is trivially channel-disjoint. A single ``Movements`` instance
+        backs the phase callables so they share one ``TrunkController``; the
+        runner is launched with ``asyncio.run`` at the top of the call stack.
 
         Args:
-            audio_file: Filename of the cough clip in the resolved audio dir.
-            name: Performance/gate name (also the single movement's name).
+            audio_file: Filename of the cough clip (kept for signature parity;
+                the clip is selected by ``name`` via the shared builder's table).
+            name: Performance/gate name (``"coughMedium"`` or ``"coughLong"``).
         """
         mv = Movements("Animatronic")
         audio_dir = self._resolve_audio_dir()
 
-        definition = PerformanceDefinition(
-            name=name,
-            audio_file=audio_file,
-            # The hand-to-mouth reach supplies the gate: audio starts the moment
-            # the lead-in completes, i.e. once the hand has SETTLED at the mouth.
-            gate=GateSpec(movement_name=name),
-            steps=(
-                PerformanceStep(
-                    loop_for_audio=True,   # HOLD the hand until the clip ends
-                    group=ConcurrentGroup(movements=(
-                        MovementSpec(
-                            name=name,
-                            owned_channels=frozenset({
-                                constants.NECK_PAN,
-                                constants.NECK_TILT,          # 0,1
-                                constants.RT_SHOULDER_ROTATOR,
-                                constants.RT_SHOULDER_TILT,
-                                constants.RT_ELBOW_TILT,
-                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
-                            }),
-                            lead_in=mv.yawn_cover_lead_in_settled,  # fold fully, THEN gate
-                            loop_body=mv.yawn_cover_loop_body,       # hold while audio plays
-                            do_return=mv.yawn_cover_return,          # lower hand at end
-                            supplies_gate=True,                      # opens the audio gate
-                            # Stop holding ~0.9s before the clip ends so the hand
-                            # starts lowering that much sooner (the ~1.1s lower
-                            # then overlaps the tail of the audio).
-                            stop_loop_lead_seconds=0.9,
-                        ),
-                    )),
-                ),
-            ),
-        )
+        definition = self._cover_mouth_performance(mv, scan=False, kind=name)
 
         asyncio.run(PerformanceRunner(definition, mv, audio_dir).run())
 
@@ -1169,33 +1297,91 @@ class Animatronic:
         mv = Movements("Animatronic")
         audio_dir = self._resolve_audio_dir()
 
-        MAXIMUS = PerformanceDefinition(
-            name="maximus",
-            audio_file=self.music[38],  # maximus.wav
+        MAXIMUS = self._maximus_performance(mv, scan=False)
+
+        asyncio.run(PerformanceRunner(MAXIMUS, mv, audio_dir).run())
+
+    def _maximus_performance(self, mv, scan=False):
+        """Build the ``maximus`` ``PerformanceDefinition`` (standalone or scan).
+
+        The standalone routine (``scan=False``) runs ``head_focus`` (neck
+        channels 0-1) for a fixed 3 reps, gated until NECK_TILT settles — zero
+        behaviour change from the pre-factored ``maximus``.
+
+        The scan variant (``scan=True``) is arm-only: because standalone
+        maximus is purely head motion, there is no arm spec to keep, so the
+        neck ``head_focus`` spec is REPLACED with a ``present_palm`` arm spec
+        (owns {4,5,6,7}, ``supplies_gate=False``) to give maximus a visible arm
+        presence while the tracker owns the head. ``head_focus`` supplied the
+        gate, so with it dropped the gate is set to ``None`` and no remaining
+        spec supplies it; audio starts at t=0. ``loop_for_audio=True`` so the
+        present-palm arm bobs for the clip's duration (the standalone's fixed-3-
+        reps semantics are specific to head_focus). The group owns exactly
+        {4,5,6,7}; no -10 (not a cover-mouth pose). Mirrors
+        ``_hypnotic_performance(scan=True)`` / ``_blah_performance(scan=True)``.
+
+        Args:
+            mv: The shared ``Movements`` instance backing every phase callable so
+                the neck and arm adapters share one ``TrunkController``.
+            scan: When ``True``, build the arm-only scan variant (head_focus
+                replaced by present_palm, ``gate=None``, ``loop_for_audio=True``).
+                Defaults to ``False`` (standalone).
+
+        Returns:
+            The assembled ``PerformanceDefinition``.
+        """
+        if scan:
+            # Arm-only scan: swap the head_focus neck motion for a present_palm
+            # arm bob so the neck stays free for the tracker. head_focus supplied
+            # the gate, so with it gone the gate is None (audio at t=0) and no
+            # remaining spec supplies_gate.
+            movements = (
+                MovementSpec(
+                    name="present_palm",
+                    owned_channels=frozenset({
+                        constants.RT_SHOULDER_ROTATOR,
+                        constants.RT_SHOULDER_TILT,
+                        constants.RT_ELBOW_TILT,
+                        constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
+                    }),
+                    lead_in=mv.present_palm_lead_in,      # raise arm (t=0)
+                    loop_body=mv.present_palm_loop_body,  # one gentle bob
+                    do_return=mv.present_palm_return,     # lower arm
+                    supplies_gate=False,
+                ),
+            )
+            gate = None
+            loop_for_audio = True  # bob for the whole clip
+        else:
+            movements = (
+                MovementSpec(
+                    name="head_focus",
+                    owned_channels=frozenset({
+                        constants.NECK_PAN,
+                        constants.NECK_TILT,   # 0,1
+                    }),
+                    lead_in=mv.head_focus_lead_in,      # lower NECK_TILT to hold (gate)
+                    loop_body=mv.head_focus_loop_body,   # 3 concurrent pan+tilt reps
+                    do_return=mv.head_focus_return,      # head to REST 90/90
+                    supplies_gate=True,                  # settled lead-in opens gate
+                ),
+            )
             # head_focus supplies the gate: audio starts the moment the lead-in
             # completes, i.e. once NECK_TILT has SETTLED at the hold angle.
-            gate=GateSpec(movement_name="head_focus"),
+            gate = GateSpec(movement_name="head_focus")
+            loop_for_audio = False  # fixed 3 reps (see head_focus_loop_body)
+
+        return PerformanceDefinition(
+            name="maximus",
+            audio_file=self.music[38],  # maximus.wav
+            gate=gate,
             steps=(
                 PerformanceStep(
-                    loop_for_audio=False,  # fixed 3 reps (see head_focus_loop_body)
-                    group=ConcurrentGroup(movements=(
-                        MovementSpec(
-                            name="head_focus",
-                            owned_channels=frozenset({
-                                constants.NECK_PAN,
-                                constants.NECK_TILT,   # 0,1
-                            }),
-                            lead_in=mv.head_focus_lead_in,      # lower NECK_TILT to hold (gate)
-                            loop_body=mv.head_focus_loop_body,   # 3 concurrent pan+tilt reps
-                            do_return=mv.head_focus_return,      # head to REST 90/90
-                            supplies_gate=True,                  # settled lead-in opens gate
-                        ),
-                    )),
+                    loop_for_audio=loop_for_audio,
+                    group=ConcurrentGroup(movements=movements),
                 ),
             ),
         )
-
-        asyncio.run(PerformanceRunner(MAXIMUS, mv, audio_dir).run())
 
     def burp(self):
         """"Burp" — cover the mouth, burp, then an "excuse me" follow-on.
@@ -1203,7 +1389,8 @@ class Animatronic:
         Driven by the Performance_Framework with the phased ``yawn_cover``
         adapters (same operator-verified cover pose + override as ``clearThroat``
         and the coughs), but UNGATED (audio at t=0) with the ARM MOTION delayed
-        1s so the burp sound leads and the hand follows a beat later:
+        ``_YC_MOTION_DELAY`` (0.5s) so the burp sound leads and the hand follows
+        a beat later:
 
         * ``gate=None`` -- ``gurgle_burp.wav`` starts the instant the routine
           begins, before any movement runs.
@@ -1220,54 +1407,17 @@ class Animatronic:
           ``gurgle_burp.wav`` completes, and the "excuse me" plays as the hand
           lowers. ``yawn_cover_return`` releases the override at the end.
 
-        The single movement owns head channels {0,1} and arm channels {4,5,6,7}
-        (trivially disjoint with no concurrent movement). A single ``Movements``
-        instance backs the phase callables; launched with ``asyncio.run`` at the
-        top of the call stack.
+        Builds via the shared ``_cover_mouth_performance`` with ``scan=False`` so
+        the standalone burp behaviour is byte-for-byte unchanged. The single
+        movement owns head channels {0,1} and arm channels {4,5,6,7} (trivially
+        disjoint with no concurrent movement). A single ``Movements`` instance
+        backs the phase callables; launched with ``asyncio.run`` at the top of
+        the call stack.
         """
         mv = Movements("Animatronic")
         audio_dir = self._resolve_audio_dir()
 
-        BURP = PerformanceDefinition(
-            name="burp",
-            audio_file=self.music[31],  # gurgle_burp.wav
-            # "excuse me" plays back-to-back immediately after the burp on the
-            # same audio thread, so the hand stays at the mouth across both and
-            # the near-end cutoff fires against the end of excuseme_sb.wav.
-            followup_audio_files=(self.music[32],),  # excuseme_sb.wav
-            # UNGATED: the burp plays at t=0 and the arm motion is delayed 1s
-            # (in the lead-in) so the sound leads and the hand follows.
-            gate=None,
-            steps=(
-                PerformanceStep(
-                    loop_for_audio=True,   # HOLD the hand across both tracks
-                    group=ConcurrentGroup(movements=(
-                        MovementSpec(
-                            name="burp",
-                            owned_channels=frozenset({
-                                constants.NECK_PAN,
-                                constants.NECK_TILT,          # 0,1
-                                constants.RT_SHOULDER_ROTATOR,
-                                constants.RT_SHOULDER_TILT,
-                                constants.RT_ELBOW_TILT,
-                                constants.RT_ELBOW_ROTATOR,   # 7,6,5,4
-                            }),
-                            lead_in=mv.yawn_cover_lead_in_delayed,  # wait 1s, then fold
-                            loop_body=mv.yawn_cover_loop_body,     # hold while audio plays
-                            do_return=mv.yawn_cover_return,        # lower hand at end
-                            # Ungated: no movement supplies the gate (audio t=0).
-                            # Lower the hand once gurgle_burp.wav completes rather
-                            # than holding through the "excuse me": the chain
-                            # duration is the SUM of both tracks, so a near-end
-                            # lead equal to the excuseme_sb.wav length (~3.45s)
-                            # starts do_return the instant the burp track ends,
-                            # leaving the "excuse me" to play as the hand lowers.
-                            stop_loop_lead_seconds=3.45,
-                        ),
-                    )),
-                ),
-            ),
-        )
+        BURP = self._cover_mouth_performance(mv, scan=False, kind="burp")
 
         asyncio.run(PerformanceRunner(BURP, mv, audio_dir).run())
 
@@ -2918,24 +3068,51 @@ class Animatronic:
         mv = Movements("Animatronic")
 
         # Map each ENABLED allowlist name to its arm-only callable. This stays in
-        # lockstep with SCAN_SAFE_ARM_ACTIONS (burp commented out in both). The
-        # Performance responses build their arm-only variant (neck spec dropped)
-        # and rest ONLY the arm channels via rest_channels so neck 0/1 are left
-        # for the tracker.
+        # lockstep with SCAN_SAFE_ARM_ACTIONS (same eleven routines + four
+        # gestures enabled in both; fanNose/snuckUp/moreCandy/facePalm FLAGGED in
+        # both). The Performance responses build their arm-only variant (neck
+        # spec dropped) and rest ONLY the arm channels via rest_channels so neck
+        # 0/1 are left for the tracker; the simple-runner/two-phase adapters do
+        # the same via their own restrict_channels + try/finally arm rest.
         scan_responses = {
             'beckon':   lambda: mv.beckon(),
             'comeHere': lambda: mv.come_here(),
             'wave':     lambda: mv._wave_arm(include_neck=False),
             'tapSide':  lambda: mv.tap_side(),  # NEW — arm-only gesture {3,4,5,6,7}
+            # Performance-definition Routines: build the arm-only (scan=True)
+            # variant (neck spec dropped) and rest ONLY {3,4,5,6,7}.
             'brains':   lambda: self._run_scan_performance(
                 self._brains_performance(mv, scan=True), mv
             ),
             'hypnotic': lambda: self._run_scan_performance(
                 self._hypnotic_performance(mv, scan=True), mv
             ),
-            # 'burp' intentionally omitted — head-coupled, see SCAN_SAFE_ARM_ACTIONS.
-            # Head-coupled items (fanNose/snuckUp/moreCandy/awaken/facePalm) are
-            # likewise omitted — see the FLAGGED block in SCAN_SAFE_ARM_ACTIONS.
+            'blah':     lambda: self._run_scan_performance(
+                self._blah_performance(mv, scan=True), mv
+            ),
+            'maximus':  lambda: self._run_scan_performance(
+                self._maximus_performance(mv, scan=True), mv
+            ),
+            'burp':     lambda: self._run_scan_performance(
+                self._cover_mouth_performance(mv, scan=True, kind="burp"), mv
+            ),
+            'coughMedium': lambda: self._run_scan_performance(
+                self._cover_mouth_performance(mv, scan=True, kind="coughMedium"), mv
+            ),
+            'coughLong': lambda: self._run_scan_performance(
+                self._cover_mouth_performance(mv, scan=True, kind="coughLong"), mv
+            ),
+            # Simple-runner / two-phase adapters: arm-only motion + audio via a
+            # PlaybackController, driven inside the scan loop's event loop.
+            'awaken':       lambda: self._scan_awaken(mv),
+            'comeGetCandy': lambda: self._scan_come_get_candy(mv),
+            'yawn':         lambda: self._scan_yawn(mv),
+            'niceDay':      lambda: self._scan_nice_day(mv),
+            'fart':         lambda: self._scan_fart(mv),
+            'fartGhost':    lambda: self._scan_fart_ghost(mv),
+            # Still head-coupled with no arm-only scan builder, so omitted (see
+            # the FLAGGED block in SCAN_SAFE_ARM_ACTIONS): fanNose, snuckUp,
+            # moreCandy, facePalm.
         }
 
         # Operator-selected weighted pool (FEAT-001). Restrict the safe-action
@@ -3218,6 +3395,205 @@ class Animatronic:
             rest_channels=ARM_ONLY_CHANNELS,
         ).run()
 
+    # ------------------------------------------------------------------ #
+    # Scan simple-runner / two-phase adapters                             #
+    # ------------------------------------------------------------------ #
+    # The four "simple-runner" scan adapters below are the arm-only equivalents
+    # of the standalone simple-runner routines (awaken / comeGetCandy / yawn /
+    # niceDay) that use run_action_and_audio (its own asyncio.run cannot be
+    # awaited inside the already-running scan loop). Each drives audio with a
+    # PlaybackController (see sneeze()/_do_sneeze) so it integrates with the
+    # loop's event loop, wraps its motion in restrict_channels(ARM_ONLY_CHANNELS)
+    # (FEAT-001 fail-closed per-task neck guard — a stray 0/1 write raises
+    # ChannelGuardError only inside this response task, never on the tracker's
+    # task), and rests ONLY ARM_ONLY_CHANNELS in a try/finally so the arm is
+    # driven home on completion, error and cancellation and the neck is never
+    # touched.
+
+    async def _scan_awaken(self, mv):
+        """Scan awaken: arm stir + awakened.wav, no head bob (arm-only).
+
+        Mirrors the standalone ``awaken`` (ungated: motion + audio start
+        together) but drops the head bob — only ``awaken_arm_only`` (owns
+        {4,5,6,7}) runs so the neck stays free for the tracker.
+
+        Args:
+            mv: The shared ``Movements`` instance (its ``trunkController`` is the
+                class-level one the tracker also uses).
+        """
+        audio_path = os.path.join(self._resolve_audio_dir(), self.music[26])  # awakened.wav
+        duration = self._audio_duration_seconds(self.music[26])
+        playback = PlaybackController(audio_path)
+        try:
+            with Movements.trunkController.restrict_channels(ARM_ONLY_CHANNELS):
+                playback.start()  # ungated: audio at t=0 alongside the stir
+                await mv.awaken_arm_only(duration=duration)
+            playback.wait_finished(timeout=2)
+        finally:
+            await Movements.trunkController.return_to_rest(channels=ARM_ONLY_CHANNELS)
+
+    async def _scan_come_get_candy(self, mv):
+        """Scan comeGetCandy: beckon/comeHere + candy call (arm-only).
+
+        Replicates the standalone timing exactly — audio LEADS the gesture:
+        ``elf_hh_get_candy.wav`` starts after a 1.2s audio gate (standalone
+        ``audio_delay=1.2``) while the chosen arm gesture starts after a 3s
+        gesture gate (standalone ``self.idle``). The two gated branches run
+        concurrently so audio begins at t≈1.2s and the arm at t≈3.0s. The gesture
+        is ``random.choice((mv.beckon, mv.come_here))`` via the shared ``random``
+        module so a seeded run matches the standalone. Both gestures are arm-only
+        ({3,4,5,6,7}).
+
+        Args:
+            mv: The shared ``Movements`` instance.
+        """
+        gesture = random.choice((mv.beckon, mv.come_here))
+        audio_path = os.path.join(self._resolve_audio_dir(), self.music[36])  # elf_hh_get_candy.wav
+        playback = PlaybackController(audio_path)
+
+        async def audio_branch():
+            await asyncio.sleep(1.2)   # standalone audio_delay=1.2
+            playback.start()
+
+        async def gesture_branch():
+            await asyncio.sleep(self.idle)  # standalone self.idle=3
+            with Movements.trunkController.restrict_channels(ARM_ONLY_CHANNELS):
+                await gesture()
+
+        try:
+            await asyncio.gather(audio_branch(), gesture_branch())
+            playback.wait_finished(timeout=2)
+        finally:
+            await Movements.trunkController.return_to_rest(channels=ARM_ONLY_CHANNELS)
+
+    async def _scan_yawn(self, mv):
+        """Scan yawn: cover-mouth yawn + yawn.wav gated 0.3s (arm-only, -10).
+
+        Mirrors the standalone ``yawn`` (``audio_delay=0.3``): the arm begins the
+        fold at t=0 and ``yawn.wav`` comes in 0.3s later. Runs the self-contained
+        ``yawn_cover_arm_only`` (owns {4,5,6,7}, never touches the neck) with the
+        -10 scan elbow angle (``_YC_ELBOW_COVER_SCAN`` = 152) so the hand clears
+        the off-center head.
+
+        Args:
+            mv: The shared ``Movements`` instance.
+        """
+        audio_path = os.path.join(self._resolve_audio_dir(), self.music[19])  # yawn.wav
+        playback = PlaybackController(audio_path)
+
+        async def audio_branch():
+            await asyncio.sleep(0.3)   # standalone audio_delay=0.3
+            playback.start()
+
+        async def motion_branch():
+            with Movements.trunkController.restrict_channels(ARM_ONLY_CHANNELS):
+                await mv.yawn_cover_arm_only(elbow_cover=mv._YC_ELBOW_COVER_SCAN)
+
+        try:
+            await asyncio.gather(audio_branch(), motion_branch())
+            playback.wait_finished(timeout=2)
+        finally:
+            await Movements.trunkController.return_to_rest(channels=ARM_ONLY_CHANNELS)
+
+    async def _scan_nice_day(self, mv):
+        """Scan niceDay: arm wave + "nice day" clip, arm leads audio (arm-only).
+
+        Mirrors the standalone ``nice_day`` (arm leads by
+        ``_NICE_DAY_ARM_LEAD + _NICE_DAY_AUDIO_LEAD`` = 0.5s): the wave arm starts
+        at t=0 and ``elf_nice_day_walk.wav`` comes in 0.5s later. Runs the
+        arm-only ``_wave_arm(include_neck=False)`` (owns {3,4,5,6,7}, no neck).
+
+        Args:
+            mv: The shared ``Movements`` instance.
+        """
+        audio_path = os.path.join(self._resolve_audio_dir(), self.music[37])  # elf_nice_day_walk.wav
+        playback = PlaybackController(audio_path)
+        audio_lead = self._NICE_DAY_ARM_LEAD + self._NICE_DAY_AUDIO_LEAD  # 0.5s
+
+        async def audio_branch():
+            await asyncio.sleep(audio_lead)
+            playback.start()
+
+        async def motion_branch():
+            with Movements.trunkController.restrict_channels(ARM_ONLY_CHANNELS):
+                await mv._wave_arm(include_neck=False)
+
+        try:
+            await asyncio.gather(audio_branch(), motion_branch())
+            playback.wait_finished(timeout=2)
+        finally:
+            await Movements.trunkController.return_to_rest(channels=ARM_ONLY_CHANNELS)
+
+    async def _scan_fart(self, mv):
+        """Scan fart: fart.wav (pure audio) THEN forced arm-only cover-mouth.
+
+        Two-phase, mirroring standalone ``fart`` but FORCING the arm-only
+        cover-mouth branch (the standalone's 50/50 fan-nose coin flip is removed,
+        because fan-nose drives the neck). No -10 (fart's cover branch keeps 162;
+        operator verifies on hardware).
+
+        Phase 1 plays ``fart.wav`` as pure audio on an
+        ``AudioPlayer(drive_jaw=False, drive_eyes=False)`` offloaded via
+        ``asyncio.to_thread`` (the player's ``play_audio_file`` is blocking) with
+        a ``try/finally: close()`` so the GPIO pins are released even on
+        cancellation; it commands NO servo. Phase 2 runs the arm-only
+        cover-mouth Performance (owns {4,5,6,7}). Because neither phase can write
+        the neck, this adapter is intentionally NOT ``restrict_channels``-wrapped
+        (phase 2's safety is the build-time ``ConcurrentGroup`` ownership of the
+        Performance def).
+
+        Args:
+            mv: The shared ``Movements`` instance.
+        """
+        # Phase 1: fart.wav alone, no movement, jaw/eyes off (a fart doesn't come
+        # out of the mouth). Offload the blocking player to a worker thread so
+        # the scan loop keeps running; close() in finally releases the pins.
+        fart_path = os.path.join(self._resolve_audio_dir(), self.music[33])  # fart.wav
+        player = AudioPlayer(drive_jaw=False, drive_eyes=False)
+        try:
+            print(f"[scan] fart phase 1: {fart_path} as pure audio (no jaw/eyes)")
+            await asyncio.to_thread(player.play_audio_file, fart_path)
+        finally:
+            player.close()
+
+        # Phase 2: forced arm-only cover-mouth (no coin flip). excuseme_sb.wav,
+        # settled lead-in, elbow_cover=None (162, no -10).
+        await self._run_scan_performance(
+            self._cover_mouth_performance(mv, scan=True, kind="fart"), mv
+        )
+
+    async def _scan_fart_ghost(self, mv):
+        """Scan fartGhost: fart.wav (pure audio) THEN arm-only cover-mouth react.
+
+        Two-phase like ``_scan_fart`` but the phase-2 reaction carries the
+        ghost's distinct clip (``elf_smell_ghost_burrito.wav`` via
+        ``kind="fartGhost"``). The standalone reacts via the head-coupled
+        fan-nose; the scan variant reuses the arm-only cover-mouth reaction so no
+        neck channel is driven (an intended, operator-visible ungated→gated
+        timing shift). No -10 (elbow_cover=None → 162).
+
+        Phase 1 is identical to ``_scan_fart`` (pure ``fart.wav`` via
+        ``AudioPlayer(drive_jaw=False, drive_eyes=False)`` + ``asyncio.to_thread``
+        + ``try/finally: close()``). Not ``restrict_channels``-wrapped for the
+        same reason as ``_scan_fart``.
+
+        Args:
+            mv: The shared ``Movements`` instance.
+        """
+        # Phase 1: identical to _scan_fart — fart.wav alone, jaw/eyes off.
+        fart_path = os.path.join(self._resolve_audio_dir(), self.music[33])  # fart.wav
+        player = AudioPlayer(drive_jaw=False, drive_eyes=False)
+        try:
+            print(f"[scan] fartGhost phase 1: {fart_path} as pure audio (no jaw/eyes)")
+            await asyncio.to_thread(player.play_audio_file, fart_path)
+        finally:
+            player.close()
+
+        # Phase 2: arm-only cover-mouth reaction with the ghost's clip.
+        await self._run_scan_performance(
+            self._cover_mouth_performance(mv, scan=True, kind="fartGhost"), mv
+        )
+
     def build_action_map(self):
         """Build the dispatch allowlist of ``camelCase`` action name -> method.
 
@@ -3342,7 +3718,7 @@ class Animatronic:
 
     async def _do_come_get_candy(self):
         # Randomly pick ONE of the two "come toward me" arm gestures per
-        # invocation (beckon or comeHere). Both are arm-only; happy_hw_get_candy.wav
+        # invocation (beckon or comeHere). Both are arm-only; elf_hh_get_candy.wav
         # is gated 1.2s in come_get_candy() so the chosen gesture leads.
         mv = Movements("Animatronic")
         gesture = random.choice((mv.beckon, mv.come_here))

@@ -3,9 +3,10 @@
 Covers the pure DATA/DEFINITION layer added to ``src/detection_routine_map.py``
 for Scan Mode (consumed by the FEAT-003 responder):
 
-  - ``weighted_scan_pool`` builds a 17-slot pool with the 5:1 Gesture:Routine
-    bias and ``choose_scan_action`` draws from it reproducibly under
-    ``random.seed`` — and burp is NOT in the shipped pool.
+  - ``weighted_scan_pool`` builds the pool with the 5:1 Gesture:Routine bias
+    (4 gestures x5 + 12 routines x1) and ``choose_scan_action`` draws from it
+    reproducibly under ``random.seed`` — and the still-FLAGGED head-coupled
+    names (fanNose/snuckUp/moreCandy/facePalm) are NOT in the shipped pool.
   - ``SCAN_GESTURE_CHANNELS`` subsets stay within ``ARM_ONLY_CHANNELS`` and the
     arm-only channel set is exactly ``{3,4,5,6,7}``.
   - ``scan_rules()`` arbitrates person+dog over person via ``DetectionRoutineMap``,
@@ -66,21 +67,24 @@ def _det(label):
 
 
 def test_weighted_scan_pool_slots_follow_5_to_1_ratio():
-    """The shipped pool is 4 Gestures x5 + 2 Routines x1 = 22 slots, 5:1 ratio.
+    """The shipped pool is 4 Gestures x5 + 13 Routines x1 slots, 5:1 ratio.
 
-    (Gestures: beckon, comeHere, wave, tapSide; Routines: brains, hypnotic.)
-    Counts are derived from the allowlist so adding a scan-safe action keeps the
-    invariant asserted without re-hardcoding the total.
+    Gestures: beckon, comeHere, wave, tapSide. Routines: brains, hypnotic plus
+    the FEAT-002 arm-only variants (awaken, blah, burp, comeGetCandy,
+    coughMedium, coughLong, fart, fartGhost, maximus, niceDay, yawn). Counts are
+    derived from the allowlist so adding a scan-safe action keeps the invariant
+    asserted without re-hardcoding the total.
     """
     pool = weighted_scan_pool()
 
     gestures = [n for n, k in SCAN_SAFE_ARM_ACTIONS.items() if k is ScanActionKind.GESTURE]
     routines = [n for n, k in SCAN_SAFE_ARM_ACTIONS.items() if k is ScanActionKind.ROUTINE]
     assert len(gestures) == 4
-    assert len(routines) == 2
+    assert len(routines) == 13
 
-    # 4 gestures * 5 + 2 routines * 1 = 22.
-    assert len(pool) == len(gestures) * GESTURE_WEIGHT + len(routines) * ROUTINE_WEIGHT == 22
+    # 4 gestures * 5 + 13 routines * 1.
+    expected = len(gestures) * GESTURE_WEIGHT + len(routines) * ROUTINE_WEIGHT
+    assert len(pool) == expected
 
     for name in gestures:
         assert pool.count(name) == GESTURE_WEIGHT == 5
@@ -88,10 +92,17 @@ def test_weighted_scan_pool_slots_follow_5_to_1_ratio():
         assert pool.count(name) == ROUTINE_WEIGHT == 1
 
 
-def test_burp_absent_from_shipped_pool_and_allowlist():
-    """burp is withheld (head-coupled coverMouth), so it never appears."""
-    assert "burp" not in SCAN_SAFE_ARM_ACTIONS
-    assert "burp" not in weighted_scan_pool()
+def test_burp_enabled_in_shipped_pool_and_allowlist():
+    """burp is now an enabled arm-only ROUTINE (FEAT-002), so it appears."""
+    assert SCAN_SAFE_ARM_ACTIONS.get("burp") is ScanActionKind.ROUTINE
+    assert "burp" in weighted_scan_pool()
+
+
+def test_still_flagged_names_absent_from_pool_and_allowlist():
+    """Head-coupled names with no arm-only scan builder stay FLAGGED/withheld."""
+    for name in ("fanNose", "snuckUp", "moreCandy", "facePalm"):
+        assert name not in SCAN_SAFE_ARM_ACTIONS
+        assert name not in weighted_scan_pool()
 
 
 def test_choose_scan_action_is_seed_reproducible():
@@ -150,13 +161,14 @@ def test_choose_scan_action_weighted_is_seed_reproducible():
 
 def test_choose_scan_action_weighted_never_returns_unsafe_name():
     """A persisted name NOT in the safe set is never returned."""
-    # 'burp' and 'facePalm' are not in SCAN_SAFE_ARM_ACTIONS; 'bogus' is unknown.
-    routine_pool = {"burp": 9, "bogus": 9, "brains": 3}
+    # 'snuckUp' and 'facePalm' remain FLAGGED (not in SCAN_SAFE_ARM_ACTIONS);
+    # 'bogus' is unknown. (burp is now an enabled arm-only ROUTINE.)
+    routine_pool = {"snuckUp": 9, "bogus": 9, "brains": 3}
     gesture_pool = {"facePalm": 9, "wave": 2}
 
     random.seed(7)
     picks = {choose_scan_action_weighted(routine_pool, gesture_pool)[1] for _ in range(500)}
-    assert "burp" not in picks
+    assert "snuckUp" not in picks
     assert "facePalm" not in picks
     assert "bogus" not in picks
     assert picks <= set(SCAN_SAFE_ARM_ACTIONS)
@@ -210,8 +222,9 @@ def test_choose_scan_action_weighted_empty_pool_falls_back():
 
 def test_choose_scan_action_weighted_filtered_empty_falls_back():
     """A pool emptied entirely by safety filtering falls back (never None)."""
-    # All names are unsafe/unknown -> nothing survives -> fallback.
-    routine_pool = {"burp": 5, "bogus": 9}
+    # All names are unsafe/unknown -> nothing survives -> fallback. (snuckUp
+    # remains FLAGGED; bogus is unknown; facePalm remains FLAGGED.)
+    routine_pool = {"snuckUp": 5, "bogus": 9}
     gesture_pool = {"facePalm": 7}
 
     random.seed(321)

@@ -104,27 +104,40 @@ ROUTINE_WEIGHT = 1
 
 # The allowlist of head-decoupled, arm-only actions scan may run while the neck
 # tracks a person. Gestures carry no audio and never touch the jaw/neck;
-# Routines run their arm-only (scan=True) builders so they drive only {4,5,6,7}.
-#
-# burp is DELIBERATELY withheld — see the FLAGGED commented-out entry below.
+# Routines run their arm-only (scan=True) builders / adapters so they drive only
+# {4,5,6,7} (or {3,4,5,6,7}) and never the neck channels (0/1) the tracker owns.
 SCAN_SAFE_ARM_ACTIONS: Dict[str, ScanActionKind] = {
     "beckon": ScanActionKind.GESTURE,
     "comeHere": ScanActionKind.GESTURE,
     "wave": ScanActionKind.GESTURE,
-    "tapSide": ScanActionKind.GESTURE,  # NEW — arm-only {3,4,5,6,7}, no neck term
+    "tapSide": ScanActionKind.GESTURE,  # arm-only {3,4,5,6,7}, no neck term
     "brains": ScanActionKind.ROUTINE,
     "hypnotic": ScanActionKind.ROUTINE,
+    # Enabled arm-only Routines (FEAT-002). Each has an arm-only scan variant
+    # that provably owns a subset of {3,4,5,6,7}: Performance-definition builders
+    # (blah/maximus/burp/coughMedium/coughLong) drop/replace the neck spec, and
+    # simple-runner/two-phase adapters (awaken/comeGetCandy/fart/fartGhost/
+    # niceDay) drive the arm under the fail-closed restrict_channels guard.
+    "awaken": ScanActionKind.ROUTINE,
+    "blah": ScanActionKind.ROUTINE,
+    "burp": ScanActionKind.ROUTINE,
+    "comeGetCandy": ScanActionKind.ROUTINE,
+    "coughMedium": ScanActionKind.ROUTINE,
+    "coughLong": ScanActionKind.ROUTINE,
+    "fart": ScanActionKind.ROUTINE,
+    "fartGhost": ScanActionKind.ROUTINE,
+    "maximus": ScanActionKind.ROUTINE,
+    "niceDay": ScanActionKind.ROUTINE,
+    "yawn": ScanActionKind.ROUTINE,
     # FLAGGED — head-COUPLED, DO NOT ENABLE without operator bench-verification
-    # across the FULL off-center tracking envelope (same rationale as burp: scan
-    # holds the head OFF-center and FORBIDDEN_COMBINATIONS has no neck term, so
-    # nothing would catch a hand colliding with the off-center head). Each would
-    # drive/recenter the neck channels (0/1) the tracker owns:
+    # across the FULL off-center tracking envelope (scan holds the head
+    # OFF-center and FORBIDDEN_COMBINATIONS has no neck term, so nothing would
+    # catch a hand colliding with the off-center head). Each would drive/recenter
+    # the neck channels (0/1) the tracker owns and has no arm-only scan builder:
     #   "fanNose":   ScanActionKind.GESTURE,  # start pose writes NECK_PAN/NECK_TILT (ch 0/1)
     #   "snuckUp":   ScanActionKind.ROUTINE,  # startle: head jerk (NECK_TILT) + nervous pan
     #   "moreCandy": ScanActionKind.ROUTINE,  # cover-mouth pose verified only neck-centered; no scan builder
-    #   "awaken":    ScanActionKind.ROUTINE,  # wake: lazy head bob on NECK_PAN/NECK_TILT
     #   "facePalm":  ScanActionKind.GESTURE,  # NECK_TILT=140 + NECK_PAN shake (head down)
-    #   "burp":      ScanActionKind.ROUTINE,  # coverMouth fold, operator-verified neck-centered only
 }
 
 # Seconds a scan response is blocked from re-firing after it completes (per-rule
