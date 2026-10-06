@@ -142,6 +142,119 @@ def test_hypnotic_standalone_owns_arm_and_neck_and_keeps_gate(animatronic):
     assert _any_supplies_gate(defn)
 
 
+# --- blah scan variant -------------------------------------------------------
+
+
+def test_blah_scan_owns_only_arm_channels(animatronic):
+    """blah scan=True owns exactly {4,5,6,7} (head shake dropped)."""
+    anim, mv = animatronic
+    defn = anim._blah_performance(mv, scan=True)
+    owned = _owned_union(defn)
+    assert owned == ARM_CHANNELS
+    assert constants.NECK_PAN not in owned
+    assert constants.NECK_TILT not in owned
+
+
+def test_blah_scan_has_no_gate_and_no_gate_supplier(animatronic):
+    """blah scan=True drops the gate-supplying head shake: gate=None, no supplier."""
+    anim, mv = animatronic
+    defn = anim._blah_performance(mv, scan=True)
+    assert defn.gate is None
+    assert not _any_supplies_gate(defn)
+
+
+def test_blah_standalone_owns_arm_and_neck_and_keeps_gate(animatronic):
+    """blah scan=False is unchanged — owns {0,1,4,5,6,7} and keeps its gate."""
+    anim, mv = animatronic
+    defn = anim._blah_performance(mv, scan=False)
+    assert _owned_union(defn) == FULL_CHANNELS
+    assert defn.gate is not None
+    assert defn.gate.movement_name == "head_shake"
+    assert _any_supplies_gate(defn)
+
+
+# --- maximus scan variant ----------------------------------------------------
+
+
+def test_maximus_scan_owns_only_arm_channels(animatronic):
+    """maximus scan=True owns exactly {4,5,6,7} (head_focus swapped for present_palm)."""
+    anim, mv = animatronic
+    defn = anim._maximus_performance(mv, scan=True)
+    owned = _owned_union(defn)
+    assert owned == ARM_CHANNELS
+    assert constants.NECK_PAN not in owned
+    assert constants.NECK_TILT not in owned
+
+
+def test_maximus_scan_has_no_gate_and_no_gate_supplier(animatronic):
+    """maximus scan=True drops the gate-supplying head_focus: gate=None, no supplier."""
+    anim, mv = animatronic
+    defn = anim._maximus_performance(mv, scan=True)
+    assert defn.gate is None
+    assert not _any_supplies_gate(defn)
+
+
+def test_maximus_standalone_owns_only_neck_and_keeps_gate(animatronic):
+    """maximus scan=False is unchanged — head-only {0,1}, keeps its gate."""
+    anim, mv = animatronic
+    defn = anim._maximus_performance(mv, scan=False)
+    assert _owned_union(defn) == NECK_CHANNELS
+    assert defn.gate is not None
+    assert defn.gate.movement_name == "head_focus"
+    assert _any_supplies_gate(defn)
+
+
+# --- cover-mouth scan variants (coughMedium/coughLong/burp/fart/fartGhost) ----
+
+
+COVER_MOUTH_KINDS = ("coughMedium", "coughLong", "burp", "fart", "fartGhost")
+
+
+@pytest.mark.parametrize("kind", COVER_MOUTH_KINDS)
+def test_cover_mouth_scan_owns_only_arm_channels(animatronic, kind):
+    """Every cover-mouth kind scan=True owns exactly {4,5,6,7} (neck dropped)."""
+    anim, mv = animatronic
+    defn = anim._cover_mouth_performance(mv, scan=True, kind=kind)
+    owned = _owned_union(defn)
+    assert owned == ARM_CHANNELS
+    assert constants.NECK_PAN not in owned
+    assert constants.NECK_TILT not in owned
+
+
+@pytest.mark.parametrize("kind", COVER_MOUTH_KINDS)
+def test_cover_mouth_standalone_owns_arm_and_neck(animatronic, kind):
+    """Every cover-mouth kind scan=False is unchanged — owns {0,1,4,5,6,7}."""
+    anim, mv = animatronic
+    defn = anim._cover_mouth_performance(mv, scan=False, kind=kind)
+    assert _owned_union(defn) == FULL_CHANNELS
+
+
+def test_cover_mouth_settled_kinds_keep_gate(animatronic):
+    """coughMedium/coughLong/fart/fartGhost use the settled lead-in: gated, supplied."""
+    anim, mv = animatronic
+    for kind in ("coughMedium", "coughLong", "fart", "fartGhost"):
+        defn = anim._cover_mouth_performance(mv, scan=True, kind=kind)
+        assert defn.gate is not None
+        assert defn.gate.movement_name == kind
+        assert _any_supplies_gate(defn)
+
+
+def test_cover_mouth_burp_is_ungated(animatronic):
+    """burp uses the delayed lead-in: ungated (gate=None), no gate supplier."""
+    anim, mv = animatronic
+    for scan in (False, True):
+        defn = anim._cover_mouth_performance(mv, scan=scan, kind="burp")
+        assert defn.gate is None
+        assert not _any_supplies_gate(defn)
+
+
+def test_cover_mouth_unknown_kind_raises_value_error(animatronic):
+    """An unknown cover-mouth kind raises ValueError at build time."""
+    anim, mv = animatronic
+    with pytest.raises(ValueError):
+        anim._cover_mouth_performance(mv, scan=True, kind="__bad__")
+
+
 # --- the framework guard still bites a mis-tagged group ----------------------
 
 
