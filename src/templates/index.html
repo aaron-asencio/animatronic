@@ -1154,9 +1154,26 @@
     async function stopScan() {
       await fetch('/scan/stop', {method: 'POST'});
       toast('Winding down…');
-      // The mode winds down on its own; the status poll flips the buttons back.
+      // The mode winds down on its own; the status poll flips the buttons back
+      // (and setScanActive turns the overlay off with them).
     }
-    // Reflect scan active/idle state in the Start/Stop buttons + label.
+
+    // Keep the detection overlay in sync with Scan mode: ON while scanning so
+    // the operator can see what the optical recognition senses, OFF otherwise.
+    // Mirrors the state into the overlay checkbox and re-points the stream (via
+    // setCameraOverlay) only when it actually changes, so we don't needlessly
+    // reconnect the feed or toast when it's already in the right state.
+    function syncOverlayToScan(on) {
+      const cb = document.getElementById('cam-overlay');
+      if (!cb || cb.checked === on) return;
+      cb.checked = on;
+      setCameraOverlay(on);
+    }
+    // Reflect scan active/idle state in the Start/Stop buttons + label. Driven
+    // by the status poll, so this is the single source of truth for scan state
+    // — including auto-wind-down (timeout) and preemption. The detection
+    // overlay follows scan here so it turns on/off with the real mode state,
+    // not just the explicit Start/Stop buttons.
     function setScanActive(active) {
       const startBtn = document.getElementById('scan-start-btn');
       const stopBtn = document.getElementById('scan-stop-btn');
@@ -1164,6 +1181,7 @@
       if (startBtn) startBtn.disabled = active;
       if (stopBtn) stopBtn.disabled = !active;
       if (status) status.textContent = active ? 'scanning…' : '';
+      syncOverlayToScan(active);
     }
 
     // ── Scan response pool ─────────────────────────────────────────────────

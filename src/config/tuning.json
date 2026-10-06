@@ -121,6 +121,7 @@
       "comeHere": 5,
       "tapSide": 5,
       "wave": 5
-    }
+    },
+    "timeout_min": 60
   }
 }
