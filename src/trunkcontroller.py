@@ -427,18 +427,6 @@ class TrunkController:
         await self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
         await asyncio.sleep(.5)
 
-    async def neck_full_pan(self, revert=True):
-        """Pan the neck through its full range (0–180 degrees).
-
-        Args:
-            revert: If True, sweep back to the start position after reaching
-                    the far end.
-        """
-        NECK_PAN_MIN = 0
-        NECK_PAN_MAX = 180
-        await self.move(constants.NECK_PAN, NECK_PAN_MIN, NECK_PAN_MAX, 0.01, revert, .1)
-        await asyncio.sleep(.5)
-
     async def neck_tilt(self, min=30, max=95, revert=True):
         """Tilt the neck up/down between min and max angles.
 
@@ -452,12 +440,6 @@ class TrunkController:
     async def neck_center(self):
         """Return the neck pan servo to the neutral center position (90°)."""
         await self.return_to_start(constants.NECK_PAN, self.NECK_CENTER, delay=0.04)
-
-    async def neck_tilt_center(self):
-        """Nudge the neck tilt servo to its mechanical center (~20°)."""
-        NECK_TILT_MIN = 19
-        NECK_TILT_MAX = 21
-        await self.move(constants.NECK_TILT, NECK_TILT_MIN, NECK_TILT_MAX, 0.1, False, 1)
 
     # ------------------------------------------------------------------ #
     # Arm movements                                                        #
@@ -543,8 +525,8 @@ class TrunkController:
                       ease=True):
         """Move several joints to target angles SIMULTANEOUSLY, arriving together.
 
-        Unlike ``move``/``move_by_direction`` (which sweep one channel to
-        completion before the caller moves the next), this interpolates every
+        Unlike ``move`` (which sweeps one channel to completion before the
+        caller moves the next), this interpolates every
         listed joint from its CURRENT angle to its target across the same
         ``steps``, so the joints move together for natural, non-robotic motion.
         Each joint covers its own distance at its own per-step increment; they
@@ -604,20 +586,6 @@ class TrunkController:
                 self.set_angle(channel, int(round(angle)))
             await asyncio.sleep(delay)
 
-    async def slow_scan(self, revert=True):
-        """Slowly pan the neck left then right from center.
-
-        Moves to NECK_LEFT (110°) then to NECK_RIGHT (70°) relative to
-        NECK_CENTER, giving a deliberate surveillance-style head sweep.
-        """
-        NECK_LEFT  = 110
-        NECK_RIGHT = 70
-        print("slow scan")
-        increase = True
-        await self.move_by_dir(constants.NECK_PAN, self.NECK_CENTER, NECK_LEFT, 0.05, increase)
-        increase = False
-        await self.move_by_dir(constants.NECK_PAN, self.NECK_CENTER, NECK_RIGHT, 0.05, increase)
-
     async def return_to_start(self, servo_num, start, delay=0.1):
         """Gently move a servo back to its start/neutral position.
 
@@ -654,67 +622,6 @@ class TrunkController:
                 for i in range(current_position, start, 1):
                     self.set_angle(servo_num, i)
                     await asyncio.sleep(delay)
-
-    async def move_by_dir(self, servo_num, start, stop, delay=0.1, increasing=True):
-        """Move a servo in one direction, returning to start afterward.
-
-        Unlike move_by_direction, this method calls return_to_start both before
-        moving (to ensure a known starting position) and after (to reset).
-
-        Args:
-            servo_num:  Channel index of the target servo.
-            start:      Origin angle in degrees.
-            stop:       Destination angle in degrees (clamped to SERVO_MAX_ANGLE).
-            delay:      Seconds between each 1-degree step.
-            increasing: True to sweep from start→stop; False for stop→start.
-        """
-        start = self.clamp_angle(servo_num, max(start, 0))
-        stop = self.clamp_angle(servo_num, min(stop, SERVO_MAX_ANGLE))
-        print(f"moving {constants.servos[servo_num]}; increasing: {increasing}")
-        await self.return_to_start(servo_num, start, delay=0.1)
-
-        if increasing:
-            print(f"increasing {constants.servos[servo_num]}; start {start}; stop: {stop}")
-            for i in range(start, stop, 1):
-                self.set_angle(servo_num, i)
-                await asyncio.sleep(delay)
-        else:
-            print(f"decreasing {constants.servos[servo_num]}; start {start}; stop: {stop}")
-            for i in range(start, stop, -1):
-                self.set_angle(servo_num, i)
-                await asyncio.sleep(delay)
-
-        await self.return_to_start(servo_num, start, delay=0.1)
-
-    async def move_by_direction(self, servo_num, start, stop, delay=0.1, increasing=True):
-        """Move a servo in one direction without auto-returning to start.
-
-        Simpler than move_by_dir — no pre/post return_to_start calls. Used
-        when the caller controls the full movement sequence.
-
-        Args:
-            servo_num:  Channel index of the target servo.
-            start:      Origin angle in degrees (used when decreasing).
-            stop:       Destination angle in degrees (used when increasing).
-                        Clamped to SERVO_MAX_ANGLE.
-            delay:      Seconds between each 1-degree step.
-            increasing: True sweeps start→stop; False sweeps stop→start.
-        """
-        start = self.clamp_angle(servo_num, max(start, 0))
-        stop = self.clamp_angle(servo_num, min(stop, SERVO_MAX_ANGLE))
-        print(f"moving {constants.servos[servo_num]}; increasing: {increasing}")
-
-        if increasing:
-            for i in range(start, stop, 1):
-                self.set_angle(servo_num, i)
-                await asyncio.sleep(delay)
-
-        if not increasing:
-            print(f"not increasing {constants.servos[servo_num]}")
-            print(f"start {start}; stop: {stop}")
-            for i in range(stop, start, -1):
-                self.set_angle(servo_num, i)
-                await asyncio.sleep(delay)
 
     # ------------------------------------------------------------------ #
     # Diagnostics & composite tests                                        #

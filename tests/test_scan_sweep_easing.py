@@ -19,9 +19,14 @@ and assert the behavioural contract that matters:
   2. it returns (None, pan) on a nap_signal stop, (False, pan) on timeout, and
      (True, pan) on reacquire, with pan consistent with the last written value;
   3. every write goes through set_angle (NECK_PAN only);
-  4. the EASING: per-step increments are smaller near the endpoints than across
-     the middle, and the STEP floor keeps the pan progressing (no zero-velocity
-     stall).
+  4. the EASING: per-step increments ramp to ~0 near BOTH ends of a leg and up to
+     STEP_MAX across the middle (a true accel -> cruise -> decel velocity
+     profile, not just >= a non-zero floor), yet the leg still REACHES its
+     endpoint within a bounded number of ticks (no zero-velocity stall / infinite
+     crawl); and
+  5. the reversal DWELL: the pan HOLDS at an endpoint for ~_SCAN_REVERSAL_DWELL_S
+     worth of ticks before the next leg advances, while nap_signal is still
+     polled each dwell tick.
 
 Per the testing steering, this is NOT a collision/limit simulation — SERVO_SIM=1
 only lets the hardware-free logic run. No CLAMPED / SAFE_LIMITS-range /
@@ -104,8 +109,19 @@ def _cfg(scan_timeout_s=10.0):
 
 
 def _fast(monkeypatch):
-    """Zero the inter-step sleep so the sweep iterates quickly."""
-    monkeypatch.setattr(animatronic.Animatronic, "_SCAN_STEP_PERIOD_S", 0.0)
+    """Make the per-tick sleep a no-op so the sweep iterates instantly.
+
+    The REAL tick period (_SCAN_STEP_PERIOD_S = 0.05s) is left intact so the
+    seconds-based reversal dwell (_SCAN_REVERSAL_DWELL_S / period) still derives
+    its realistic tick count (~4 ticks); we only skip the wall-clock wait by
+    stubbing asyncio.sleep. The deterministic monotonic clock (see _clock) still
+    advances by the real period per tick, so the timeout budget stays faithful.
+    """
+
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(animatronic.asyncio, "sleep", _no_sleep)
 
 
 def _no_target(monkeypatch):
@@ -113,8 +129,17 @@ def _no_target(monkeypatch):
     monkeypatch.setattr(animatronic, "select_target", lambda d, w, h: None)
 
 
-def _clock(monkeypatch, step=0.05):
-    """Auto-advancing monotonic clock so the timeout is deterministic."""
+def _clock(monkeypatch, step=None):
+    """Auto-advancing monotonic clock so the timeout is deterministic.
+
+    Advances by the sweep's ACTUAL tick period per call (unless ``step`` is given
+    explicitly), so sim time stays proportional to the number of ticks — the
+    reversal dwell (a fixed number of ticks derived from the period) then
+    consumes a proportionate slice of the timeout budget rather than being
+    inflated by a mismatched clock step.
+    """
+    if step is None:
+        step = animatronic.Animatronic._SCAN_STEP_PERIOD_S
     state = {"t": 0.0}
 
     def monotonic():
@@ -133,7 +158,7 @@ def test_sweep_stays_in_range_and_reverses(monkeypatch):
     _fast(monkeypatch)
     _no_target(monkeypatch)
     # Long enough deadline to traverse the whole range and reverse at least once.
-    _clock(monkeypatch, step=0.05)
+    _clock(monkeypatch)
     nap_signal.clear_stop()
 
     pan_min, pan_max = constants.SAFE_LIMITS[constants.NECK_PAN]
@@ -164,20 +189,34 @@ def test_sweep_stays_in_range_and_reverses(monkeypatch):
     assert pan == pans[-1]
 
 
-def test_sweep_eases_slower_at_endpoints_than_middle(monkeypatch):
-    """Per-step increments ramp: small near endpoints, larger across the middle.
+def _first_leg_deltas(pans):
+    """Per-step increments along the FIRST (increasing) leg, up to the turn.
 
-    Starts at pan_min so the first steps are the ease-in off the endpoint; by the
-    time the pan reaches the middle of the range the steps have grown. Also
-    asserts the STEP floor keeps every step strictly progressing (no stall).
+    Stops at the first non-increasing step (the reversal / dwell hold), so the
+    returned list is the ease-in -> cruise -> ease-out of the first traversal.
+    """
+    deltas = []
+    for a_, b in zip(pans, pans[1:]):
+        if b <= a_:  # reversal / dwell hold — stop at the first turnaround.
+            break
+        deltas.append(b - a_)
+    return deltas
+
+
+def test_sweep_velocity_ramps_to_near_zero_at_both_leg_ends(monkeypatch):
+    """A true accel -> cruise -> decel profile: ~0 velocity at both leg ends.
+
+    Starts at pan_min so the first steps are the ease-in off a standstill; the
+    steps grow to STEP_MAX across the middle and shrink back toward ~0 as the pan
+    nears pan_max. Asserts the ends are much slower than the cruise AND that the
+    very first/last eased steps approach zero (not merely a non-zero floor).
     """
     _fast(monkeypatch)
     _no_target(monkeypatch)
-    _clock(monkeypatch, step=0.05)
+    _clock(monkeypatch)
     nap_signal.clear_stop()
 
     pan_min, pan_max = constants.SAFE_LIMITS[constants.NECK_PAN]
-    mid = (pan_min + pan_max) / 2.0
     trunk = FakeTrunk()
     a = _new_animatronic()
 
@@ -189,46 +228,126 @@ def test_sweep_eases_slower_at_endpoints_than_middle(monkeypatch):
     )
 
     pans = [angle for ch, angle in trunk.writes]
-    # Per-step deltas along the first (increasing) traversal, up to the first
-    # turnaround. The LAST increasing step lands exactly on pan_max (clamp
-    # truncation), so its magnitude can be below STEP_MIN — that is the endpoint
-    # clamp, not an eased step. Exclude it from the floor check below.
-    deltas = []
-    for a_, b in zip(pans, pans[1:]):
-        if b <= a_:  # reversal — stop at the first turnaround.
-            break
-        deltas.append(b - a_)
+    deltas = _first_leg_deltas(pans)
+    assert len(deltas) > 10, "need many steps to see accel -> cruise -> decel"
 
-    assert len(deltas) > 5, "need several increasing steps to compare the ramp"
-
-    # (4a) STEP floor: no COMPUTED step stalls to (near) zero; every step except
-    # the final clamp-to-endpoint landing is >= the configured minimum (minus a
-    # tiny float tolerance), so the pan always progresses and never crawls.
-    computed_deltas = deltas[:-1]  # drop the endpoint-landing (clamped) step
-    assert computed_deltas, "expected several computed (non-clamp) steps"
-    assert min(computed_deltas) >= a._SCAN_STEP_DEG_MIN - 1e-6
-
-    # (4b) Easing: the first few steps (near the start endpoint) are SMALLER than
-    # the steps taken once the pan is near the middle of the range.
-    first_steps = deltas[:3]
-    mid_steps = [
-        b - a_
-        for a_, b in zip(pans, pans[1:])
-        if a_ < b and abs(a_ - mid) <= a._SCAN_RAMP_DEG / 2.0
-    ]
-    assert mid_steps, "expected steps taken near the mid-range"
-    assert max(first_steps) < max(mid_steps), (
-        "ease-in steps near the endpoint should be smaller than mid-range steps"
-    )
-    # Steps never exceed the configured maximum.
+    # Steps never exceed the configured maximum (cruise cap).
     assert max(deltas) <= a._SCAN_STEP_DEG_MAX + 1e-6
+
+    # (4) Cruise is reached in the middle.
+    cruise = max(deltas)
+    assert cruise >= 0.6 * a._SCAN_STEP_DEG_MAX, "expected a near-STEP_MAX cruise"
+
+    # Ease-in: the first eased step off the standstill approaches ~0 — far below
+    # the cruise and below a small fraction of STEP_MAX (NOT pinned to a 0.5 deg
+    # floor like the old profile).
+    assert deltas[0] < 0.2 * a._SCAN_STEP_DEG_MAX, (
+        "first step should ease up from ~0, not jump to a non-zero floor"
+    )
+    assert deltas[0] < 0.25 * cruise
+
+    # Ease-out: the smallest step in the ramp band approaching the endpoint is
+    # also well below cruise (the velocity decays toward 0 before the turn). The
+    # final landing step is the endpoint snap, which is itself <= the snap
+    # threshold; include the whole leg's minimum computed step.
+    assert min(deltas) < 0.2 * a._SCAN_STEP_DEG_MAX
+
+
+def test_sweep_leg_reaches_endpoint_in_bounded_ticks(monkeypatch):
+    """Progress is guaranteed: the leg lands on an endpoint, no stall/crawl.
+
+    With the velocity easing toward ~0 at the ends there is no hard floor, so
+    this pins the anti-stall contract: starting at pan_min the sweep reaches
+    pan_max (reverses) within a bounded number of writes.
+    """
+    _fast(monkeypatch)
+    _no_target(monkeypatch)
+    _clock(monkeypatch)
+    nap_signal.clear_stop()
+
+    pan_min, pan_max = constants.SAFE_LIMITS[constants.NECK_PAN]
+    trunk = FakeTrunk()
+    a = _new_animatronic()
+
+    asyncio.run(
+        a._run_scan_sweep(
+            FakeClient(), _cfg(scan_timeout_s=500.0), trunk, cur_pan=float(pan_min)
+        )
+    )
+
+    pans = [angle for ch, angle in trunk.writes]
+    # The first leg must actually LAND on pan_max (not crawl asymptotically).
+    assert any(abs(p - pan_max) <= 1e-6 for p in pans), "leg must reach pan_max"
+
+    # Bounded tick count: whole range / cruise is the ideal lower bound; allow a
+    # generous ease/dwell overhead but assert it is finite and reasonable so an
+    # infinite crawl would fail. idx of first pan_max landing:
+    first_max_idx = next(i for i, p in enumerate(pans) if abs(p - pan_max) <= 1e-6)
+    span = pan_max - pan_min
+    ideal = span / a._SCAN_STEP_DEG_MAX
+    assert first_max_idx <= 6 * ideal, (
+        f"leg took {first_max_idx} ticks to reach the endpoint; expected a "
+        f"bounded count near {ideal:.0f} (no zero-velocity stall)"
+    )
+
+
+def test_sweep_dwells_at_endpoint_before_reversing(monkeypatch):
+    """The pan HOLDS at an endpoint for the reversal dwell before the next leg.
+
+    Starts at pan_min so the first leg eases up to pan_max; at that turnaround
+    the pan must hold (be written unchanged) for at least the configured dwell
+    ticks before the next (decreasing) leg advances. nap_signal is cleared so the
+    dwell runs its full course (its per-tick nap_signal poll is covered by
+    test_sweep_returns_none_on_nap_stop).
+    """
+    _fast(monkeypatch)
+    _no_target(monkeypatch)
+    _clock(monkeypatch)
+    nap_signal.clear_stop()
+
+    pan_min, pan_max = constants.SAFE_LIMITS[constants.NECK_PAN]
+    trunk = FakeTrunk()
+    a = _new_animatronic()
+
+    asyncio.run(
+        a._run_scan_sweep(
+            FakeClient(), _cfg(scan_timeout_s=500.0), trunk, cur_pan=float(pan_min)
+        )
+    )
+
+    pans = [angle for ch, angle in trunk.writes]
+    assert any(abs(p - pan_max) <= 1e-6 for p in pans), "sweep must reach pan_max"
+
+    # Find the first write that lands on pan_max, then count the consecutive run
+    # pinned there (the endpoint-landing write + the dwell holds) before the pan
+    # moves off it (the next, decreasing leg).
+    first_max_idx = next(i for i, p in enumerate(pans) if abs(p - pan_max) <= 1e-6)
+    hold = 0
+    for p in pans[first_max_idx:]:
+        if abs(p - pan_max) <= 1e-6:
+            hold += 1
+        else:
+            break
+
+    expected_dwell_ticks = max(
+        1, round(a._SCAN_REVERSAL_DWELL_S / max(a._SCAN_STEP_PERIOD_S, 1e-6))
+    )
+    # The landing write plus expected_dwell_ticks dwell holds all write pan_max,
+    # so the pinned run is at least the dwell count.
+    assert hold >= expected_dwell_ticks, (
+        f"expected the pan to dwell >= {expected_dwell_ticks} ticks at the "
+        f"endpoint before reversing; held {hold}"
+    )
+
+    # After the dwell the pan must actually reverse (start decreasing).
+    assert any(b < a_ for a_, b in zip(pans, pans[1:])), "sweep must reverse after dwell"
 
 
 def test_sweep_returns_none_on_nap_stop(monkeypatch):
     """A nap_signal stop ends the sweep with (None, pan)."""
     _fast(monkeypatch)
     _no_target(monkeypatch)
-    _clock(monkeypatch, step=0.05)
+    _clock(monkeypatch)
 
     trunk = FakeTrunk()
     a = _new_animatronic()
@@ -249,7 +368,7 @@ def test_sweep_returns_none_on_nap_stop(monkeypatch):
 def test_sweep_returns_true_on_reacquire(monkeypatch):
     """A reappearing person ends the sweep with (True, pan)."""
     _fast(monkeypatch)
-    _clock(monkeypatch, step=0.05)
+    _clock(monkeypatch)
     nap_signal.clear_stop()
 
     # select_target finds a person on the 2nd poll.

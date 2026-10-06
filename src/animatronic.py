@@ -41,7 +41,12 @@ import constants
 import config_store
 from range_sensor import ApproachDetector
 from vision_models import Detection, TrackingConfig
-from tracking_controller import select_target, compute_offset, next_neck_targets
+from tracking_controller import (
+    select_target,
+    compute_offset,
+    next_neck_targets,
+    smooth_neck_targets,
+)
 from detection_routine_map import (
     DetectionRoutineMap,
     ARM_ONLY_CHANNELS,
@@ -2410,27 +2415,38 @@ class Animatronic:
     # Scan_Sweep tuning. The sweep pans NECK_PAN across its SAFE_LIMITS range as
     # an eased, incremental pan — each step written through set_angle (so each is
     # clamped) with a short asyncio.sleep between steps. The per-step increment
-    # is NOT constant: it follows an ease-in/ease-out VELOCITY profile across
-    # each endpoint-to-endpoint traversal (small steps near both ends, larger in
-    # the middle) so the head glides into motion and settles toward each
-    # turnaround instead of hard-starting from a standstill and hard-reversing at
-    # the limits. The cadence stays in the same gentle "surveillance" ballpark as
-    # the old fixed ~2 deg/0.05s feel (cf. TrunkController.slow_scan's 0.05s/deg)
-    # — we are smoothing the acceleration, NOT making the sweep faster — while
-    # still polling /detections and nap_signal every tick so a reacquire or stop
-    # is honored within ~1s.
+    # is NOT constant: it follows a TRUE accel -> cruise -> decel VELOCITY profile
+    # across each endpoint-to-endpoint traversal LEG, with the commanded velocity
+    # reaching ~ZERO at BOTH ends of every leg (including the very first leg away
+    # from the starting pan) so the head glides up from a standstill and settles
+    # to a near-stop before each turnaround — no hard start, no hard reversal. A
+    # brief dwell (_SCAN_REVERSAL_DWELL_S) at each endpoint lets the motion fully
+    # settle before the opposite leg begins from zero velocity. The cadence stays
+    # in the same gentle "surveillance" ballpark as the old fixed ~2 deg/0.05s
+    # feel (a slow ~0.05s/deg surveillance pan) — we are smoothing the
+    # accel/decel + adding a reversal dwell, NOT making the sweep faster — while
+    # still polling /detections and nap_signal every tick (including during the
+    # dwell) so a reacquire or stop is honored within ~1s.
     #
-    # Instantaneous step = STEP_MIN + (STEP_MAX - STEP_MIN) * smoothstep(e),
-    # where e in [0,1] is the normalized distance into the nearer end-ramp of the
-    # current traversal (clamped to 1 across the un-ramped middle). STEP_MIN is a
-    # hard floor so velocity never decays to zero mid-range (which would stall the
-    # deadline/polling or crawl indefinitely) — the endpoints are reached by
-    # clamping to pan_min/pan_max, not by the step shrinking to 0. The MIN/MAX
-    # straddle the old 2.0 deg so the eased average stays near the prior speed.
-    _SCAN_STEP_PERIOD_S = 0.05   # delay between sweep steps (seconds; the tick period)
-    _SCAN_STEP_DEG_MIN = 0.5     # min pan increment per step (ease-in/out ends; STEP floor, anti-stall)
-    _SCAN_STEP_DEG_MAX = 3.0     # max pan increment per step (mid-traversal, full speed)
-    _SCAN_RAMP_DEG = 35.0        # width (deg) of the ease ramp at EACH end of a traversal
+    # Instantaneous step = STEP_MAX * smoothstep(e), where e in [0,1] is the
+    # normalized distance into the nearer end-ramp of the current leg (clamped to
+    # 1 across the un-ramped middle). Unlike the earlier profile, the eased step
+    # ramps toward ~0 at a leg boundary (NOT toward a non-zero STEP floor), so the
+    # velocity truly decays to zero at the start and the endpoints. To avoid the
+    # zero-velocity STALL that a hard floor used to guard against, progress is
+    # guaranteed two other ways: (a) a tiny _SCAN_STEP_DEG_CREEP minimum applies
+    # ONLY when NOT inside an end-ramp band (so the un-ramped middle never
+    # crawls); and (b) inside the end-ramp approaching the target, once the
+    # remaining distance drops below _SCAN_ENDPOINT_SNAP_DEG the pan SNAPS to the
+    # endpoint and reverses promptly instead of crawling toward it forever. The
+    # result: 0 -> accelerate -> cruise(STEP_MAX) -> decelerate -> ~0 at endpoint,
+    # every leg.
+    _SCAN_STEP_PERIOD_S = 0.05       # delay between sweep steps (seconds; the tick period)
+    _SCAN_STEP_DEG_MAX = 3.0         # max pan increment per step (mid-leg cruise, full speed)
+    _SCAN_STEP_DEG_CREEP = 0.05      # tiny anti-stall creep, applied ONLY outside an end-ramp band
+    _SCAN_ENDPOINT_SNAP_DEG = 0.5    # within this of the leg target, snap to it and reverse (anti-crawl)
+    _SCAN_RAMP_DEG = 35.0            # width (deg) of the ease ramp at EACH end of a leg (~100 deg cruise middle)
+    _SCAN_REVERSAL_DWELL_S = 0.2     # settle pause at each endpoint before reversing (~4 ticks at 0.05s)
 
     # Puppeteer idle-recenter cadence. When a leave-frame Scan_Sweep times out
     # with no person, Puppeteer eases the Neck_Group back to rest (rather than
@@ -2440,6 +2456,25 @@ class Animatronic:
     # does not jerk to center. Only the Neck_Group channels are driven.
     _PUPPETEER_RECENTER_STEPS = 100    # interpolation steps for the eased recenter
     _PUPPETEER_RECENTER_DELAY_S = 0.02  # delay between steps (seconds)
+
+    # Tracking/Scan wind-down recenter cadence. On a stop request or any error,
+    # the neck eases back to rest (rather than snapping) via a smoothstep
+    # move_to on the Neck_Group only. Tuned to be smooth enough to kill the
+    # one-shot snap jerk yet prompt enough not to stall an error unwind: at these
+    # values a worst-case full pan recenter takes ~0.9s (60 steps x 0.015s).
+    # Tune on hardware.
+    _RECENTER_STEPS = 60       # interpolation steps for the eased wind-down recenter
+    _RECENTER_DELAY_S = 0.015  # delay between steps (seconds)
+
+    # Tracking/Puppeteer STARTUP-pose cadence. At the top of the loop the neck is
+    # eased to the tracking start pose (pan=center, tilt=level gaze) from WHEREVER
+    # it physically rests when the Mode launches — an unknown, possibly large
+    # swing. This is the operator-visible "first movement when Puppeteer starts",
+    # so it must ease from ~0 velocity via a smoothstep move_to rather than a
+    # one-shot set_angle snap. Gentle like the Puppeteer recenter: a worst-case
+    # ~85 deg pan swing takes ~2s (100 steps x 0.02s). Tune on hardware.
+    _STARTUP_POSE_STEPS = 100     # interpolation steps for the eased startup move
+    _STARTUP_POSE_DELAY_S = 0.02  # delay between steps (seconds)
 
     def tracking(
         self,
@@ -2649,7 +2684,9 @@ class Animatronic:
             # helper already recenters in its own finally, but this is the final
             # backstop if asyncio.run itself raised before/after that path.
             print(f"[tracking] error during tracking loop: {e}")
-            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
+            # Sync backstop: asyncio.run already unwound the loop, so this is the
+            # top of the call stack — safe to asyncio.run the eased recenter.
+            asyncio.run(self._recenter_neck(tilt_angle=cfg.tilt_center_deg))
             pending_trigger = None
         finally:
             # Clear the stop signal on exit so the next Mode starts clean and the
@@ -2763,11 +2800,31 @@ class Animatronic:
         cur_pan = float(constants.REST_POSITIONS[constants.NECK_PAN])
         cur_tilt = float(cfg.tilt_center_deg)
 
-        # Drive the neck to the tracking start pose up front so the first
-        # command works from the real level-gaze center rather than wherever the
-        # neck happened to rest (every write clamped by set_angle).
-        trunk.set_angle(constants.NECK_PAN, cur_pan)
-        cur_tilt = trunk.set_angle(constants.NECK_TILT, cur_tilt)
+        # Ease the neck to the tracking start pose up front so the first command
+        # works from the real level-gaze center rather than wherever the neck
+        # happened to rest. This is the operator-visible FIRST movement when the
+        # Mode starts, and the neck may be anywhere physically (a large swing),
+        # so drive it with a smoothstep move_to that ramps velocity from ~0
+        # (NOT a one-shot set_angle snap, which jerks). move_to captures the
+        # neck's current angle as the start and clamps every step to SAFE_LIMITS;
+        # only the Neck_Group channels are touched. On any failure, fall back to
+        # a direct set_angle so startup still reaches the pose.
+        try:
+            await trunk.move_to(
+                {constants.NECK_PAN: cur_pan, constants.NECK_TILT: cur_tilt},
+                steps=self._STARTUP_POSE_STEPS,
+                delay=self._STARTUP_POSE_DELAY_S,
+                ease=True,
+            )
+            # move_to clamps every step to SAFE_LIMITS internally; the start-pose
+            # targets (pan=center, tilt=level gaze) are in-range, so local state
+            # equals the commanded targets. Keep cur_pan/cur_tilt as set above.
+        except Exception as e:
+            print(f"[tracking] eased startup move failed, snapping to pose: {e}")
+            # Fallback snap: set_angle clamps and returns the post-clamp angle, so
+            # local state stays consistent with what the hardware was commanded.
+            cur_pan = trunk.set_angle(constants.NECK_PAN, cur_pan)
+            cur_tilt = trunk.set_angle(constants.NECK_TILT, cur_tilt)
 
         reason = self.NAP_INTERRUPT_STOP
         pending_trigger = None
@@ -2852,6 +2909,12 @@ class Animatronic:
                 targets = next_neck_targets(
                     offset, cur_pan, cur_tilt, cfg, frame_w, frame_h
                 )
+                # Slew-limit + low-pass the per-frame targets so a large single
+                # correction or a rapid reversal can't produce an instant jump
+                # (R3). Layered ON TOP of next_neck_targets' proportional/
+                # deadband damping, not a replacement. This shared helper covers
+                # tracking + scan + puppeteer (all run through this loop).
+                targets = smooth_neck_targets(targets, cur_pan, cur_tilt)
 
                 # Apply each target through set_angle (SAFE_LIMITS clamp, Req
                 # 5.5) — the only hardware write, scoped to Neck_Group channels
@@ -2875,7 +2938,8 @@ class Animatronic:
             # Routine drives jaw/audio" wind-down (Req 7.7): the recenter happens
             # here, and main() releases the lock before dispatching the Routine.
             # Tilt winds down to the tracking level-gaze center, not global rest.
-            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
+            # Eased (smoothstep) recenter so the head glides to rest, not snaps.
+            await self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
 
         return reason, pending_trigger
 
@@ -2936,8 +3000,8 @@ class Animatronic:
     async def _run_scan_sweep(self, client, cfg, trunk, cur_pan):
         """Pan NECK_PAN across its safe range to reacquire a lost person.
 
-        The leave-frame Scan_Sweep (Req 6.7-6.10). Builds on the deliberate
-        surveillance pan of ``TrunkController.slow_scan`` but is driven here as
+        The leave-frame Scan_Sweep (Req 6.7-6.10). A deliberate surveillance pan
+        of NECK_PAN, driven here as
         an incremental ``set_angle`` sweep so it can interleave detection polling
         and ``nap_signal`` checks between every step. Starting from the current
         pan angle it steps toward one ``NECK_PAN`` safe-range endpoint, then
@@ -2961,24 +3025,42 @@ class Animatronic:
         configurable scan range).
 
         The pan does NOT advance at constant velocity. Each step's increment
-        follows an ease-in/ease-out velocity profile across the current
-        traversal LEG (from where the leg began to the endpoint it heads to): a
-        ``smoothstep`` ramp over the nearer ``_SCAN_RAMP_DEG``-wide end-band
-        scales the step from ``_SCAN_STEP_DEG_MIN`` (near either leg boundary) up
-        to ``_SCAN_STEP_DEG_MAX`` (across the middle), so the head accelerates
-        smoothly off a standstill at the START of the sweep (wherever ``cur_pan``
-        is) and off each endpoint after a reversal, and decelerates as it settles
-        into the next endpoint instead of snapping. After a reversal the leg (and
-        thus the ramp) restarts, so the head eases away from the endpoint it just
-        hit rather than jumping to full speed. ``_SCAN_STEP_DEG_MIN`` is a hard
-        STEP floor so velocity never decays to zero mid-range — endpoints are
-        reached by clamping to ``pan_min``/``pan_max``, not by the step shrinking
-        away.
+        follows a TRUE accel -> cruise -> decel velocity profile across the
+        current traversal LEG (from where the leg began to the endpoint it heads
+        to): a ``smoothstep`` ramp over the nearer ``_SCAN_RAMP_DEG``-wide
+        end-band scales the step from ~0 (at either leg boundary) up to
+        ``_SCAN_STEP_DEG_MAX`` (across the ~100 deg middle), so the commanded
+        velocity reaches ~ZERO at BOTH ends of every leg. The head therefore
+        glides up from a standstill at the START of the sweep (wherever
+        ``cur_pan`` is — the first ``leg_start``) and off each endpoint after a
+        reversal, cruises the middle, and decelerates to a near-stop as it
+        settles into the next endpoint instead of snapping. After a reversal the
+        leg (and thus the ramp) restarts, so the head eases away from the
+        endpoint it just hit rather than jumping to full speed.
+
+        Because the eased step ramps toward ~0 (not toward a non-zero floor),
+        progress is guaranteed WITHOUT a hard floor two ways: a tiny
+        ``_SCAN_STEP_DEG_CREEP`` minimum applies ONLY outside an end-ramp band
+        (the un-ramped middle never crawls), and inside the end-ramp, once the
+        remaining distance to the leg target drops below
+        ``_SCAN_ENDPOINT_SNAP_DEG`` the pan SNAPS to the endpoint and reverses
+        promptly rather than crawling toward it forever — so no zero-velocity
+        stall and no infinite crawl.
+
+        At each endpoint, before reversing, the sweep DWELLS for
+        ``_SCAN_REVERSAL_DWELL_S`` (implemented as a few normal loop ticks that
+        hold the pan but keep polling), so the motion fully settles to a stop and
+        the opposite leg begins from zero velocity rather than snapping through
+        the turnaround. The sweep's final commanded velocity on timeout/stop is
+        thus ~0 (if it ends at/near an endpoint), making the handoff into the
+        caller's recenter smooth; an interruption caught mid-leg at cruise is an
+        acceptable abrupt-ish case the caller's eased ``move_to`` recenter
+        absorbs.
 
         A fixed ``_SCAN_STEP_PERIOD_S`` ``asyncio.sleep`` between steps keeps it
         async-friendly and keeps detection/``nap_signal`` polling responsive
-        every tick; the overall sweep stays in the gentle surveillance-pan
-        ballpark of the former fixed ~2 deg/0.05s cadence.
+        every tick (dwell ticks included); the overall sweep stays in the gentle
+        surveillance-pan ballpark of the former fixed ~2 deg/0.05s cadence.
 
 
         Args:
@@ -3018,60 +3100,117 @@ class Animatronic:
         # every reversal below.
         leg_start = pan
 
+        # Dwell countdown (in whole ticks) held at a reversal/endpoint before the
+        # next leg advances. While > 0 the loop still polls detections and
+        # nap_signal and checks the deadline every tick, but does NOT advance the
+        # pan — so the motion settles to a true stop and the next leg starts from
+        # zero velocity, yet a stop/reacquire during the dwell is still honored
+        # within ~1s. Derived from _SCAN_REVERSAL_DWELL_S / the tick period
+        # (>=1 tick). The sweep begins with no dwell (eases straight off cur_pan).
+        dwell_ticks_total = max(
+            1, round(self._SCAN_REVERSAL_DWELL_S / max(self._SCAN_STEP_PERIOD_S, 1e-6))
+        )
+        dwell_remaining = 0
+
         start = time.monotonic()
         while True:
             # Wind down promptly on an external stop request (Req 6.4, 6.5).
+            # Checked every tick, dwell ticks included.
             if nap_signal.stop_requested():
                 return None, pan
 
-            # Timeout with no reacquire -> end the sweep (Req 6.10).
+            # Timeout with no reacquire -> end the sweep (Req 6.10). Checked every
+            # tick, dwell ticks included.
             if (time.monotonic() - start) >= cfg.scan_timeout_s:
                 print("[tracking] Scan_Sweep timed out -> recenter + yield")
                 return False, pan
 
             # Poll for a reappearing person; stop the sweep the instant one is
-            # found (Req 6.9).
+            # found (Req 6.9). Polled every tick, dwell ticks included.
             detections, frame_w, frame_h = client.get_detections()
             if frame_w > 0 and frame_h > 0:
                 if select_target(detections, frame_w, frame_h) is not None:
                     print("[tracking] Scan_Sweep reacquired a person -> track")
                     return True, pan
 
-            # Eased step size: small at BOTH ends of the current traversal leg
-            # (ease-in as it leaves ``leg_start``, ease-out as it nears the
-            # target endpoint), full speed across the middle. ``edge`` is the
-            # distance (deg) to the NEARER of the two leg boundaries — where the
-            # leg began and where it is headed — so the head glides up from a
-            # standstill at the start of every leg (including the first move away
-            # from ``cur_pan``) and settles toward the turnaround. Normalizing
+            # Reversal dwell: hold the pan at the endpoint (no advance) for a few
+            # ticks so the head fully settles before the opposite leg eases off
+            # from zero velocity. nap_signal / timeout / detections were already
+            # checked above this tick, so a stop or reacquire mid-dwell is still
+            # honored within ~1s. Re-issue the (unchanged) endpoint angle each
+            # dwell tick so the neck stays actively commanded at the hold pose and
+            # the settle is explicit — still only NECK_PAN, still clamped.
+            if dwell_remaining > 0:
+                dwell_remaining -= 1
+                pan = trunk.set_angle(constants.NECK_PAN, pan)
+                await asyncio.sleep(self._SCAN_STEP_PERIOD_S)
+                continue
+
+            # Eased step size: ~0 at BOTH ends of the current traversal leg
+            # (ease-in as it leaves ``leg_start``, ease-out as it nears the target
+            # endpoint), full speed across the middle. ``edge`` is the distance
+            # (deg) to the NEARER of the two leg boundaries — where the leg began
+            # and where it is headed — so the head glides up from a standstill at
+            # the start of every leg (including the first move away from
+            # ``cur_pan``) and decelerates toward the turnaround. Normalizing
             # ``edge`` over _SCAN_RAMP_DEG through smoothstep gives a ramp that is
-            # ~0 at a leg boundary and 1 once past the ramp band. The
-            # _SCAN_STEP_DEG_MIN floor keeps the pan progressing (no
-            # zero-velocity stall) — the endpoints are reached by the clamp
-            # below, not by the step decaying to 0.
-            target = pan_max if increasing else pan_min
-            edge = min(abs(pan - leg_start), abs(target - pan))
+            # ~0 at a leg boundary and 1 once past the ramp band; scaling
+            # STEP_MAX by it makes the commanded velocity truly reach ~0 at each
+            # end. The step ramps toward zero (NOT a non-zero floor), so progress
+            # is kept two other ways: a tiny creep applies only OUTSIDE the
+            # end-ramp band (the middle never crawls), and the endpoint snap below
+            # finishes the ease-out leg promptly instead of crawling forever.
+            target = float(pan_max if increasing else pan_min)
+            dist_from_start = abs(pan - leg_start)
+            remaining = abs(target - pan)
+            edge = min(dist_from_start, remaining)
             ramp = max(0.0, min(1.0, edge / self._SCAN_RAMP_DEG))
             smooth = ramp * ramp * (3.0 - 2.0 * ramp)  # smoothstep(ramp)
-            step = self._SCAN_STEP_DEG_MIN + (
-                self._SCAN_STEP_DEG_MAX - self._SCAN_STEP_DEG_MIN
-            ) * smooth
+            step = self._SCAN_STEP_DEG_MAX * smooth
+            # Anti-stall creep: a tiny universal floor so the step is never
+            # exactly zero — otherwise the ease-IN step at a leg boundary (where
+            # distance-from-start is 0, so smoothstep is 0) would be 0 forever and
+            # the leg would never leave the endpoint. _SCAN_STEP_DEG_CREEP
+            # (~0.05 deg/tick ~= 1 deg/s) is slow enough to read as "near zero"
+            # velocity at the ends yet guarantees progress off a standstill. The
+            # endpoint snap below absorbs the symmetric ease-OUT tail so the leg
+            # still reaches its target promptly rather than creeping in forever.
+            step = max(step, self._SCAN_STEP_DEG_CREEP)
 
-            # Advance one eased step, reversing at either safe-range endpoint.
-            # On a reversal, restart the leg so the new traversal eases away from
-            # the endpoint it just hit instead of snapping to full speed.
+            # Endpoint snap: on the ease-OUT side (nearer the target than the leg
+            # start) once we are within _SCAN_ENDPOINT_SNAP_DEG of the target,
+            # land exactly on it and reverse — finishing the near-zero decel
+            # promptly instead of creeping the last fraction of a degree. The
+            # ease-IN off the SAME endpoint next leg is unaffected (there
+            # ``remaining`` is large, so this is false).
+            snap_now = (
+                remaining <= self._SCAN_ENDPOINT_SNAP_DEG and remaining <= dist_from_start
+            )
+
+            # Advance one eased step, reversing at either safe-range endpoint. On
+            # a reversal, restart the leg and arm the dwell so the next traversal
+            # settles, then eases away from the endpoint instead of snapping to
+            # full speed.
             if increasing:
-                pan += step
+                if snap_now:
+                    pan = float(pan_max)
+                else:
+                    pan = min(float(pan_max), pan + step)
                 if pan >= pan_max:
                     pan = float(pan_max)
                     increasing = False
                     leg_start = pan
+                    dwell_remaining = dwell_ticks_total
             else:
-                pan -= step
+                if snap_now:
+                    pan = float(pan_min)
+                else:
+                    pan = max(float(pan_min), pan - step)
                 if pan <= pan_min:
                     pan = float(pan_min)
                     increasing = True
                     leg_start = pan
+                    dwell_remaining = dwell_ticks_total
 
             # Write through set_angle (SAFE_LIMITS clamp, Req 6.8); keep the
             # local angle consistent with the actually written (post-clamp)
@@ -3089,8 +3228,9 @@ class Animatronic:
         a live operator performance that must stay up. Rather than keep sweeping,
         this EASES the Neck_Group back to its rest pose (NECK_PAN to the global
         rest ~90, NECK_TILT to the tracking level-gaze center) with a slow,
-        smoothstep ``move_to`` sweep — NOT the one-shot ``_recenter_neck`` snap
-        used by the wind-down/error path — so coming off a fully-panned
+        smoothstep ``move_to`` sweep (slower than the wind-down/error path's
+        eased ``_recenter_neck``, since this is an idle recenter rather than an
+        unwind) — so coming off a fully-panned
         Scan_Sweep the head does not jerk to center. Every ``move_to`` step
         writes through ``set_angle`` (SAFE_LIMITS clamp, Req 5.5) and only the
         Neck_Group channels are driven. It then IDLES there, polling
@@ -3116,10 +3256,11 @@ class Animatronic:
             state stays consistent with the last write.
         """
         # Ease the Neck_Group back to the rest pose and hold there — do NOT
-        # start another Scan_Sweep. Unlike the wind-down/error path (which uses
-        # the prompt one-shot _recenter_neck snap), the idle recenter sweeps
-        # smoothly via move_to so coming off a fully-panned sweep the head does
-        # not JERK to center. move_to interpolates each joint with smoothstep
+        # start another Scan_Sweep. Like the wind-down/error path (which now
+        # also eases via _recenter_neck), the idle recenter sweeps smoothly via
+        # move_to so coming off a fully-panned sweep the head does not JERK to
+        # center; this path simply recenters more slowly (idle, not an unwind).
+        # move_to interpolates each joint with smoothstep
         # easing and writes every step through set_angle (SAFE_LIMITS clamp,
         # Req 5.5). ONLY the Neck_Group channels are driven — never an arm
         # channel a concurrent operator Gesture may own (Req 5.8, 6.11).
@@ -3160,8 +3301,8 @@ class Animatronic:
             await asyncio.sleep(self._TRACKING_LOOP_PERIOD_S)
 
     @staticmethod
-    def _recenter_neck(tilt_angle=None):
-        """Drive ONLY the Neck_Group channels to their resting pan/tilt.
+    async def _recenter_neck(tilt_angle=None):
+        """Drive ONLY the Neck_Group channels to their resting pan/tilt, EASED.
 
         Used by Tracking_Mode on wind-down (stop request) and on any error so
         the neck returns to a known pose. Pan always returns to the global rest
@@ -3172,11 +3313,19 @@ class Animatronic:
         this build). When ``tilt_angle`` is None it falls back to the global
         ``REST_POSITIONS[NECK_TILT]``.
 
-        Writes go through ``TrunkController.set_angle`` so each angle is clamped
-        to the global ``SAFE_LIMITS`` (Req 5.5) — the hardware clamp is always
-        the final authority — and ONLY the Neck_Group channels
-        (``NECK_PAN``/``NECK_TILT``) are touched, never an arm channel a
-        concurrent Gesture may own (Req 5.8, 6.11). Never raises (recovery path).
+        The recenter is a smoothstep ``move_to`` (ease-in/out, velocity ~0 at
+        both ends) so the head glides to rest rather than snapping — the same
+        shape ``_puppeteer_idle_hold`` uses. Writes go through ``move_to`` ->
+        ``TrunkController.set_angle`` so each angle is clamped to the global
+        ``SAFE_LIMITS`` (Req 5.5) — the hardware clamp is always the final
+        authority — and ONLY the Neck_Group channels (``NECK_PAN``/``NECK_TILT``)
+        are touched, never an arm channel a concurrent Gesture may own
+        (Req 5.8, 6.11).
+
+        NEVER RAISES (recovery path). Because ``move_to`` can raise, the eased
+        recenter is wrapped in try/except; on ANY exception it falls back to the
+        legacy one-shot ``set_angle`` snap-to-rest (each write individually
+        guarded) and the original error is never propagated.
 
         Args:
             tilt_angle: NECK_TILT angle to return to; defaults to the global
@@ -3190,14 +3339,33 @@ class Animatronic:
                 else constants.REST_POSITIONS.get(constants.NECK_TILT)
             ),
         }
-        for channel, angle in rest_targets.items():
-            if angle is None:
-                continue
-            try:
-                trunk.set_angle(channel, angle)
-            except Exception as e:
-                name = constants.servos.get(channel, f"ch{channel}")
-                print(f"[tracking] could not recenter {name}: {e}")
+        # Drop any None target (no rest angle configured for that channel).
+        move_targets = {
+            channel: angle
+            for channel, angle in rest_targets.items()
+            if angle is not None
+        }
+        if not move_targets:
+            return
+        try:
+            # Preferred path: eased, zero-velocity-at-both-ends recenter.
+            await trunk.move_to(
+                move_targets,
+                steps=Animatronic._RECENTER_STEPS,
+                delay=Animatronic._RECENTER_DELAY_S,
+                ease=True,
+            )
+        except Exception as e:
+            # Recovery contract: NEVER raise. Fall back to the one-shot snap so
+            # the neck still reaches a known-safe rest even if the eased move
+            # failed partway, and swallow the error.
+            print(f"[tracking] eased recenter failed, snapping to rest: {e}")
+            for channel, angle in move_targets.items():
+                try:
+                    trunk.set_angle(channel, angle)
+                except Exception as e2:
+                    name = constants.servos.get(channel, f"ch{channel}")
+                    print(f"[tracking] could not recenter {name}: {e2}")
 
     # ------------------------------------------------------------------ #
     # Scan — a MODE (continuous neck tracker + concurrent arm-only responder) #
@@ -3383,7 +3551,9 @@ class Animatronic:
             # already recenters in its own finally, but this is the final
             # backstop if asyncio.run itself raised before/after that path.
             print(f"[scan] error during scan loop: {e}")
-            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
+            # Sync backstop: asyncio.run already unwound the loop, so this is the
+            # top of the call stack — safe to asyncio.run the eased recenter.
+            asyncio.run(self._recenter_neck(tilt_angle=cfg.tilt_center_deg))
         finally:
             # Clear the stop signal on exit so the next Mode starts clean and the
             # requesting web-app action can proceed once the servo lock frees.
@@ -3512,6 +3682,10 @@ class Animatronic:
                 targets = next_neck_targets(
                     offset, cur_pan, cur_tilt, cfg, frame_w, frame_h
                 )
+                # Shared per-frame neck smoothing (R3) — same helper as tracking
+                # + puppeteer, so there is no variant fork. Layers slew/low-pass
+                # on top of the proportional/deadband damping.
+                targets = smooth_neck_targets(targets, cur_pan, cur_tilt)
 
                 if constants.NECK_PAN in targets:
                     cur_pan = trunk.set_angle(
@@ -3531,7 +3705,8 @@ class Animatronic:
                 self._active[0].cancel()
                 await asyncio.gather(self._active[0], return_exceptions=True)
                 self._active = None
-            self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
+            # Eased (smoothstep) recenter so the head glides to rest, not snaps.
+            await self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
 
     async def _dispatch_scan_response(self, name, scan_responses, mv):
         """Run one allowlisted arm-only response, fail-closed on a Gesture.

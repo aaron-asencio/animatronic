@@ -113,7 +113,6 @@ animatronic-v2/
 │   ├── constants.py            # Channels, SAFE_LIMITS, REST_POSITIONS, FORBIDDEN_COMBINATIONS, GPIO pins
 │   ├── trunkcontroller.py      # Low-level async servo primitives (clamping, move_to, return_to_rest)
 │   ├── movements.py            # High-level async gesture choreography
-│   ├── concurrentMovements.py  # Thread-based gestures (ThreadPoolExecutor), e.g. face_palm
 │   ├── performance.py          # Reusable runner for audio-synced concurrent gestures
 │   ├── positions.py            # Shared pose/position helpers
 │   ├── animatronic.py          # Named routines + Modes (napping/awake/tracking/scan); CLI entry point
@@ -167,10 +166,6 @@ animatronic.py / controller.py   ← you call these (routines + Modes / gesture-
         ▼
   PCA9685 PWM board → servos
 ```
-
-`concurrentMovements.py` sits alongside `movements.py` and uses
-`ThreadPoolExecutor` instead of asyncio for gestures that need true
-thread-level parallelism (e.g. `face_palm`).
 
 The camera pipeline (`camera_service.py` → `detector.py` →
 `tracking_controller.py` / `detection_routine_map.py`) runs as a separate
@@ -275,12 +270,6 @@ Gesture actions (from `controller.py`'s `action_map`):
   `neckEllipse`, `swivelHead`, `shakeHead`, `snapHead`, `smno`, `snuckUp`,
   `awaken`, `headFocus`
 - **Composite (arm + head):** `waveAndSwivelSmooth`, `handVisor`
-
-Thread-based `face_palm` demo:
-
-```bash
-sudo .venv/bin/python src/concurrentMovements.py
-```
 
 ### Modes (continuous background behaviours)
 

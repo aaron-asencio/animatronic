@@ -34,6 +34,26 @@ from typing import Dict, List, Optional
 import constants
 from vision_models import Detection, Offset, TrackingConfig
 
+# --- Per-frame neck smoothing (R3) ------------------------------------------
+# These bound how fast the COMMANDED neck angle may change between successive
+# 0.1s tracking frames, layered ON TOP of the proportional-step + deadband
+# anti-limit-cycle damping in next_neck_targets / compute_offset (NOT a
+# replacement for it). They only shape the commanded angle; the proportional
+# step still decides direction/magnitude and the deadband still zeroes small
+# offsets. The goal is purely to stop a single large per-frame correction, or a
+# rapid frame-to-frame direction reversal, from reading as an instantaneous
+# neck jump.
+#
+# _TRACK_MAX_SLEW_DEG — max commanded angle change per 0.1s frame. 6 deg/frame
+#   = a 60 deg/s velocity cap, so even a full max_step correction is spread
+#   rather than snapped. Shared by tracking + scan + puppeteer (same helper).
+# _TRACK_SMOOTHING_ALPHA — exponential-moving-average blend toward the
+#   slew-limited target (0..1). 0.5 = move half-way each frame; higher is more
+#   responsive (closer to raw), lower is smoother/laggier. Chosen so a steady
+#   follow still keeps up inside the 0.1s budget while reversals are softened.
+_TRACK_MAX_SLEW_DEG = 6.0
+_TRACK_SMOOTHING_ALPHA = 0.5
+
 
 def _frame_center(frame_w: int, frame_h: int):
     """The pixel coordinate at the center of the frame.
@@ -330,6 +350,63 @@ def next_neck_targets(
         targets[constants.NECK_TILT] = tilt_target
 
     return targets
+
+
+def smooth_neck_targets(
+    targets: Dict[int, float],
+    cur_pan: float,
+    cur_tilt: float,
+) -> Dict[int, float]:
+    """Slew-limit + low-pass a frame's neck targets so the neck can't jump.
+
+    Pure math, no servo writes. Applied AFTER ``next_neck_targets`` and BEFORE
+    the per-frame ``set_angle`` write in the Tracking_Mode loop (shared by
+    tracking, scan's neck tracker, and puppeteer — one helper, no fork). It
+    LAYERS ON TOP of the proportional-step + per-axis deadband damping that
+    ``next_neck_targets`` / ``compute_offset`` already apply (the deliberate
+    anti-limit-cycle logic) — it does not replace or weaken them. For each axis
+    present in ``targets`` it:
+
+    1. clamps the per-frame delta from the current commanded angle to
+       ``+/- _TRACK_MAX_SLEW_DEG`` (a velocity cap over the 0.1s frame), then
+    2. EMA-blends from the current angle toward that slew-limited value with
+       ``_TRACK_SMOOTHING_ALPHA``.
+
+    The result is a new ``{channel: angle}`` dict with the same keys as
+    ``targets``. A single large correction is spread over frames and a rapid
+    reversal is softened, so neither produces an instantaneous jump; a steady
+    follow still converges within the 0.1s budget. The caller still writes each
+    returned angle through ``set_angle`` (SAFE_LIMITS clamp) and feeds the
+    post-clamp value back as ``cur_pan``/``cur_tilt`` next frame, so the
+    smoothing state stays consistent.
+
+    Args:
+        targets: The raw next-target dict from ``next_neck_targets`` (a subset
+            of ``{NECK_PAN, NECK_TILT}``).
+        cur_pan: The current (last-written) ``NECK_PAN`` commanded angle.
+        cur_tilt: The current (last-written) ``NECK_TILT`` commanded angle.
+
+    Returns:
+        A new dict mapping each channel in ``targets`` to its smoothed target
+        angle in degrees. Empty when ``targets`` is empty.
+    """
+    smoothed: Dict[int, float] = {}
+    current = {
+        constants.NECK_PAN: cur_pan,
+        constants.NECK_TILT: cur_tilt,
+    }
+    for channel, raw_target in targets.items():
+        cur = current.get(channel, raw_target)
+        delta = raw_target - cur
+        # 1. Slew-limit the per-frame delta (velocity cap over the 0.1s frame).
+        if delta > _TRACK_MAX_SLEW_DEG:
+            delta = _TRACK_MAX_SLEW_DEG
+        elif delta < -_TRACK_MAX_SLEW_DEG:
+            delta = -_TRACK_MAX_SLEW_DEG
+        slew_limited = cur + delta
+        # 2. EMA-blend from current toward the slew-limited target.
+        smoothed[channel] = cur + _TRACK_SMOOTHING_ALPHA * (slew_limited - cur)
+    return smoothed
 
 
 def _clamp_tilt_band(angle: float, cfg: TrackingConfig) -> float:

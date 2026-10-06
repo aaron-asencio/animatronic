@@ -343,9 +343,9 @@ A new `Animatronic.tracking(...)` method registered in `action_map` as
   exits within 1s (Req 6.4, 6.5).
 - No `AudioPlayer`, never writes the jaw motor (Req 6.2).
 - **Leave-frame → Scan_Sweep (Req 6.7-6.10):** when no `person` detection is
-  present, run a slow pan across the `NECK_PAN` safe range (building on
-  `TrunkController.slow_scan` but honoring the configurable scan range/timeout).
-  Every neck command still goes through `set_angle` (Req 6.8). If a person
+  present, run a slow eased pan across the `NECK_PAN` safe range (an incremental
+  `set_angle` sweep in `_run_scan_sweep`, honoring the configurable scan
+  range/timeout). Every neck command still goes through `set_angle` (Req 6.8). If a person
   reappears mid-sweep, stop and resume tracking (Req 6.9). If the scan timeout
   elapses with no reacquire, recenter to `REST_POSITIONS` and yield to the
   previously active Mode (Req 6.10).

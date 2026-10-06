@@ -19,21 +19,19 @@ animatronic.py / controller.py      ← top-level: named gesture+audio routines 
     └── movements.py                ← mid-level: named multi-joint async gestures
             └── trunkcontroller.py  ← low-level: individual servo primitives (async)
                     └── adafruit_servokit / PCA9685 hardware
-concurrentMovements.py              ← alternative mid-level: thread-based gestures (ThreadPoolExecutor)
 constants.py                        ← channel assignments, SAFE_LIMITS, REST_POSITIONS
 ```
 
 - `TrunkController` owns the `ServoKit` instance at **class level** — shared across all instances. Never construct a second `ServoKit`.
 - `Movements` owns a class-level `trunkController` and composes `TrunkController` primitives into named gestures. Arm gestures use channels 4–7; head gestures use channels 0–1. Any arm gesture may run concurrently with any head gesture (disjoint channels).
 - `Animatronic` (top level) maps named routines to a gesture + an audio track. Most routines call `run_action_and_audio()`; audio-synced concurrent routines use the Performance Framework (see below).
-- `ConcurrentMovements` is a thread-based alternative to `Movements` (blocking `time.sleep`, `ThreadPoolExecutor`) for gestures like `face_palm`. Note `Movements` also has its own async `face_palm`.
 
 ## Safety Model (read before changing any movement code)
 
 A servo driven past its mechanical stop stalls, draws locked-rotor current, overheats, and can burn out — a fire hazard. These invariants are non-negotiable:
 
 - **Every servo write goes through `TrunkController.set_angle()`**, which clamps via `clamp_angle()` to the channel's `constants.SAFE_LIMITS` (the mechanism's safe range, not the servo's 0–270 electrical range). Never assign `kit.servo[n].angle` directly.
-- **Sweep endpoints are also clamped** in `move`, `move_by_dir`, `move_by_direction`, and `return_to_start`, so a loop never iterates into a jam.
+- **Sweep endpoints are also clamped** in `move` and `return_to_start`, so a loop never iterates into a jam. (The eased `move_to` primitive clamps every interpolated step the same way.)
 - **Return to a safe rest after every routine and after any error.** `TrunkController.return_to_rest()` drives every channel to `constants.REST_POSITIONS`; each rest angle must stay within `SAFE_LIMITS`. `Animatronic.run_action_and_audio` calls `_safe_rest()` in its error path.
 - **Widening a limit requires operator-verified safety.** Only use `TrunkController.verified_pose_override(overrides)` (a context manager) for a specific pose bench-confirmed safe. It is still bounded by the electrical range `[0, 270]`, and it must be scoped so the widened clamp never leaks past the routine (e.g. `snore` opens `Movements._SLEEP_OVERRIDE` for the lead-in→loop→return span, then releases it).
 - **Per-axis limits do not catch multi-axis collisions.** `constants.FORBIDDEN_COMBINATIONS` hard-guards measured danger zones (e.g. hand-to-face). Respect these; a full 3D collision model is planned but not complete.
@@ -46,7 +44,6 @@ A servo driven past its mechanical stop stalls, draws locked-rotor current, over
 - Servos use a **270-degree actuation range** (`SERVO_MAX_ANGLE = 270`). `TrunkController` configures `actuation_range` lazily and **only on the channels in `constants.servos`** — configuring all 16 caused unused servos to twitch on startup. Configuration writes `actuation_range` only, never `.angle`, so setup never commands motion.
 - Sweep angles one degree at a time in a loop with a configurable `delay` (seconds per step) for smooth motion. Do not replace with direct angle jumps. For coordinated multi-joint motion that arrives together, use `move_to(targets, ...)` (per-joint interpolation with smoothstep easing and optional staggered starts).
 - `NECK_CENTER = 90` is the neutral neck **pan** angle; return there after head gestures (`neck_center()`). Neck tilt's level angle is also ~90 (see `REST_POSITIONS`).
-- `move_by_dir` calls `return_to_start` before and after the sweep — use it when the caller doesn't manage position. `move_by_direction` does not auto-return — use it when the caller controls the full sequence.
 - `health_check()` reads back the PCA9685 PWM frequency (~50 Hz) to detect a brownout (loose VCC) and restores it; it runs once on first `TrunkController` construction.
 
 ## Async vs. Threading
@@ -54,7 +51,6 @@ A servo driven past its mechanical stop stalls, draws locked-rotor current, over
 - `TrunkController` and `Movements` methods are `async` coroutines; use `asyncio.sleep` for all delays inside them.
 - Call `asyncio.run()` only at the top of the call stack (in `Animatronic` routine methods / CLI entry points). Never call it inside a running event loop.
 - For concurrent gestures in the async layer, use `asyncio.create_task()` + `asyncio.gather()`, or the Performance Framework.
-- `ConcurrentMovements` uses `ThreadPoolExecutor` with blocking `time.sleep`. Do not mix `asyncio.sleep` into this path.
 
 ## Performance Framework (`performance.py`)
 
@@ -84,7 +80,7 @@ Audio-synced concurrent routines (`blah`, `brains`, `hypnotic`, `snore`) are bui
 
 ## Code Style
 
-- `snake_case` for variables, functions, and methods; `PascalCase` for classes. (Method names are snake_case, e.g. `return_to_start`, `neck_center`, `move_by_dir`.)
+- `snake_case` for variables, functions, and methods; `PascalCase` for classes. (Method names are snake_case, e.g. `return_to_start`, `neck_center`, `move_to`.)
 - Local angle bounds use `SERVO_NAME_MIN` / `SERVO_NAME_MAX` as `ALL_CAPS` locals inside a method. Do not promote to module/class constants unless shared across methods — the enforced safe bounds live in `constants.SAFE_LIMITS`.
 - Docstrings use Google-style format with `Args:` (and `Returns:` / `Yields:` where relevant). Briefly document each parameter.
 - Use f-strings for interpolation. Debug output uses `print()` directly — there is no logging framework; keep it consistent and do not introduce `logging` piecemeal.
@@ -94,4 +90,3 @@ Audio-synced concurrent routines (`blah`, `brains`, `hypnotic`, `snore`) are bui
 - Full routines (require root): `sudo /usr/bin/python3 src/animatronic.py --action=<name>` (e.g. `startParty`, `waiting`, `blah`, `brains`).
 - Gesture-only testing (no audio): `python3 src/controller.py --action=<name>`.
 - Dry run without hardware: prefix any command with `SERVO_SIM=1`.
-- Thread-based gesture demo: `python3 src/concurrentMovements.py` (has a `__main__` guard).
