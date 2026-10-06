@@ -266,6 +266,13 @@ mic Stream) together from the Puppeteer start button.
   drives neck aim **only** and can never auto-dispatch a Routine, so a detection
   never seizes the jaw/audio path from the operator's live mic. Plain Tracking's
   trigger behavior is unchanged.
+- **Does NOT wind down on a camera Scan_Sweep timeout.** Unlike plain Tracking
+  (which ends on the Scan_Sweep reacquire timeout and yields — see Tracking
+  mode), Puppeteer is a live operator performance: when the camera sees no
+  person it recenters the neck to rest and **idles** there (holds and keeps
+  polling for a reappearing person), resuming tracking the instant one returns.
+  It runs until an explicit stop or preemption — never ending just because the
+  camera lost the person.
 - **Interrupted by**:
   - **pressing the web stop button** (`/puppeteer/stop`) — winds the neck down,
     releases the Neck_Group, and stops the mic Stream it started; or

@@ -2432,6 +2432,7 @@ class Animatronic:
         routine_map=None,
         action_map=None,
         suppress_triggers=False,
+        end_on_scan_timeout=True,
     ):
         """TRACKING mode: pan/tilt the neck to follow a detected person.
 
@@ -2529,6 +2530,19 @@ class Animatronic:
                 jaw/audio path from the operator's live mic Stream. Defaults to
                 ``False`` so plain ``--action=tracking`` is unchanged (FR4): it
                 still builds the default maps and arms triggers as before.
+            end_on_scan_timeout: Scan_Sweep reacquire-timeout policy. Default
+                ``True`` is plain ``--action=tracking`` behaviour (Req 6.10):
+                when a leave-frame Scan_Sweep elapses ``cfg.scan_timeout_s`` with
+                no person reacquired, the Mode winds down and yields the
+                Neck_Group to the previously active Mode. Puppeteer passes
+                ``False``: the operator is performing live, so a camera that
+                momentarily sees no person must NOT end the Mode — a Scan_Sweep
+                timeout instead recenters the neck to its rest pose and IDLES
+                there (holding, polling detections, no re-sweep), resuming
+                tracking the instant a person reappears. Puppeteer exits ONLY on
+                an explicit stop (``nap_signal``) or being preempted by another
+                Mode. Does not affect plain tracking (which never sets it
+                ``False``).
 
         Returns:
             An optional "pending trigger" ``dict`` when a ``Detection_Routine_Map``
@@ -2597,7 +2611,13 @@ class Animatronic:
         # _run_nap_loop) — never inside a running event loop, no watchdog.
         try:
             reason, pending_trigger = asyncio.run(
-                self._run_tracking_loop(client, cfg, routine_map, action_map)
+                self._run_tracking_loop(
+                    client,
+                    cfg,
+                    routine_map,
+                    action_map,
+                    end_on_scan_timeout=end_on_scan_timeout,
+                )
             )
             print(f"[tracking] {reason} interrupt -> wound down")
         except Exception as e:
@@ -2618,7 +2638,14 @@ class Animatronic:
         # before the Routine runs.
         return pending_trigger
 
-    async def _run_tracking_loop(self, client, cfg, routine_map=None, action_map=None):
+    async def _run_tracking_loop(
+        self,
+        client,
+        cfg,
+        routine_map=None,
+        action_map=None,
+        end_on_scan_timeout=True,
+    ):
         """Drive the neck to track a person until interrupted; return the reason.
 
         The loop, each iteration (Req 6.1, 5.7):
@@ -2679,6 +2706,16 @@ class Animatronic:
                 disables triggering (plain tracking only).
             action_map: The dispatch allowlist used to validate a triggered
                 action name (Req 7.6). ``None`` disables triggering.
+            end_on_scan_timeout: When ``True`` (plain tracking, Req 6.10) a
+                Scan_Sweep reacquire timeout — ``_run_scan_sweep`` returning
+                ``(False, pan)`` — ends the loop with
+                ``TRACKING_INTERRUPT_SCAN_TIMEOUT``. When ``False`` (Puppeteer) a
+                Scan_Sweep timeout does NOT end the loop: it recenters the neck
+                to rest and idles there (``_puppeteer_idle_hold``), polling for a
+                reappearing person while honoring ``nap_signal``, so Puppeteer
+                exits only on an explicit stop (``NAP_INTERRUPT_STOP``) or
+                preemption. The ``(None, pan)`` stop and ``(True, pan)`` reacquire
+                paths are identical for both policies.
 
         Returns:
             A ``(reason, pending_trigger)`` tuple. ``reason`` is one of
@@ -2757,11 +2794,32 @@ class Animatronic:
                         reason = self.NAP_INTERRUPT_STOP
                         break
                     if not reacquired:
-                        # Scan timeout with no person: end the Mode so it yields
-                        # to the previously active Mode (Req 6.10). The finally
-                        # block recenters the Neck_Group to REST_POSITIONS.
-                        reason = self.TRACKING_INTERRUPT_SCAN_TIMEOUT
-                        break
+                        if end_on_scan_timeout:
+                            # Plain tracking (Req 6.10): scan timeout with no
+                            # person ends the Mode so it yields to the previously
+                            # active Mode. The finally block recenters the
+                            # Neck_Group to REST_POSITIONS.
+                            reason = self.TRACKING_INTERRUPT_SCAN_TIMEOUT
+                            break
+                        # Puppeteer (end_on_scan_timeout=False): the operator is
+                        # performing live, so a camera that momentarily sees no
+                        # person must NOT end the Mode. Instead of re-sweeping,
+                        # recenter the neck to its rest pose and HOLD there,
+                        # polling detections until a person reappears (then
+                        # resume tracking). The idle hold still checks nap_signal
+                        # each tick so an explicit stop is honored within ~1s;
+                        # only an explicit stop or a preempting Mode ends
+                        # Puppeteer. Returns the (possibly stop-interrupted) pan
+                        # so cur_pan stays consistent with the last write.
+                        stopped, cur_pan, cur_tilt = await self._puppeteer_idle_hold(
+                            client, cfg
+                        )
+                        if stopped:
+                            reason = self.NAP_INTERRUPT_STOP
+                            break
+                        # A person reappeared: resume normal tracking on the next
+                        # iteration, re-reading /detections from the rest pose.
+                        continue
                     # A person reappeared: resume normal tracking on the next
                     # iteration, which re-reads /detections and commands the neck.
                     continue
@@ -2947,6 +3005,57 @@ class Animatronic:
             pan = trunk.set_angle(constants.NECK_PAN, pan)
 
             await asyncio.sleep(self._SCAN_STEP_PERIOD_S)
+
+    async def _puppeteer_idle_hold(self, client, cfg):
+        """Recenter the neck to rest and hold there until a person reappears.
+
+        Puppeteer-only (``end_on_scan_timeout=False``) behaviour for when a
+        leave-frame Scan_Sweep times out with no person in view. Unlike plain
+        tracking — which ends the Mode on that timeout (Req 6.10) — Puppeteer is
+        a live operator performance that must stay up. Rather than keep sweeping,
+        this recenters the Neck_Group to its rest pose (NECK_PAN to the global
+        rest ~90, NECK_TILT to the tracking level-gaze center) via
+        ``_recenter_neck`` (so every write is ``set_angle`` SAFE_LIMITS-clamped,
+        Req 5.5) and then IDLES there, polling ``/detections`` without moving the
+        neck. It resumes tracking the instant a Target_Person reappears.
+
+        The hold checks ``nap_signal`` every tick so an explicit stop (the web
+        stop button / a preempting Mode) is honored within ~1s. The Mode never
+        ends on the scan-sweep timeout itself — only on that explicit stop or a
+        preemption (handled by the caller breaking out).
+
+        Args:
+            client: The ``CameraClient`` to poll ``GET /detections``.
+            cfg: The ``TrackingConfig`` (its ``tilt_center_deg`` is the rest
+                tilt the neck holds at).
+
+        Returns:
+            A ``(stopped, cur_pan, cur_tilt)`` tuple. ``stopped`` is ``True`` if
+            an external stop (``nap_signal``) was requested while idling (caller
+            winds down with ``NAP_INTERRUPT_STOP``); ``False`` if a person
+            reappeared (caller resumes tracking). ``cur_pan``/``cur_tilt`` are the
+            rest angles the neck is now holding, so the caller's local angle
+            state stays consistent with the last write.
+        """
+        # Recenter to the rest pose (set_angle-clamped, Neck_Group only) and
+        # hold there — do NOT start another Scan_Sweep.
+        self._recenter_neck(tilt_angle=cfg.tilt_center_deg)
+        cur_pan = float(constants.REST_POSITIONS[constants.NECK_PAN])
+        cur_tilt = float(cfg.tilt_center_deg)
+        print("[tracking] puppeteer: no person -> recenter + idle (hold)")
+
+        while True:
+            # Honor an explicit stop within ~1s (Req 6.4, 6.5).
+            if nap_signal.stop_requested():
+                return True, cur_pan, cur_tilt
+
+            detections, frame_w, frame_h = client.get_detections()
+            if frame_w > 0 and frame_h > 0:
+                if select_target(detections, frame_w, frame_h) is not None:
+                    print("[tracking] puppeteer: person reappeared -> track")
+                    return False, cur_pan, cur_tilt
+
+            await asyncio.sleep(self._TRACKING_LOOP_PERIOD_S)
 
     @staticmethod
     def _recenter_neck(tilt_angle=None):
@@ -4103,8 +4212,12 @@ MODE_INTERRUPT_REFERENCE = {
         "planned_sensors": [],
         # Ambient (looping) behavior: the neck tracker aims at the detected
         # person; when no person is found it runs the same Scan_Sweep NECK_PAN
-        # sweep the tracking loop uses.
-        "ambient_gestures": ["Neck tracking / Scan_Sweep (NECK_PAN)"],
+        # sweep the tracking loop uses, but — UNLIKE plain tracking — a
+        # Scan_Sweep timeout does NOT end the Mode. Puppeteer recenters the neck
+        # to rest and idles (holds + polls) until a person reappears, so a live
+        # performance is never cut short by the camera losing the person; it
+        # ends only on an explicit stop or preemption.
+        "ambient_gestures": ["Neck tracking / Scan_Sweep -> recenter+idle (NECK_PAN)"],
         # The tracker carries no audio of its own; audio is the operator's
         # Stream.
         "ambient_routines": [],
@@ -4222,6 +4335,14 @@ def main(args):
                     tilt_max=args.tilt_max,
                     settle_gain=args.settle_gain,
                     suppress_triggers=True,
+                    # Puppeteer runs until the operator explicitly stops it: a
+                    # camera Scan_Sweep timeout (no person in view) must NOT wind
+                    # the Mode down the way plain tracking does (Req 6.10).
+                    # Instead the neck recenters to rest and idles (holds +
+                    # polls) until a person reappears; the operator is performing
+                    # live, so the Mode stays up until an explicit stop
+                    # (nap_signal) or a preempting Mode.
+                    end_on_scan_timeout=False,
                 )
             # No pending_trigger to dispatch: suppress_triggers=True always
             # returns None, so there is deliberately NO _dispatch_detection_trigger
