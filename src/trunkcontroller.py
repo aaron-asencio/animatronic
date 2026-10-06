@@ -16,6 +16,7 @@ Hardware assumptions
 
 import asyncio
 import contextlib
+import contextvars
 import os
 import constants
 
@@ -34,6 +35,31 @@ SERVO_PWM_FREQ_TOLERANCE = 5  # Hz
 # servo write is logged instead of sent over I2C. Lets us verify program flow
 # and exactly what angles WOULD be commanded, with zero risk of a servo moving.
 SERVO_SIM = os.environ.get('SERVO_SIM') == '1'
+
+
+# ---------------------------------------------------------------------------
+# Per-task arm-only write guard.
+#
+# Scan Mode runs a neck tracker and an arm-only responder concurrently. The
+# responder MUST NOT write the neck channels (0/1) owned by the tracker. This
+# contextvar fail-closed guard enforces that at the single set_angle chokepoint.
+# A ContextVar is copied on asyncio.create_task(), so each task carries its OWN
+# allowed-channels value: entering restrict_channels() in the responder task
+# does not restrict a concurrently running tracker task. Default None means the
+# guard is inactive (unrestricted) — unchanged behaviour for every other path.
+# ---------------------------------------------------------------------------
+_allowed_channels: "contextvars.ContextVar[frozenset | None]" = contextvars.ContextVar(
+    "allowed_channels", default=None)
+
+
+class ChannelGuardError(RuntimeError):
+    """Raised when a servo write targets a channel outside the active allowlist.
+
+    Fail-closed guard for Scan Mode's arm-only responder: while a
+    :meth:`TrunkController.restrict_channels` block is active in the current
+    task, any write to a channel not in the allowed set raises this instead of
+    silently actuating a joint owned by another task (e.g. the neck tracker).
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +328,30 @@ class TrunkController:
             cls._limit_overrides = previous
             print("[trunk] verified-pose override cleared; global SAFE_LIMITS restored")
 
+    @contextlib.contextmanager
+    def restrict_channels(self, allowed):
+        """Restrict servo writes to ``allowed`` channels for the current task.
+
+        While the block is active, :meth:`set_angle` raises
+        :class:`ChannelGuardError` for any channel not in ``allowed``. The
+        restriction is stored in a :class:`contextvars.ContextVar`, which is
+        copied when ``asyncio.create_task()`` spawns a child task — so the guard
+        applies ONLY to the task (and its awaited descendants) that entered this
+        block, never to a concurrently running task such as the neck tracker.
+
+        Args:
+            allowed: Iterable of channel indices this task may write (e.g.
+                ``constants.ARM_ONLY_CHANNELS``). Coerced to a frozenset.
+
+        Yields:
+            None. Restores the previous allowed set on exit (even on error).
+        """
+        token = _allowed_channels.set(frozenset(allowed))
+        try:
+            yield
+        finally:
+            _allowed_channels.reset(token)
+
     @classmethod
     def clamp_angle(cls, servo_num, angle):
         """Clamp a commanded angle to the safe range for this channel.
@@ -344,7 +394,15 @@ class TrunkController:
 
         Returns:
             The angle actually written (post-clamp).
+
+        Raises:
+            ChannelGuardError: If a restrict_channels() block is active in the
+                current task and servo_num is outside the allowed set.
         """
+        allowed = _allowed_channels.get()
+        if allowed is not None and servo_num not in allowed:
+            raise ChannelGuardError(
+                f"write to {servo_num} outside allowed {allowed}")
         safe = self.clamp_angle(servo_num, angle)
         if safe != angle:
             name = constants.servos.get(servo_num, f"ch{servo_num}")

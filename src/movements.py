@@ -419,6 +419,12 @@ class Movements:
     _YC_TILT_REST, _YC_TILT_COVER = 55, 35
     _YC_ROT_REST, _YC_ROT_COVER = 0, 200
     _YC_ELBOW_REST, _YC_ELBOW_COVER = 5, 162
+    # Scan-only elbow-cover destination = 162 - 10. Scan Mode runs this
+    # cover-mouth family while the neck tracker holds the head OFF-center, so
+    # pulling the elbow back 10 degrees clears the off-center head. Stays inside
+    # the RT_ELBOW_TILT (0, 170) _YAWN_COVER_OVERRIDE band and the global
+    # SAFE_LIMITS (0, 160). The standalone _YC_ELBOW_COVER = 162 is unchanged.
+    _YC_ELBOW_COVER_SCAN = 152
     # RT_ELBOW_ROTATOR (channel 4) cover destination.
     _YC_ELBOW_ROT_REST, _YC_ELBOW_ROT_COVER = 150, 185
     # Same two sub-limit channels yawn_cover widens, operator-verified safe in
@@ -472,11 +478,18 @@ class Movements:
             },
             steps=30, delay=0.02,
         )
-    async def _yawn_cover_fold_up(self):
+    async def _yawn_cover_fold_up(self, *, elbow_cover=None):
         """Fold the hand up in front of the mouth (yawn_cover's up-fold).
 
         Shoulder rotates first; elbow + forearm hold until 30% through, then
         bend the hand up to the mouth -- same staging/keyframes as yawn_cover.
+
+        Args:
+            elbow_cover: Override for the RT_ELBOW_TILT cover destination. When
+                None (default) the standard ``_YC_ELBOW_COVER`` (162) is used,
+                preserving every existing caller byte-for-byte. Scan Mode passes
+                ``_YC_ELBOW_COVER_SCAN`` (152) to pull the elbow back 10 degrees
+                so the hand clears the off-center head the tracker holds.
 
         Channels: RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7),
                   RT_ELBOW_TILT (5), RT_ELBOW_ROTATOR (4).
@@ -485,7 +498,8 @@ class Movements:
             {
                 constants.RT_SHOULDER_TILT: self._YC_TILT_COVER,
                 constants.RT_SHOULDER_ROTATOR: self._YC_ROT_COVER,
-                constants.RT_ELBOW_TILT: self._YC_ELBOW_COVER,
+                constants.RT_ELBOW_TILT: (
+                    elbow_cover if elbow_cover is not None else self._YC_ELBOW_COVER),
                 constants.RT_ELBOW_ROTATOR: self._YC_ELBOW_ROT_COVER,
             },
             steps=45, delay=0.02,
@@ -651,7 +665,7 @@ class Movements:
     # the burp sound leads and the hand comes up to cover the mouth a beat later.
     _YC_MOTION_DELAY = 0.5
 
-    async def yawn_cover_lead_in_settled(self):
+    async def yawn_cover_lead_in_settled(self, *, elbow_cover=None, center_head=True):
         """Lead-in variant: fully fold the hand to the mouth, THEN open the gate.
 
         Identical to ``yawn_cover_lead_in`` except the up-fold is AWAITED to
@@ -663,14 +677,23 @@ class Movements:
         deferred fold task is created, so the paired ``yawn_cover_loop_body``'s
         ``_await_pending_fold`` is a harmless no-op. Contains no audio logic;
         owns head channels 0,1 and arm channels 4-7.
+
+        Args:
+            elbow_cover: Forwarded to ``_yawn_cover_fold_up``; None (default)
+                keeps the standalone 162 cover. Scan passes 152.
+            center_head: When True (default) the head is centered first,
+                preserving standalone behaviour. Scan passes False so the neck
+                tracker keeps ownership of channels 0,1 (no neck write here).
         """
         self._yawn_cover_stack = contextlib.AsyncExitStack()
         self._yawn_cover_stack.enter_context(
             TrunkController.verified_pose_override(self._YAWN_COVER_OVERRIDE))
         # Center the head, then fold the hand fully up BEFORE returning, so the
-        # gate opens only once the hand has settled at the mouth.
-        await self._yawn_cover_center_head()
-        await self._yawn_cover_fold_up()
+        # gate opens only once the hand has settled at the mouth. Scan skips the
+        # head-center so it never writes the neck channels the tracker owns.
+        if center_head:
+            await self._yawn_cover_center_head()
+        await self._yawn_cover_fold_up(elbow_cover=elbow_cover)
 
     async def yawn_cover_lead_in_gated(self):
         """Lead-in variant: open the gate ``_YC_GATE_SHORT`` (250ms) into the fold.
@@ -694,7 +717,7 @@ class Movements:
         self._yawn_cover_fold_task = asyncio.ensure_future(self._yawn_cover_fold_up())
         await asyncio.sleep(self._YC_GATE_SHORT)
 
-    async def yawn_cover_lead_in_delayed(self):
+    async def yawn_cover_lead_in_delayed(self, *, elbow_cover=None, center_head=True):
         """Lead-in variant: hold the arm still ``_YC_MOTION_DELAY`` (0.5s), then raise.
 
         For an UNGATED cover-mouth routine (``gate=None``, audio at t=0) that
@@ -708,15 +731,24 @@ class Movements:
         reached the mouth). No deferred fold task is created, so the paired
         ``yawn_cover_loop_body``'s ``_await_pending_fold`` is a harmless no-op.
         Contains no audio logic; owns head channels 0,1 and arm channels 4-7.
+
+        Args:
+            elbow_cover: Forwarded to ``_yawn_cover_fold_up``; None (default)
+                keeps the standalone 162 cover. Scan passes 152.
+            center_head: When True (default) the head is centered first,
+                preserving standalone behaviour. Scan passes False so the neck
+                tracker keeps ownership of channels 0,1 (no neck write here).
         """
         self._yawn_cover_stack = contextlib.AsyncExitStack()
         self._yawn_cover_stack.enter_context(
             TrunkController.verified_pose_override(self._YAWN_COVER_OVERRIDE))
         # Hold the arm at rest for a beat so the (ungated) audio leads, then
-        # center the head and fold the hand fully up before returning.
+        # center the head and fold the hand fully up before returning. Scan skips
+        # the head-center so it never writes the neck channels the tracker owns.
         await asyncio.sleep(self._YC_MOTION_DELAY)
-        await self._yawn_cover_center_head()
-        await self._yawn_cover_fold_up()
+        if center_head:
+            await self._yawn_cover_center_head()
+        await self._yawn_cover_fold_up(elbow_cover=elbow_cover)
 
     # --- nose_cover fork: primitives + phase adapters -------------------- #
     #
@@ -3342,6 +3374,124 @@ class Movements:
             asyncio.create_task(arm_stir()),
             asyncio.create_task(head_bob()),
         )
+
+    async def awaken_arm_only(self, duration=7.0):
+        """Arm-only awaken for Scan Mode: the stir, with NO head bob.
+
+        The Scan responder variant of :meth:`awaken`. It runs ONLY the arm stir
+        (raise to the stir pose, hold ``_AW_ARM_HOLD_S``, lower back to REST) and
+        drops the lazy head bob entirely, so it owns only the arm channels
+        {4,5,6,7} and never writes the neck channels (0,1) the Scan tracker owns.
+        There is no ``asyncio.gather`` over the neck.
+
+        Every commanded angle is inside the global SAFE_LIMITS, so this gesture
+        needs NO verified_pose_override (same poses as ``awaken``'s arm stir).
+
+        Args:
+            duration: Accepted for signature parity with :meth:`awaken` (so the
+                Scan adapter can call either the same way); the arm stir itself
+                is a fixed brief raise/hold/lower and does not loop for the
+                duration. Default 7.0.
+        """
+        print("[awaken_arm_only] arm stir: raise (1/3 faster), hold 0.5s, lower")
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: self._AW_ROT_STIR,
+                constants.RT_SHOULDER_TILT: self._AW_SHOULDER_TILT,
+                constants.RT_ELBOW_TILT: self._AW_ELBOW_TILT,
+                constants.RT_ELBOW_ROTATOR: self._AW_ELBOW_ROT,
+            },
+            steps=25, delay=self._AW_ARM_DELAY,
+        )
+        await asyncio.sleep(self._AW_ARM_HOLD_S)
+        await self.trunkController.move_to(
+            {
+                constants.RT_SHOULDER_ROTATOR: constants.REST_POSITIONS[constants.RT_SHOULDER_ROTATOR],
+                constants.RT_SHOULDER_TILT: constants.REST_POSITIONS[constants.RT_SHOULDER_TILT],
+                constants.RT_ELBOW_TILT: constants.REST_POSITIONS[constants.RT_ELBOW_TILT],
+                constants.RT_ELBOW_ROTATOR: constants.REST_POSITIONS[constants.RT_ELBOW_ROTATOR],
+            },
+            steps=40, delay=self._AW_ARM_DELAY,
+        )
+
+    async def yawn_cover_arm_only(self, *, elbow_cover=162):
+        """Arm-only yawn cover for Scan Mode: fold -> hold -> lower, NO neck.
+
+        The Scan responder variant of standalone :meth:`yawn_cover`. It is
+        derived from yawn_cover's SELF-CONTAINED body (fold the hand up to the
+        mouth, hold, lower) with two changes only:
+
+        1. It SKIPS yawn_cover's inline head-center ``move_to`` (the NECK_PAN /
+           NECK_TILT write), so it never touches channels 0,1 — the Scan tracker
+           keeps the neck.
+        2. The inline ELBOW_YAWN = 162 is replaced with the ``elbow_cover``
+           keyword so Scan can pull the elbow back to 152 to clear the
+           off-center head.
+
+        It reuses yawn_cover's EXACT operator-verified arm keyframes and the SAME
+        inline verified_pose_override band
+        ``{RT_SHOULDER_TILT:(35,270), RT_ELBOW_TILT:(0,170)}`` scoped across its
+        whole span. It owns only arm channels {4,5,6,7}. It does NOT route
+        through ``_yawn_cover_fold_up`` and does NOT modify standalone
+        ``yawn_cover``.
+
+        Args:
+            elbow_cover: RT_ELBOW_TILT cover destination. Default 162 matches
+                standalone yawn_cover; Scan passes 152 (162 - 10) to clear the
+                off-center head. Stays inside the override band (0, 170).
+        """
+        # Resting starts (from REST_POSITIONS) and measured yawn targets --
+        # identical to standalone yawn_cover's body.
+        TILT_REST, TILT_YAWN = 55, 35
+        ROT_REST, ROT_YAWN = 0, 200
+        ELBOW_REST = 0
+        FOREARM_REST, FOREARM_YAWN = 150, 185
+
+        # Same operator-verified override band standalone yawn_cover opens,
+        # scoped across the fold -> hold -> lower span.
+        override = {
+            constants.RT_SHOULDER_TILT: (35, 270),
+            constants.RT_ELBOW_TILT: (0, 170),
+        }
+        with TrunkController.verified_pose_override(override):
+            # NOTE: standalone yawn_cover centers the head here. The arm-only
+            # Scan variant SKIPS that neck write so the tracker keeps 0,1.
+
+            # UP: shoulder rotates first; elbow + forearm hold until 30% through,
+            # then bend the hand up to the mouth. Same staging/keyframes as
+            # standalone yawn_cover, with the elbow cover parameterized.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_SHOULDER_TILT: TILT_YAWN,
+                    constants.RT_SHOULDER_ROTATOR: ROT_YAWN,
+                    constants.RT_ELBOW_TILT: elbow_cover,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_YAWN,
+                },
+                steps=45, delay=0.02,
+                start_fractions={
+                    constants.RT_ELBOW_TILT: 0.30,
+                    constants.RT_ELBOW_ROTATOR: 0.30,
+                },
+            )
+
+            # Hold the hand over the mouth for the rest of the yawn.
+            await asyncio.sleep(1.3)
+
+            # DOWN: reverse. Open the elbow/forearm first, then the shoulder
+            # lowers -- the arm unfolds before it drops.
+            await self.trunkController.move_to(
+                {
+                    constants.RT_ELBOW_TILT: ELBOW_REST,
+                    constants.RT_ELBOW_ROTATOR: FOREARM_REST,
+                    constants.RT_SHOULDER_ROTATOR: ROT_REST,
+                    constants.RT_SHOULDER_TILT: TILT_REST,
+                },
+                steps=56, delay=0.02,
+                start_fractions={
+                    constants.RT_SHOULDER_ROTATOR: 0.33,
+                    constants.RT_SHOULDER_TILT: 0.33,
+                },
+            )
 
     # ================================================================== #
     # COMPOSITE gestures — arm + head gathered simultaneously             #
