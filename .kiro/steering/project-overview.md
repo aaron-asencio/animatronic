@@ -14,7 +14,6 @@ A Raspberry Pi–based animatronic controller that synchronizes servo-driven phy
 | `src/controller.py` | Gesture-only CLI testing (no audio) |
 | `src/movements.py` | Async gesture choreography |
 | `src/trunkcontroller.py` | Low-level servo primitives |
-| `src/concurrentMovements.py` | Thread-based concurrent gesture execution |
 | `src/constants.py` | Servo channel assignments and shared constants |
 | `src/audio_player.py` | PyAudio-based file playback with jaw-motor sync |
 | `src/audio_streamer.py` | Live mic passthrough with audio effects and jaw-motor sync |

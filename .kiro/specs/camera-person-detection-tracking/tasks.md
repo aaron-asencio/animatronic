@@ -312,8 +312,8 @@ established workflow boundary.
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.11, 5.5, 5.7, 5.8_
   - [x] 10.2 Implement leave-frame Scan_Sweep with configurable timeout
     - When no `person` detection is present, run a slow pan across the `NECK_PAN`
-      safe range (building on `TrunkController.slow_scan`, honoring the
-      configurable scan range), every command through `set_angle`. If a person
+      safe range (an incremental `set_angle` sweep in `_run_scan_sweep`, honoring
+      the configurable scan range), every command through `set_angle`. If a person
       reappears mid-sweep, stop and resume tracking that person. If the scan
       timeout elapses with no reacquire, recenter to `REST_POSITIONS` and yield
       to the previously active Mode.

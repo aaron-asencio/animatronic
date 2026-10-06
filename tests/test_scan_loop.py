@@ -70,6 +70,16 @@ class FakeTrunk:
         self.writes.append((channel, angle))
         return angle
 
+    async def move_to(self, targets, steps=60, delay=0.02, ease=True):
+        """Eased multi-joint move stand-in: record the final write per channel.
+
+        Mirrors the real ``move_to``'s observable end state (each channel ends
+        at its target via ``set_angle``) so the eased ``_recenter_neck`` path is
+        exercised, without simulating every interpolation step.
+        """
+        for channel, angle in targets.items():
+            self.set_angle(channel, angle)
+
     async def return_to_rest(self, channels=None):
         self.rested.append(frozenset(channels) if channels is not None else None)
 
@@ -417,9 +427,9 @@ def test_winddown_cancels_and_awaits_before_recenter(monkeypatch):
 
     real_recenter = animatronic.Animatronic._recenter_neck
 
-    def spy_recenter(tilt_angle=None):
+    async def spy_recenter(tilt_angle=None):
         order.append("recenter")
-        return real_recenter(tilt_angle=tilt_angle)
+        return await real_recenter(tilt_angle=tilt_angle)
 
     monkeypatch.setattr(
         animatronic.Animatronic, "_recenter_neck", staticmethod(spy_recenter)

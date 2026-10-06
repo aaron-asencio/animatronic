@@ -1,6 +1,6 @@
 ---
 inclusion: fileMatch
-fileMatchPattern: "src/{movements,animatronic,controller,concurrentMovements}.py"
+fileMatchPattern: "src/{movements,animatronic,controller}.py"
 ---
 # Authoring a Gesture — animatronic-v2
 
@@ -173,7 +173,7 @@ author a new, well-formed gesture.
 | `move_to(targets, steps, delay, start_fractions=None, ease=True)` | The default. Move several joints to target angles SIMULTANEOUSLY, arriving together, smoothstep-eased. Every write is clamped to `SAFE_LIMITS` / active override. | `targets` = `{channel: angle}`. `start_fractions={ch: 0..1}` staggers a joint to begin part-way through. `ease=False` for linear. |
 | `randomized_centering_move(channel, center, half_range, jitter_pct, state_attr, *, steps_range, delay_base, delay_jitter, ease, companion)` | "Randomize within range with centering" — organic oscillation of ONE joint around a center. See `animation-vocabulary.md` for the exact semantics. | Per-gesture `state_attr` string keeps transition state separate. `companion` = zero-arg callable returning `{extra_ch: angle}` eased in the SAME move. Deterministic under `random.seed`. |
 | `verified_pose_override({ch: (min, max)})` | A context manager to WIDEN `SAFE_LIMITS` for specific channels when an operator-verified pose dips below/above the global floor/ceiling. Hold it across the whole span (reach → loop → return). | `with TrunkController.verified_pose_override(...):` or an `AsyncExitStack` for phased gestures. |
-| `move` / `move_by_direction` | LEGACY linear 1-degree sweeps. **Do not use in new code** — see below. | — |
+| `move` | LEGACY linear 1-degree sweep (still live only via `return_to_rest`). **Do not use in new code** — see below. | — |
 
 ### Canonical gestures — copy THESE shapes
 
@@ -198,7 +198,7 @@ read only it + its primitives:
 ### Legacy gestures — DO NOT copy their pattern
 
 `come`, `reach_out`, and the older `wave`/`_wave_arm` internals predate the
-current style and use linear `move_by_direction` 1-degree sweeps. They still run,
+current style and use the linear `move` 1-degree sweep. They still run,
 but they are NOT the pattern for new work. When you need "reach" or "wave"
 motion, follow the eased `move_to` versions (`reach_and_look_smooth`,
 `wave_and_swivel_smooth`) instead.

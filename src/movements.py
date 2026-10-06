@@ -947,10 +947,14 @@ class Movements:
             )
 
             # HOLD + head shake: with the hand over the face, shake the head
-            # side to side 3x (+/-15 from center), then return to center.
+            # side to side 3x (+/-7 from center), then return to center. Eased
+            # move_to back-and-forth (smoothstep, velocity ~0 at each extent) --
+            # mirrors shake_head -- so the dismay shake no longer snaps.
             for _ in range(3):
-                await self.trunkController.move(
-                    constants.NECK_PAN, SHAKE_RIGHT, SHAKE_LEFT, 0.024, True, 0.05)
+                await self.trunkController.move_to(
+                    {constants.NECK_PAN: SHAKE_LEFT}, steps=20, delay=0.02)
+                await self.trunkController.move_to(
+                    {constants.NECK_PAN: SHAKE_RIGHT}, steps=20, delay=0.02)
             await self.trunkController.move_to(
                 {constants.NECK_PAN: NECK_PAN_CENTER}, steps=20, delay=0.02)
 
@@ -3587,7 +3591,7 @@ class Movements:
     # --- reach_and_look_smooth landmarks (used by vincentPrice) ----------- #
     # Reach pose (eased, arm arrives together). An extended forward-reach arm
     # pose driven through move_to for smoothstep easing instead of the older
-    # linear move_by_direction 1-deg sweeps.
+    # linear 1-deg sweeps.
     _RL_REACH = {
         constants.RT_SHOULDER_ROTATOR: 60,
         constants.RT_SHOULDER_TILT:    80,

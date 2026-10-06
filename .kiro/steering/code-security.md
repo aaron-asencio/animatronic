@@ -29,7 +29,7 @@ This project runs as root on a Raspberry Pi with direct hardware access (I2C, GP
 
 - Sending a servo to an out-of-range angle can physically damage the mechanism. Always clamp angles to `[0, 270]` before writing to `kit.servo[n].angle`.
 - After any movement sequence, return servos to their resting positions. Do not leave servos under active load — this causes motor heating and wear.
-- The `ServoKit` instance is shared at class level across all instances of `TrunkController` and `ConcurrentMovements`. Concurrent writes to the same servo channel from multiple threads will produce undefined physical behavior — coordinate access carefully when using `ThreadPoolExecutor`.
+- The `ServoKit` instance is shared at class level across every `TrunkController` instance. Concurrent writes to the same servo channel from multiple tasks/processes will produce undefined physical behavior — coordinate access carefully (e.g. via the per-group `servo_lock`) and keep concurrent joints on disjoint channels.
 
 ## Configuration and Secrets
 
