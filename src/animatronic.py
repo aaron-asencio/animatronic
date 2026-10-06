@@ -2407,15 +2407,30 @@ class Animatronic:
     # Neck_Group lock is released.
     TRACKING_INTERRUPT_TRIGGER = "trigger"
 
-    # Scan_Sweep tuning. The sweep pans NECK_PAN across its SAFE_LIMITS range in
-    # fixed-size incremental steps, each written through set_angle (so each is
-    # clamped) with a short asyncio.sleep between steps for smooth motion. The
-    # cadence is deliberately slower than the tracking loop (a deliberate
-    # "surveillance" sweep, cf. TrunkController.slow_scan's 0.05s/deg) while
-    # still polling /detections and nap_signal often enough to reacquire a
-    # person or wind down on a stop request within ~1s.
-    _SCAN_STEP_DEG = 2.0        # pan increment per sweep step (degrees)
-    _SCAN_STEP_PERIOD_S = 0.05  # delay between sweep steps (seconds)
+    # Scan_Sweep tuning. The sweep pans NECK_PAN across its SAFE_LIMITS range as
+    # an eased, incremental pan — each step written through set_angle (so each is
+    # clamped) with a short asyncio.sleep between steps. The per-step increment
+    # is NOT constant: it follows an ease-in/ease-out VELOCITY profile across
+    # each endpoint-to-endpoint traversal (small steps near both ends, larger in
+    # the middle) so the head glides into motion and settles toward each
+    # turnaround instead of hard-starting from a standstill and hard-reversing at
+    # the limits. The cadence stays in the same gentle "surveillance" ballpark as
+    # the old fixed ~2 deg/0.05s feel (cf. TrunkController.slow_scan's 0.05s/deg)
+    # — we are smoothing the acceleration, NOT making the sweep faster — while
+    # still polling /detections and nap_signal every tick so a reacquire or stop
+    # is honored within ~1s.
+    #
+    # Instantaneous step = STEP_MIN + (STEP_MAX - STEP_MIN) * smoothstep(e),
+    # where e in [0,1] is the normalized distance into the nearer end-ramp of the
+    # current traversal (clamped to 1 across the un-ramped middle). STEP_MIN is a
+    # hard floor so velocity never decays to zero mid-range (which would stall the
+    # deadline/polling or crawl indefinitely) — the endpoints are reached by
+    # clamping to pan_min/pan_max, not by the step shrinking to 0. The MIN/MAX
+    # straddle the old 2.0 deg so the eased average stays near the prior speed.
+    _SCAN_STEP_PERIOD_S = 0.05   # delay between sweep steps (seconds; the tick period)
+    _SCAN_STEP_DEG_MIN = 0.5     # min pan increment per step (ease-in/out ends; STEP floor, anti-stall)
+    _SCAN_STEP_DEG_MAX = 3.0     # max pan increment per step (mid-traversal, full speed)
+    _SCAN_RAMP_DEG = 35.0        # width (deg) of the ease ramp at EACH end of a traversal
 
     # Puppeteer idle-recenter cadence. When a leave-frame Scan_Sweep times out
     # with no person, Puppeteer eases the Neck_Group back to rest (rather than
@@ -2943,9 +2958,28 @@ class Animatronic:
         commanded angle is clamped to ``constants.SAFE_LIMITS`` (Req 6.8), and
         ONLY ``NECK_PAN`` is driven — no tilt, no arm, no jaw/audio. The sweep is
         bounded strictly within the ``NECK_PAN`` ``SAFE_LIMITS`` range (the
-        configurable scan range), stepping ``_SCAN_STEP_DEG`` degrees per
-        ``_SCAN_STEP_PERIOD_S`` with an ``asyncio.sleep`` between steps so it
-        stays async-friendly.
+        configurable scan range).
+
+        The pan does NOT advance at constant velocity. Each step's increment
+        follows an ease-in/ease-out velocity profile across the current
+        traversal LEG (from where the leg began to the endpoint it heads to): a
+        ``smoothstep`` ramp over the nearer ``_SCAN_RAMP_DEG``-wide end-band
+        scales the step from ``_SCAN_STEP_DEG_MIN`` (near either leg boundary) up
+        to ``_SCAN_STEP_DEG_MAX`` (across the middle), so the head accelerates
+        smoothly off a standstill at the START of the sweep (wherever ``cur_pan``
+        is) and off each endpoint after a reversal, and decelerates as it settles
+        into the next endpoint instead of snapping. After a reversal the leg (and
+        thus the ramp) restarts, so the head eases away from the endpoint it just
+        hit rather than jumping to full speed. ``_SCAN_STEP_DEG_MIN`` is a hard
+        STEP floor so velocity never decays to zero mid-range — endpoints are
+        reached by clamping to ``pan_min``/``pan_max``, not by the step shrinking
+        away.
+
+        A fixed ``_SCAN_STEP_PERIOD_S`` ``asyncio.sleep`` between steps keeps it
+        async-friendly and keeps detection/``nap_signal`` polling responsive
+        every tick; the overall sweep stays in the gentle surveillance-pan
+        ballpark of the former fixed ~2 deg/0.05s cadence.
+
 
         Args:
             client: A ``CameraClient`` for ``GET /detections``.
@@ -2976,6 +3010,13 @@ class Animatronic:
         pan = max(pan_min, min(pan_max, float(cur_pan)))
         # Head toward the farther endpoint first for the widest initial sweep.
         increasing = (pan - pan_min) <= (pan_max - pan)
+        # Pan angle at the start of the CURRENT traversal leg. The ease-in ramp
+        # is measured from here (not just from the safe-range endpoints) so the
+        # head glides up from a standstill wherever a leg begins — the very first
+        # move away from ``cur_pan`` (often near center, far from any endpoint)
+        # as well as each move away from an endpoint after a reversal. Reset on
+        # every reversal below.
+        leg_start = pan
 
         start = time.monotonic()
         while True:
@@ -2996,17 +3037,41 @@ class Animatronic:
                     print("[tracking] Scan_Sweep reacquired a person -> track")
                     return True, pan
 
-            # Advance one bounded step, reversing at either safe-range endpoint.
+            # Eased step size: small at BOTH ends of the current traversal leg
+            # (ease-in as it leaves ``leg_start``, ease-out as it nears the
+            # target endpoint), full speed across the middle. ``edge`` is the
+            # distance (deg) to the NEARER of the two leg boundaries — where the
+            # leg began and where it is headed — so the head glides up from a
+            # standstill at the start of every leg (including the first move away
+            # from ``cur_pan``) and settles toward the turnaround. Normalizing
+            # ``edge`` over _SCAN_RAMP_DEG through smoothstep gives a ramp that is
+            # ~0 at a leg boundary and 1 once past the ramp band. The
+            # _SCAN_STEP_DEG_MIN floor keeps the pan progressing (no
+            # zero-velocity stall) — the endpoints are reached by the clamp
+            # below, not by the step decaying to 0.
+            target = pan_max if increasing else pan_min
+            edge = min(abs(pan - leg_start), abs(target - pan))
+            ramp = max(0.0, min(1.0, edge / self._SCAN_RAMP_DEG))
+            smooth = ramp * ramp * (3.0 - 2.0 * ramp)  # smoothstep(ramp)
+            step = self._SCAN_STEP_DEG_MIN + (
+                self._SCAN_STEP_DEG_MAX - self._SCAN_STEP_DEG_MIN
+            ) * smooth
+
+            # Advance one eased step, reversing at either safe-range endpoint.
+            # On a reversal, restart the leg so the new traversal eases away from
+            # the endpoint it just hit instead of snapping to full speed.
             if increasing:
-                pan += self._SCAN_STEP_DEG
+                pan += step
                 if pan >= pan_max:
                     pan = float(pan_max)
                     increasing = False
+                    leg_start = pan
             else:
-                pan -= self._SCAN_STEP_DEG
+                pan -= step
                 if pan <= pan_min:
                     pan = float(pan_min)
                     increasing = True
+                    leg_start = pan
 
             # Write through set_angle (SAFE_LIMITS clamp, Req 6.8); keep the
             # local angle consistent with the actually written (post-clamp)
