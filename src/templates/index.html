@@ -287,7 +287,7 @@
       </button>
     </div>
 
-    <!-- Per-mode start/stop clusters (Napping / Awake / Scan) -->
+    <!-- Per-mode start/stop clusters (Napping / Awake / Scan / Puppeteer) -->
     <div class="mode-controls">
       <div class="mode-control-group">
         <div class="section-title">Napping</div>
@@ -325,6 +325,18 @@
           <span class="val" id="scan-status" style="color:var(--muted);"></span>
         </div>
       </div>
+      <div class="mode-control-group">
+        <div class="section-title">Puppeteer</div>
+        <div class="mode-control-row">
+          <button class="action" id="puppeteer-start-btn" onclick="startPuppeteer()"
+                  title="Live mic + head tracking: voice the figure and trigger arm gestures.">🎭 Start puppeteer</button>
+          <button class="action" id="puppeteer-stop-btn" onclick="stopPuppeteer()" disabled
+                  title="Stop puppeteer: recenters the head, releases the neck, and stops the mic.">
+            ⏹ Stop puppeteer
+          </button>
+          <span class="val" id="puppeteer-status" style="color:var(--muted);"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -346,7 +358,7 @@
     <div class="section-title">Gesture + audio routines</div>
     <div class="grid">
       {% for r in routines %}
-      <button class="action gesture-btn" onclick="post('/routine/{{ r }}', this)">{{ r }}</button>
+      <button class="action gesture-btn routine-btn" onclick="post('/routine/{{ r }}', this)">{{ r }}</button>
       {% endfor %}
     </div>
   </div>
@@ -356,7 +368,8 @@
     <div class="section-title">Gesture-only (no audio)</div>
     <div class="grid">
       {% for m in movements %}
-      <button class="action gesture-btn" onclick="post('/movement/{{ m }}', this)">{{ m }}</button>
+      <button class="action gesture-btn" data-group="{{ m.group }}"
+              onclick="post('/movement/{{ m.name }}', this)">{{ m.name }}</button>
       {% endfor %}
     </div>
   </div>
@@ -1184,6 +1197,64 @@
       syncOverlayToScan(active);
     }
 
+    // ── Puppeteer mode ─────────────────────────────────────────────────────
+    async function startPuppeteer() {
+      const res = await fetch('/puppeteer/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}',
+      });
+      let data = {};
+      try { data = await res.json(); } catch (e) {}
+      if (res.ok && data.status === 'success') {
+        toast(data.message || 'Puppeteer');
+        setPuppeteerActive(true);
+      } else {
+        toast(data.message || 'Could not start puppeteer', true);
+      }
+    }
+    async function stopPuppeteer() {
+      await fetch('/puppeteer/stop', {method: 'POST'});
+      toast('Stopping puppeteer…');
+      // The mode winds down on its own; the status poll flips the buttons back
+      // and re-enables the gated controls (setPuppeteerActive(false)).
+    }
+
+    // Reflect puppeteer active/idle state in the Start/Stop buttons + label,
+    // then apply the control-panel gating (FR11/FR12). Driven by the status
+    // poll, so this is the single source of truth for puppeteer state —
+    // including auto-wind-down and preemption.
+    function setPuppeteerActive(active) {
+      const startBtn = document.getElementById('puppeteer-start-btn');
+      const stopBtn  = document.getElementById('puppeteer-stop-btn');
+      const status   = document.getElementById('puppeteer-status');
+      if (startBtn) startBtn.disabled = active;
+      if (stopBtn)  stopBtn.disabled  = !active;
+      if (status)   status.textContent = active ? 'puppeteering…' : '';
+      applyPuppeteerGating(active);
+    }
+
+    // FR11/FR12: while Puppeteer runs, gate the control panel:
+    //  - Routine/Act buttons DISABLED (own jaw/audio; would interrupt the Stream).
+    //  - Head/neck Gesture buttons DISABLED (would fight the Neck_Group lock).
+    //  - Arm-only Gesture buttons ENABLED (disjoint channels 4-7) — left to the
+    //    normal busy gating, which pollStatus suppresses for a neck-only hold.
+    //  - Other Mode start buttons DISABLED (napping/awake/scan/tracking).
+    //  - Standalone mic toggle DISABLED (reflective-only): Puppeteer start/stop
+    //    is the single mic authority while it governs the Stream (FR12). The
+    //    single `disabled = active` line both disables on entry and re-enables
+    //    on exit, so there is no separate re-enable path to drift out of sync.
+    function applyPuppeteerGating(active) {
+      document.querySelectorAll('.routine-btn').forEach(b => { b.disabled = active; });
+      document.querySelectorAll('.gesture-btn[data-group="head"]').forEach(b => { b.disabled = active; });
+      if (active) {
+        ['nap-start-btn','awake-start-btn','scan-start-btn','tracking-start-btn']
+          .forEach(id => { const b = document.getElementById(id); if (b) b.disabled = true; });
+      }
+      const micToggle = document.getElementById('mic-toggle');
+      if (micToggle) micToggle.disabled = active;
+    }
+
     // ── Scan response pool ─────────────────────────────────────────────────
     // Checking a row enables its weight slider; unchecking disables/greys it
     // (an unchecked row is omitted on save = excluded from the pool).
@@ -1228,8 +1299,14 @@
         document.getElementById('last-action').textContent = data.last_action || 'idle';
         const streaming = data.mic && data.mic.is_streaming;
         document.getElementById('mic-status').textContent = 'mic: ' + (streaming ? 'streaming' : 'idle');
+        // Puppeteer holds ONLY the Neck_Group, but is_locked() reports
+        // servos_busy=true for that neck-only hold. FR11 needs arm-only gesture
+        // buttons to STAY enabled, so when Puppeteer is the active mode we do
+        // NOT grey the gesture buttons via setBusy — setPuppeteerActive handles
+        // the (routines + head-gesture) gating instead.
+        const puppeteerActive = data.last_action === 'puppeteer' && !!data.servos_busy;
         // Authoritative busy state from the server drives the banner + buttons.
-        setBusy(!!data.servos_busy);
+        setBusy(!!data.servos_busy && !puppeteerActive);
         const micToggle = document.getElementById('mic-toggle');
         if (micToggle && typeof streaming === 'boolean') micToggle.checked = streaming;
         // Sync record state from the server (it auto-finalizes if the mic stops).
@@ -1243,6 +1320,8 @@
         setAwakeActive(data.last_action === 'awake' && !!data.servos_busy);
         // Same for scan mode.
         setScanActive(data.last_action === 'scan' && !!data.servos_busy);
+        // Same for puppeteer mode (also applies the FR11/FR12 control gating).
+        setPuppeteerActive(puppeteerActive);
         // Reflect persisted jaw tuning (both profiles) in the sliders.
         if (data.mic && data.mic.profiles) populateJaw(data.mic.profiles);
         // Keep the Revert button state fresh, but DON'T repopulate the FX
