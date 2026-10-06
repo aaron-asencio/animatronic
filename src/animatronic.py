@@ -2431,6 +2431,7 @@ class Animatronic:
         settle_gain=None,
         routine_map=None,
         action_map=None,
+        suppress_triggers=False,
     ):
         """TRACKING mode: pan/tilt the neck to follow a detected person.
 
@@ -2520,6 +2521,14 @@ class Animatronic:
                 dispatched (Req 7.6, 9.1-9.3). ``None`` builds the default via
                 ``build_action_map``. A triggered action absent from this map is
                 rejected (printed, no dispatch).
+            suppress_triggers: Puppeteer Mode knob (FR3). When ``True`` BOTH
+                ``routine_map`` and ``action_map`` are forced to ``None`` so the
+                loop's existing "``None`` means disabled" contract fires: no
+                detection can ever arm a pending Routine trigger, keeping neck
+                aim as the mode's only effect so a detection never seizes the
+                jaw/audio path from the operator's live mic Stream. Defaults to
+                ``False`` so plain ``--action=tracking`` is unchanged (FR4): it
+                still builds the default maps and arms triggers as before.
 
         Returns:
             An optional "pending trigger" ``dict`` when a ``Detection_Routine_Map``
@@ -2563,10 +2572,17 @@ class Animatronic:
         # (tests) may inject their own. The action_map is ONLY used to validate
         # a triggered name — tracking() never dispatches a Routine itself (that
         # happens in main() after the Neck_Group lock is released, Req 7.7).
-        if action_map is None:
-            action_map = self.build_action_map()
-        if routine_map is None:
-            routine_map = DetectionRoutineMap()
+        if suppress_triggers:
+            # Puppeteer: neck aim only. Leave BOTH None so _evaluate_trigger
+            # short-circuits every frame and no detection can ever dispatch a
+            # Routine (FR3) — the operator's live mic owns the jaw/audio path.
+            routine_map = None
+            action_map = None
+        else:
+            if action_map is None:
+                action_map = self.build_action_map()
+            if routine_map is None:
+                routine_map = DetectionRoutineMap()
 
         # Clear any stale stop request from a previous Mode run so we start clean
         # (mirrors napping/awake).
@@ -3655,6 +3671,13 @@ class Animatronic:
             # (placed BEFORE the generic servo_lock() path) so the timeout flag
             # and single whole-robot lock are applied. See the 'scan' branch.
             'scan':           self.scan,
+            # Puppeteer Mode — camelCase key kept in the allowlist for parity
+            # with the webapp's dispatch, but dispatched by main()'s dedicated
+            # branch (Neck_Group lock, suppress_triggers=True, no trigger
+            # dispatch). Maps to self.tracking because Puppeteer IS neck-only
+            # tracking + an externally-owned mic Stream; the key only needs to
+            # make membership validation pass. See the 'puppeteer' branch.
+            'puppeteer':      self.tracking,
         }
 
     # ------------------------------------------------------------------ #
@@ -4056,6 +4079,37 @@ MODE_INTERRUPT_REFERENCE = {
         "ambient_routines": [],
         "ambient_sounds": [],
     },
+    # --- PUPPETEER: Animatronic.tracking(suppress_triggers=True) + mic Stream -
+    "Puppeteer": {
+        # Puppeteer tracks via CameraClient.get_detections() (same feed as
+        # tracking/scan). It uses NO HC-SR04 range sensor.
+        # NOTE (intentional): this reads "Camera person detection", NOT Scan's
+        # "Camera person/dog detection", because Puppeteer has no dog rule
+        # (triggers are suppressed entirely). The wording difference from the
+        # "Scan" entry is deliberate — do NOT "fix" it to match Scan.
+        "sensors": ["Camera person detection (Camera_Service)"],
+        # Audio is the OPERATOR's live mic Stream (micwebcontroller /
+        # AudioStreamer), not a canned track. No .wav files are dispatched by
+        # the mode itself.
+        "sounds": ["Operator live mic Stream (voice)"],
+        # Puppeteer fires NO automatic gesture — arm-only Gestures are chosen by
+        # the OPERATOR from the control panel while the mode runs.
+        "gestures": [],
+        # Detection->Routine triggering is SUPPRESSED (FR3): no Routine is ever
+        # auto-dispatched, so a detection never seizes the jaw/audio path from
+        # the operator's live mic.
+        "routines": [],
+        # No planned-but-unwired sensor beyond the camera already in use.
+        "planned_sensors": [],
+        # Ambient (looping) behavior: the neck tracker aims at the detected
+        # person; when no person is found it runs the same Scan_Sweep NECK_PAN
+        # sweep the tracking loop uses.
+        "ambient_gestures": ["Neck tracking / Scan_Sweep (NECK_PAN)"],
+        # The tracker carries no audio of its own; audio is the operator's
+        # Stream.
+        "ambient_routines": [],
+        "ambient_sounds": [],
+    },
 }
 
 
@@ -4140,6 +4194,40 @@ def main(args):
                 )
         except ServoBusyError:
             print("Servos busy - another routine is already running. Aborting.")
+            sys.exit(BUSY_EXIT_CODE)
+    elif args.action == 'puppeteer':
+        # Puppeteer is a MODE: live mic Stream + neck-only tracking + operator
+        # arm Gestures. Like tracking it holds ONLY the Neck_Group lock (channels
+        # 0-1) so an arm-only Gesture (channels 4-7) can run concurrently; it
+        # must NOT take the whole-robot servo_lock(). The mic Stream is owned by
+        # the web app (started on launch) and holds no servo lock, so
+        # animatronic.py does not manage audio here. This dedicated branch is
+        # placed BEFORE the generic `args.action in action_map` branch so it
+        # shadows the generic path (which would call a.tracking() with triggers
+        # armed and no lock). Allowlist-gated: 'puppeteer' is an explicit key in
+        # action_map AND this is an explicit branch — args.action is never passed
+        # to getattr/eval/shell. Triggers are suppressed so a detection can never
+        # seize the jaw/audio path away from the operator's live mic (FR3).
+        try:
+            with group_lock(NECK_GROUP):
+                a.tracking(
+                    camera_url=args.camera_url,
+                    max_step=args.max_step,
+                    deadband=args.deadband,
+                    conf=args.conf,
+                    scan_timeout=args.scan_timeout,
+                    aim_frac=args.aim_frac,
+                    tilt_center=args.tilt_center,
+                    tilt_min=args.tilt_min,
+                    tilt_max=args.tilt_max,
+                    settle_gain=args.settle_gain,
+                    suppress_triggers=True,
+                )
+            # No pending_trigger to dispatch: suppress_triggers=True always
+            # returns None, so there is deliberately NO _dispatch_detection_trigger
+            # call here (unlike the tracking branch).
+        except ServoBusyError:
+            print("Neck group busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
     elif args.action in action_map:
         # SAFETY: hold the system-wide servo lock for the whole routine so no
