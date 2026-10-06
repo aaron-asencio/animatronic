@@ -114,6 +114,41 @@ TRACKING_ACTIONS = {'tracking'}
 # a shell) (Req 9.1-9.3).
 SCAN_ACTIONS = {'scan'}
 
+# Puppeteer Mode allowlist. Like TRACKING_ACTIONS/SCAN_ACTIONS, the only
+# permitted action name is the fixed 'puppeteer'. Checked before any subprocess
+# is spawned (FR6); the action is passed as a separate, fixed argv entry (never
+# interpolated into a shell) (Req 9.1-9.3).
+PUPPETEER_ACTIONS = {'puppeteer'}
+
+# Arm-only movement actions: the STANDALONE gesture (what /movement/<name> runs
+# via controller.py) drives ONLY arm/wrist channels (3-7) and NEVER the neck
+# (0-1), so the button is safe to layer over Puppeteer's Neck_Group hold (FR11).
+# This is a FAIL-SAFE allowlist: a gesture is listed ONLY if its standalone form
+# has been verified neck-free against movements.py. Anything NOT listed is
+# treated as head/neck and DISABLED while Puppeteer runs. A conservative error
+# (omitting a truly-arm-only gesture) only over-disables a button; the dangerous
+# error — tagging a head-coupled gesture 'arm' so its subprocess fights the
+# tracker for the Neck_Group lock — is what this list, and the guardrail test
+# (tests/test_puppeteer_suppression.py), prevent.
+#
+# VERIFIED standalone footprints from movements.py (channel docstrings):
+#   come_here          {3,4,5,6,7}   neck-free  -> arm
+#   beckon             {3,4,5,6,7}   neck-free  -> arm
+#   menacing_reach     {4,5,6,7}     neck-free  -> arm
+#   tap_side           {3,4,5,6,7}   neck-free  -> arm
+#   talking_with_hands {3,5,6,7} oscillated; ch4 held static at 270 (still a
+#                      write) -> {3,4,5,6,7}; neck-free -> arm
+# NECK-DRIVING in standalone form (NOT arm-only; omitted from this set):
+#   fan_butt   start_pose writes NECK_PAN=90, NECK_TILT=85
+#   fan_nose   start_pose writes NECK_PAN, NECK_TILT
+#   hand_visor look-around drives NECK_PAN[70,110]/NECK_TILT[85,95]
+#   wave, yawnCover, facePalm, yes, lookAroundSmall, lookAroundRandom,
+#   neckEllipse, swivelHead, shakeHead, snapHead, smno, snuckUp, awaken,
+#   waveAndSwivelSmooth — all drive the neck.
+ARM_ONLY_MOVEMENTS = {
+    'comeHere', 'beckon', 'menacingReach', 'tapSide', 'talkingWithHands',
+}
+
 # The arm-only-safe Scan response-pool candidates, split by kind from the single
 # source of truth (SCAN_SAFE_ARM_ACTIONS). Only these appear in the Scan
 # response-pool UI: an operator can select/weight only actions Scan can actually
@@ -269,6 +304,33 @@ def run_scan(timeout_min):
     return subprocess.Popen(cmd, cwd=PROJECT_DIR)
 
 
+def run_puppeteer(scan_timeout_seconds=None):
+    """Launch animatronic.py --action=puppeteer (the Puppeteer MODE).
+
+    Mirrors ``run_tracking``: a fixed VENV_PYTHON + ANIMATRONIC path and a fixed
+    ``--action=puppeteer`` passed as separate argv entries (never a shell), so
+    nothing from the request is ever interpolated into a command string (FR7).
+    Like tracking it holds only the Neck_Group lock and carries no audio of its
+    own (the mic Stream is started separately by ``launch_puppeteer``).
+
+    Args:
+        scan_timeout_seconds: Optional Scan_Sweep reacquire timeout to forward
+            as ``--scan-timeout`` (an int; animatronic.py clamps it). ``None``
+            omits the flag so animatronic.py uses its own default.
+
+    Returns:
+        The spawned subprocess.Popen.
+    """
+    cmd = [VENV_PYTHON, ANIMATRONIC, '--action=puppeteer']
+    if scan_timeout_seconds is not None:
+        cmd.append(f'--scan-timeout={int(scan_timeout_seconds)}')
+    print(f"[puppeteer] {' '.join(cmd)}")
+    # Fresh run: clear any stale stop request so the mode doesn't exit at once
+    # (same as the other mode launchers).
+    nap_signal.clear_stop()
+    return subprocess.Popen(cmd, cwd=PROJECT_DIR)
+
+
 # ── Gesture launch coordinator ───────────────────────────────────────────────
 # SAFETY: only one gesture-driving subprocess may run at a time. The child
 # processes enforce this at the hardware level via a cross-process file lock
@@ -382,14 +444,21 @@ def _stop_mic():
     return not _mic_is_streaming()
 
 
-# Labels of the background Modes (napping, awake, tracking) that hold a servo
-# lock and respond to the nap_signal cross-process stop. A web-requested action
-# preempts any of these (see _preempt_mode_if_running). 'tracking' is a Mode
-# too: it runs open-endedly and winds down on the same nap_signal stop, so when
-# a Routine/Movement is requested it is preempted like napping/awake. (Tracking
-# only holds the Neck_Group, so an arm-only Gesture can coexist with it — that
-# concurrency is handled by the per-group servo lock, not here.)
-_MODE_LABELS = ('napping', 'awake', 'tracking', 'scan')
+# Labels of the background Modes (napping, awake, tracking, scan, puppeteer)
+# that hold a servo lock and respond to the nap_signal cross-process stop. A
+# web-requested action preempts any of these (see _preempt_mode_if_running). Both
+# 'tracking' and 'puppeteer' are Modes too: they run open-endedly and wind down
+# on the same nap_signal stop, so when a Routine/Movement is requested they are
+# preempted like napping/awake. (Tracking and Puppeteer only hold the Neck_Group,
+# so an arm-only Gesture can coexist with them — that concurrency is handled by
+# the per-group servo lock, not here.)
+_MODE_LABELS = ('napping', 'awake', 'tracking', 'scan', 'puppeteer')
+# Exact-membership set for mode detection. A one-shot gesture carries a
+# 'kind:action' label (e.g. 'movement:menacingReach'); Modes carry a BARE label.
+# Mode checks test EXACT membership against this set — never a startswith/prefix
+# test on the _MODE_LABELS tuple — so a future action name that merely begins
+# with a mode name can't be misread as a mode.
+_MODE_LABELS_SET = frozenset(_MODE_LABELS)
 
 
 def _preempt_mode_if_running(wait_seconds=15):
@@ -417,7 +486,9 @@ def _preempt_mode_if_running(wait_seconds=15):
     """
     label = _active_proc['label']
     proc = _active_proc['proc']
-    is_mode = bool(label) and label.startswith(_MODE_LABELS)
+    # Exact membership (not startswith) so a one-shot gesture label like
+    # 'movement:menacingReach' can never be misread as a mode.
+    is_mode = bool(label) and label in _MODE_LABELS_SET
     if not is_mode or proc is None or proc.poll() is not None:
         return True  # no background mode active
 
@@ -432,11 +503,26 @@ def _preempt_mode_if_running(wait_seconds=15):
             _active_proc['proc'] = None
             _active_proc['label'] = None
             nap_signal.clear_stop()
+            if label == 'puppeteer':
+                # FR10: Puppeteer owns a live mic Stream it started; stop it so
+                # the jaw/audio path is free for whatever preempted it. The
+                # double-stop with napping/awake/scan (whose launchers also
+                # auto-stop the mic on their next launch) is benign: _stop_mic()
+                # treats micwebcontroller's 400 "Not streaming" as success.
+                _stop_mic()
             print(f"[launch] {label} mode stopped; servo lock free")
             return True
         time.sleep(0.2)
 
     print(f"[launch] {label} mode did not stop within timeout")
+    if label == 'puppeteer':
+        # TIMEOUT path: the Puppeteer subprocess did not release the Neck_Group
+        # within the window, so preemption FAILS (returns False; the caller
+        # 409s). But the mic Stream holds NO servo lock and is owned by the web
+        # layer, so we can and MUST still stop it here — otherwise a wedged neck
+        # tracker would leave the operator's mic Stream running with no owning
+        # mode (FR10). Stopping it is safe (independent of the stuck neck).
+        _stop_mic()
     return False
 
 
@@ -628,7 +714,15 @@ def index():
     return render_template(
         'index.html',
         routines=sorted(ROUTINE_ACTIONS),
-        movements=sorted(MOVEMENT_ACTIONS),
+        # Each movement button carries its channel group so the template (and
+        # Puppeteer gating) can tell arm-only gestures (ch 4-7, safe over the
+        # Neck_Group hold) from head/neck ones. Anything not in the fail-safe
+        # ARM_ONLY_MOVEMENTS allowlist is treated as 'head' and disabled under
+        # Puppeteer (FR11).
+        movements=[
+            {'name': m, 'group': ('arm' if m in ARM_ONLY_MOVEMENTS else 'head')}
+            for m in sorted(MOVEMENT_ACTIONS)
+        ],
         # The Scan response pool is built ONLY from the arm-only-safe set, not
         # the full routine/gesture lists above, so the operator can't select a
         # head-coupled action Scan would silently drop.
@@ -723,7 +817,9 @@ def nap(state):
         # Clamp into [NAP_MIN_TIMEOUT, NAP_MAX_TIMEOUT] (5s .. 15 min).
         timeout_seconds = max(NAP_MIN_TIMEOUT,
                               min(NAP_MAX_TIMEOUT, timeout_seconds))
-        ok, message = launch_napping(timeout_seconds)
+        # Route through _launch_mode so requesting napping while a DIFFERENT mode
+        # runs preempts it gracefully (FR8) instead of a 409 "busy" refusal.
+        ok, message = _launch_mode(launch_napping, timeout_seconds)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
@@ -782,7 +878,8 @@ def awake(state):
         # Clamp into [AWAKE_MIN_TIMEOUT, AWAKE_MAX_TIMEOUT] (5s .. 30 min).
         timeout_seconds = max(AWAKE_MIN_TIMEOUT,
                               min(AWAKE_MAX_TIMEOUT, timeout_seconds))
-        ok, message = launch_awake(timeout_seconds)
+        # Route through _launch_mode for graceful mode-switch preemption (FR8).
+        ok, message = _launch_mode(launch_awake, timeout_seconds)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
@@ -859,7 +956,8 @@ def tracking(state):
             except (TypeError, ValueError):
                 return jsonify({'status': 'error',
                                 'message': 'scan_timeout must be an integer'}), 400
-        ok, message = launch_tracking(scan_timeout)
+        # Route through _launch_mode for graceful mode-switch preemption (FR8).
+        ok, message = _launch_mode(launch_tracking, scan_timeout)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
@@ -953,7 +1051,8 @@ def scan(state):
         # Persist the chosen value so it survives a restart and is the next
         # default (returns the clamped int actually stored).
         minutes = config_store.save_scan_timeout(minutes)
-        ok, message = launch_scan(minutes)
+        # Route through _launch_mode for graceful mode-switch preemption (FR8).
+        ok, message = _launch_mode(launch_scan, minutes)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
@@ -962,6 +1061,159 @@ def scan(state):
         nap_signal.request_stop()
         return jsonify({'status': 'success', 'message': 'scan stop requested'})
     return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
+
+
+# ── Route: puppeteer mode ────────────────────────────────────────────────────
+def launch_puppeteer(scan_timeout_seconds=None):
+    """Serialised launch of the Puppeteer MODE: neck tracking + live mic Stream.
+
+    Mirrors ``launch_tracking`` (no mic auto-stop — Puppeteer is Gesture-like
+    toward the Stream and holds only the Neck_Group), but ALSO STARTS the live
+    mic Stream so entering Puppeteer gives the operator mic + head tracking in
+    one action (FR2). Preemption of a DIFFERENT running Mode is handled by
+    ``_launch_mode`` before this is called; this function keeps its own
+    ``_gesture_busy()`` backstop.
+
+    The mic Stream holds NO servo lock and runs in micwebcontroller, so it layers
+    over neck tracking + arm gestures. Starting it is BEST-EFFORT: it happens
+    AFTER the subprocess is tracked so a mic failure leaves the neck tracker
+    running and ``_active_proc`` consistent; the failure is surfaced in the
+    message and the status poll's mic indicator rather than killing the mode.
+
+    Args:
+        scan_timeout_seconds: Optional Scan_Sweep reacquire timeout forwarded to
+            ``run_puppeteer`` as an int ``--scan-timeout`` flag. ``None`` lets
+            animatronic.py use its own default.
+
+    Returns:
+        (ok, message). ok=False means the servos were busy.
+    """
+    with _launch_lock:
+        # NOTE: deliberately no mic auto-stop here — Puppeteer STARTS the mic.
+        if _gesture_busy():
+            active = _active_proc['label'] or 'another process'
+            return False, f'Servos busy — {active} is still running.'
+        proc = run_puppeteer(scan_timeout_seconds)
+        _active_proc['proc'] = proc
+        _active_proc['label'] = 'puppeteer'
+        _last_action['value'] = 'puppeteer'
+        # Start the live mic Stream (FR2) via the exact proxy call the mic toggle
+        # uses. micwebcontroller answering 400 "Already streaming" is still a
+        # success for us: _mic_is_streaming() reports True.
+        body, code = _proxy('POST', '/handler', {'action': 'start'})
+        if not _mic_is_streaming():
+            msg = (body or {}).get('message') if isinstance(body, dict) else None
+            return True, ('puppeteer started (neck tracking); '
+                          f'mic Stream did NOT start: {msg or f"status {code}"}')
+        return True, 'puppeteer started (neck tracking + live mic)'
+
+
+@app.route('/puppeteer/<state>', methods=['POST'])
+def puppeteer(state):
+    """Start or stop the Puppeteer MODE.
+
+    - ``start``: validate against the ``PUPPETEER_ACTIONS`` allowlist BEFORE any
+      subprocess/mic action (FR6), then launch Puppeteer through ``_launch_mode``
+      (optional JSON ``{"scan_timeout": <seconds>}`` forwarded to animatronic.py,
+      which clamps it). ``_launch_mode`` gracefully preempts a different running
+      Mode first (FR8) and no-ops if Puppeteer is already running (FR9).
+    - ``stop``: ask a running Puppeteer Mode to wind down via the cross-process
+      stop signal (recenters the Neck_Group, releases the lock) AND stop the mic
+      Stream it started (FR10).
+
+    An unknown ``state`` returns 400 and launches nothing (AC4).
+    """
+    if state == 'start':
+        # Allowlist gate BEFORE any subprocess/mic action (FR6).
+        if 'puppeteer' not in PUPPETEER_ACTIONS:
+            return jsonify({'status': 'error',
+                            'message': 'puppeteer action not permitted'}), 400
+        data = request.json or {}
+        scan_timeout = data.get('scan_timeout')
+        if scan_timeout is not None:
+            try:
+                scan_timeout = int(scan_timeout)
+            except (TypeError, ValueError):
+                return jsonify({'status': 'error',
+                                'message': 'scan_timeout must be an integer'}), 400
+        ok, message = _launch_mode(launch_puppeteer, scan_timeout)
+        if not ok:
+            return jsonify({'status': 'busy', 'message': message}), 409
+        return jsonify({'status': 'success', 'message': message})
+    if state == 'stop':
+        # Signal wind-down; the mode recenters the neck and releases the lock.
+        # The mic Stream Puppeteer started is stopped here too (FR10).
+        nap_signal.request_stop()
+        _stop_mic()
+        return jsonify({'status': 'success', 'message': 'puppeteer stop requested'})
+    return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
+
+
+# ── Mode launch coordinator (graceful mode-switch preemption) ────────────────
+# Maps each mode launcher to the _active_proc label it sets, so _launch_mode can
+# identify the requested mode without changing any launcher's signature. Defined
+# AFTER every launch_* function so the names resolve at module load.
+_LAUNCHER_LABEL = {
+    launch_napping: 'napping',
+    launch_awake: 'awake',
+    launch_tracking: 'tracking',
+    launch_scan: 'scan',
+    launch_puppeteer: 'puppeteer',
+}
+
+
+def _launch_mode(launch_fn, *args):
+    """Launch a background Mode, gracefully preempting a DIFFERENT running Mode.
+
+    FR8/FR9 policy for the five mode launchers (napping/awake/tracking/scan/
+    puppeteer):
+
+      * If the SAME mode is already running -> no-op, reported as already
+        running (FR9); no second subprocess is spawned.
+      * If a DIFFERENT mode is running -> ``_preempt_mode_if_running()`` signals
+        it to wind down and WAITS (bounded) for it to release its servo lock
+        (NECK_GROUP or whole-robot) before the new mode's ``launch_fn`` claims
+        servos, preserving per-group lock safety (NFR3). Only then is
+        ``launch_fn`` called.
+      * If nothing is running — OR a one-shot gesture (routine/movement) is
+        mid-flight — ``launch_fn`` is called directly. A Mode request does NOT
+        preempt an in-flight one-shot gesture; ``launch_fn``'s own
+        ``_gesture_busy()`` backstop returns busy (-> 409) while the gesture
+        holds the lock.
+
+    ``launch_fn`` is the mode's existing serialised launcher; it still performs
+    its own ``_gesture_busy()`` check (and mic auto-stop, where applicable) as a
+    backstop. ``_launch_lock`` is released before ``launch_fn`` is called because
+    ``launch_fn`` re-acquires it itself.
+
+    Args:
+        launch_fn: One of the launch_* mode functions (keys of _LAUNCHER_LABEL).
+        *args: Positional args forwarded to ``launch_fn`` (e.g. a timeout).
+
+    Returns:
+        (ok, message) from the preemption/launch — ok=False means busy (-> 409).
+    """
+    requested = _LAUNCHER_LABEL[launch_fn]
+    with _launch_lock:
+        active = _active_proc['label']
+        proc = _active_proc['proc']
+        running = bool(active) and proc is not None and proc.poll() is None
+        active_is_mode = active in _MODE_LABELS_SET
+        if running and active == requested:
+            # FR9: same mode already running -> no-op (don't relaunch).
+            return True, f'{requested} already running'
+        if running and active_is_mode and active != requested:
+            # FR8: a DIFFERENT mode is running -> wind it down and wait for its
+            # lock to free before launch_fn claims servos.
+            if not _preempt_mode_if_running():
+                return False, 'A background mode is stopping — try again in a moment.'
+        # else: nothing running, OR a one-shot gesture is mid-flight. Fall
+        # through to launch_fn, whose _gesture_busy() backstop handles the latter.
+    # Release _launch_lock before launch_fn re-acquires it. When a different mode
+    # was preempted it has freed its servo lock (verified in
+    # _preempt_mode_if_running via is_locked()), so launch_fn's _gesture_busy()
+    # now passes.
+    return launch_fn(*args)
 
 
 # ── Routes: scan response pool (config read/write; NO servo command) ─────────
