@@ -71,7 +71,7 @@ def test_weighted_scan_pool_slots_follow_5_to_1_ratio():
 
     Gestures: beckon, comeHere, wave, tapSide. Routines: brains, hypnotic plus
     the FEAT-002 arm-only variants (awaken, blah, burp, comeGetCandy,
-    coughMedium, coughLong, fart, fartGhost, maximus, niceDay). Counts are
+    coughMedium, coughLong, fart, fartGhost, maximus, niceDay, yawn). Counts are
     derived from the allowlist so adding a scan-safe action keeps the invariant
     asserted without re-hardcoding the total.
     """
@@ -80,9 +80,9 @@ def test_weighted_scan_pool_slots_follow_5_to_1_ratio():
     gestures = [n for n, k in SCAN_SAFE_ARM_ACTIONS.items() if k is ScanActionKind.GESTURE]
     routines = [n for n, k in SCAN_SAFE_ARM_ACTIONS.items() if k is ScanActionKind.ROUTINE]
     assert len(gestures) == 4
-    assert len(routines) == 12
+    assert len(routines) == 13
 
-    # 4 gestures * 5 + 12 routines * 1.
+    # 4 gestures * 5 + 13 routines * 1.
     expected = len(gestures) * GESTURE_WEIGHT + len(routines) * ROUTINE_WEIGHT
     assert len(pool) == expected
 

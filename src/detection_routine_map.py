@@ -128,6 +128,7 @@ SCAN_SAFE_ARM_ACTIONS: Dict[str, ScanActionKind] = {
     "fartGhost": ScanActionKind.ROUTINE,
     "maximus": ScanActionKind.ROUTINE,
     "niceDay": ScanActionKind.ROUTINE,
+    "yawn": ScanActionKind.ROUTINE,
     # FLAGGED — head-COUPLED, DO NOT ENABLE without operator bench-verification
     # across the FULL off-center tracking envelope (scan holds the head
     # OFF-center and FORBIDDEN_COMBINATIONS has no neck term, so nothing would
