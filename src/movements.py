@@ -1724,13 +1724,15 @@ class Movements:
         constants.RT_SHOULDER_TILT:    150,
         constants.RT_SHOULDER_ROTATOR: 130,
     }
-    # Forearm (RT_ELBOW_ROTATOR, ch4) centering band 190-230 => center 210 +/- 20.
+    # Forearm (RT_ELBOW_ROTATOR, ch4) centering band 180-240 => center 210 +/- 30.
     _TH2_ROT_CENTER = 210
-    _TH2_ROT_HALF_RANGE = 20
+    _TH2_ROT_HALF_RANGE = 30
     _TH2_ROT_JITTER_PCT = 0.25
-    # Companion-move eased feel comparable to the centering primitive ("speed 7").
-    _TH2_COMPANION_STEPS = 20
-    _TH2_COMPANION_DELAY = 0.02
+    # Speed-dial value for EVERY move in this gesture (geometric 1-10 dial).
+    _TH2_SPEED = 9
+    # Shared per-step delay; the SAME value is passed to speed_to_steps and to
+    # the matching move_to / primitive call so dial velocity holds.
+    _TH2_DELAY = 0.02
 
     async def talking_hands_ii(self, reps=None):
         """Talking hands II: forearm oscillates while a companion joint reacts.
@@ -1741,18 +1743,34 @@ class Movements:
 
         Audio-free Gesture. The arm first eases to a fixed start pose, then the
         forearm twist (RT_ELBOW_ROTATOR, ch4) does a "randomize within range
-        with centering" oscillation over the band ``center 210 +/- 20 = [190,
-        230]`` via :meth:`randomized_centering_move` (per-gesture state in
+        with centering" oscillation over the band ``center 210 +/- 30 = [180,
+        240]`` via :meth:`randomized_centering_move` (per-gesture state in
         ``_th2_rot_pos``). Each repetition is one swing of ch4; ``reps`` swings
         run in total.
 
-        OPTION A trigger semantics: after each ch4 swing its commanded target is
-        classified to the NEAREST of the three logical nominals (LT=190,
-        CENTER=210, RT=230; ties -> CENTER), then a companion move is chosen:
+        Speed: EVERY move in this gesture runs at speed-dial value 9 (geometric
+        1-10 dial, ~350 deg/s). Step counts are sized from the speed dial via
+        :func:`trunkcontroller.speed_to_steps` rather than hardcoded, always
+        with the SAME per-step ``delay`` (``_TH2_DELAY = 0.02``) passed to the
+        matching ``move_to`` / primitive call so the dial velocity holds:
 
-            * landed RT (~230): random.choice of
+            * the start-pose and return-to-rest ``move_to`` sized from the
+              longest channel's travel to that pose at speed 9;
+            * the ch4 ``randomized_centering_move`` swings sized from the
+              WORST-CASE logical transition LT<->RT = 60 deg (= 2 * half_range)
+              so dial velocity holds for the longest plausible swing -- passed
+              as ``steps_range=(n, n)`` with ``delay_base=_TH2_DELAY`` and
+              ``delay_jitter=0`` (fixed per-step delay to match the speed sizing);
+            * each companion ``move_to`` (ch7 or ch5) sized from that companion's
+              own travel distance to its target at speed 9.
+
+        OPTION A trigger semantics: after each ch4 swing its commanded target is
+        classified to the NEAREST of the three logical nominals (LT=180,
+        CENTER=210, RT=240; ties -> CENTER), then a companion move is chosen:
+
+            * landed RT (~240): random.choice of
               RT_SHOULDER_ROTATOR (ch7) -> 140, or RT_ELBOW_TILT (ch5) -> 160.
-            * landed LT (~190): random.choice of
+            * landed LT (~180): random.choice of
               RT_SHOULDER_ROTATOR (ch7) -> 120, or RT_ELBOW_TILT (ch5) -> 130.
             * landed CENTER: NO companion move.
 
@@ -1763,6 +1781,9 @@ class Movements:
         gathered with it): the companion touches ch5/ch7, which the rest move
         also drives, so sequencing keeps every channel single-writer and lets
         the arm end exactly at rest while still never dropping that companion.
+
+        Pause: after each swing + companion, pause a random
+        ``random.uniform(0.25, 0.75)`` seconds.
 
         All randomness is drawn from the shared ``random`` module, so
         ``random.seed(x)`` before a run makes the command sequence
@@ -1780,10 +1801,16 @@ class Movements:
             reps = random.randint(3, 6)
 
         # Nominal logical positions of the ch4 band, for classifying the landing.
-        lt = self._TH2_ROT_CENTER - self._TH2_ROT_HALF_RANGE   # 190
-        rt = self._TH2_ROT_CENTER + self._TH2_ROT_HALF_RANGE   # 230
+        lt = self._TH2_ROT_CENTER - self._TH2_ROT_HALF_RANGE   # 180
+        rt = self._TH2_ROT_CENTER + self._TH2_ROT_HALF_RANGE   # 240
         nominals = {"LT": lt, "CENTER": self._TH2_ROT_CENTER, "RT": rt}
         order = ("CENTER", "LT", "RT")  # CENTER first so ties resolve to CENTER
+
+        # Size ch4 swing steps from speed 9 over the WORST-CASE logical
+        # transition LT<->RT = 2 * half_range deg, so the dial velocity holds
+        # for the longest plausible swing. Same per-step delay as the primitive.
+        swing_steps = speed_to_steps(
+            2 * self._TH2_ROT_HALF_RANGE, self._TH2_SPEED, delay=self._TH2_DELAY)
 
         def _companion_for(landing):
             """Return a ``{channel: angle}`` companion move for a landing, or None."""
@@ -1808,10 +1835,19 @@ class Movements:
             """
             if targets is None:
                 return
+            # Size steps from this companion's own travel to its target at
+            # speed 9 (same per-step delay passed to move_to) so it is paced on
+            # the dial. targets is a single {channel: angle} entry.
+            ch, target = next(iter(targets.items()))
+            current = self.trunkController.kit.servo[ch].angle
+            if current is None:
+                current = constants.REST_POSITIONS.get(ch, target)
+            steps = speed_to_steps(
+                abs(target - current), self._TH2_SPEED, delay=self._TH2_DELAY)
             await self.trunkController.move_to(
                 targets,
-                steps=self._TH2_COMPANION_STEPS,
-                delay=self._TH2_COMPANION_DELAY,
+                steps=steps,
+                delay=self._TH2_DELAY,
             )
 
         async def _swing():
@@ -1822,12 +1858,27 @@ class Movements:
                 half_range=self._TH2_ROT_HALF_RANGE,
                 jitter_pct=self._TH2_ROT_JITTER_PCT,
                 state_attr="_th2_rot_pos",
+                steps_range=(swing_steps, swing_steps),
+                delay_base=self._TH2_DELAY,
+                delay_jitter=0,
             )
             return min(order, key=lambda p: abs(target - nominals[p]))
 
-        # Ease the whole arm + head to the fixed start pose.
+        def _pose_steps(targets):
+            """Size a multi-joint move_to from its LONGEST channel travel @ speed 9."""
+            longest = 0.0
+            for ch, tgt in targets.items():
+                current = self.trunkController.kit.servo[ch].angle
+                if current is None:
+                    current = constants.REST_POSITIONS.get(ch, tgt)
+                longest = max(longest, abs(tgt - current))
+            return speed_to_steps(longest, self._TH2_SPEED, delay=self._TH2_DELAY)
+
+        # Ease the whole arm + head to the fixed start pose (speed 9).
         self._th2_rot_pos = self._TH2_ROT_CENTER
-        await self.trunkController.move_to(self._TH2_START, steps=45, delay=0.02)
+        await self.trunkController.move_to(
+            self._TH2_START, steps=_pose_steps(self._TH2_START),
+            delay=self._TH2_DELAY)
 
         # The companion for swing i runs CONCURRENTLY with swing i+1 (disjoint
         # channels). ``pending`` carries the companion owed from the PREVIOUS
@@ -1842,7 +1893,7 @@ class Movements:
                 _, landing = await asyncio.gather(
                     _companion_move(pending), _swing())
                 pending = _companion_for(landing)
-            await asyncio.sleep(random.uniform(1.0, 2.5))
+            await asyncio.sleep(random.uniform(0.25, 0.75))
 
         # Resolve any owed companion FIRST, then return to rest. The companion
         # touches ch5 or ch7, which REST_POSITIONS also drives, so running them
@@ -1853,7 +1904,8 @@ class Movements:
         # final companion.
         await _companion_move(pending)
         await self.trunkController.move_to(
-            constants.REST_POSITIONS, steps=45, delay=0.02)
+            constants.REST_POSITIONS, steps=_pose_steps(constants.REST_POSITIONS),
+            delay=self._TH2_DELAY)
 
     async def present_palm(self):
         """Present palm: raise the forearm palm-up, gently bob it, then lower.
