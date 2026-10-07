@@ -1759,8 +1759,10 @@ class Movements:
         Concurrency: a companion runs CONCURRENTLY with the NEXT ch4 swing via
         :func:`asyncio.gather`. The forearm owns ch4 and companions touch only
         ch5 or ch7 -- always DISJOINT from ch4 -- so gathering is safe. The
-        final iteration's companion is gathered with the return-to-rest so it is
-        never dropped.
+        final iteration's companion is awaited BEFORE the return-to-rest (not
+        gathered with it): the companion touches ch5/ch7, which the rest move
+        also drives, so sequencing keeps every channel single-writer and lets
+        the arm end exactly at rest while still never dropping that companion.
 
         All randomness is drawn from the shared ``random`` module, so
         ``random.seed(x)`` before a run makes the command sequence
@@ -1829,7 +1831,7 @@ class Movements:
 
         # The companion for swing i runs CONCURRENTLY with swing i+1 (disjoint
         # channels). ``pending`` carries the companion owed from the PREVIOUS
-        # swing's landing; the final one is gathered with the return-to-rest.
+        # swing's landing; the final one is awaited BEFORE the return-to-rest.
         pending = None
         for i in range(reps):
             if i == 0:
@@ -1842,13 +1844,16 @@ class Movements:
                 pending = _companion_for(landing)
             await asyncio.sleep(random.uniform(1.0, 2.5))
 
-        # Return to rest, gathering any owed companion so it is never dropped.
-        rest_move = self.trunkController.move_to(
+        # Resolve any owed companion FIRST, then return to rest. The companion
+        # touches ch5 or ch7, which REST_POSITIONS also drives, so running them
+        # concurrently would write one channel from two coroutines (undefined
+        # physical behavior + nondeterministic final angle). Sequencing the
+        # companion before the rest move keeps every channel single-writer and
+        # lets the arm end exactly at REST_POSITIONS, without dropping the
+        # final companion.
+        await _companion_move(pending)
+        await self.trunkController.move_to(
             constants.REST_POSITIONS, steps=45, delay=0.02)
-        if pending is not None:
-            await asyncio.gather(_companion_move(pending), rest_move)
-        else:
-            await rest_move
 
     async def present_palm(self):
         """Present palm: raise the forearm palm-up, gently bob it, then lower.
