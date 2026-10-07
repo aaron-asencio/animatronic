@@ -1728,8 +1728,13 @@ class Movements:
     _TH2_ROT_CENTER = 210
     _TH2_ROT_HALF_RANGE = 30
     _TH2_ROT_JITTER_PCT = 0.25
-    # Speed-dial value for EVERY move in this gesture (geometric 1-10 dial).
-    _TH2_SPEED = 9
+    # Speed-dial value for the ACTIVE moves in this gesture (geometric 1-10
+    # dial): the start-pose ease-in, the ch4 centering swings, and the ch7/ch5
+    # companion moves.
+    _TH2_SPEED = 8
+    # Slower speed-dial value for the FINAL return-to-rest move (same geometric
+    # dial), so the arm settles home more gently than the active moves.
+    _TH2_REST_SPEED = 6
     # Shared per-step delay; the SAME value is passed to speed_to_steps and to
     # the matching move_to / primitive call so dial velocity holds.
     _TH2_DELAY = 0.02
@@ -1748,21 +1753,24 @@ class Movements:
         ``_th2_rot_pos``). Each repetition is one swing of ch4; ``reps`` swings
         run in total.
 
-        Speed: EVERY move in this gesture runs at speed-dial value 9 (geometric
-        1-10 dial, ~350 deg/s). Step counts are sized from the speed dial via
+        Speed: the ACTIVE moves run at speed-dial value 8 (geometric 1-10 dial)
+        and the final return-to-rest runs slower, at speed-dial value 6. Step
+        counts are sized from the speed dial via
         :func:`trunkcontroller.speed_to_steps` rather than hardcoded, always
         with the SAME per-step ``delay`` (``_TH2_DELAY = 0.02``) passed to the
         matching ``move_to`` / primitive call so the dial velocity holds:
 
-            * the start-pose and return-to-rest ``move_to`` sized from the
-              longest channel's travel to that pose at speed 9;
+            * the start-pose ``move_to`` sized from the longest channel's travel
+              to that pose at speed 8;
             * the ch4 ``randomized_centering_move`` swings sized from the
               WORST-CASE logical transition LT<->RT = 60 deg (= 2 * half_range)
               so dial velocity holds for the longest plausible swing -- passed
               as ``steps_range=(n, n)`` with ``delay_base=_TH2_DELAY`` and
               ``delay_jitter=0`` (fixed per-step delay to match the speed sizing);
             * each companion ``move_to`` (ch7 or ch5) sized from that companion's
-              own travel distance to its target at speed 9.
+              own travel distance to its target at speed 8;
+            * the final return-to-rest ``move_to`` sized from the longest
+              channel's travel to ``REST_POSITIONS`` at the slower speed 6.
 
         OPTION A trigger semantics: after each ch4 swing its commanded target is
         classified to the NEAREST of the three logical nominals (LT=180,
@@ -1783,7 +1791,7 @@ class Movements:
         the arm end exactly at rest while still never dropping that companion.
 
         Pause: after each swing + companion, pause a random
-        ``random.uniform(0.25, 0.75)`` seconds.
+        ``random.uniform(0.25, 1.0)`` seconds.
 
         All randomness is drawn from the shared ``random`` module, so
         ``random.seed(x)`` before a run makes the command sequence
@@ -1791,14 +1799,14 @@ class Movements:
 
         Args:
             reps: Number of ch4 swings. When ``None`` (default), a random
-                ``random.randint(3, 6)`` is used; otherwise the given count.
+                ``random.randint(5, 8)`` is used; otherwise the given count.
 
         Returns:
             None. The gesture always eases every arm + head channel back to
             ``constants.REST_POSITIONS`` before returning.
         """
         if reps is None:
-            reps = random.randint(3, 6)
+            reps = random.randint(5, 8)
 
         # Nominal logical positions of the ch4 band, for classifying the landing.
         lt = self._TH2_ROT_CENTER - self._TH2_ROT_HALF_RANGE   # 180
@@ -1806,7 +1814,7 @@ class Movements:
         nominals = {"LT": lt, "CENTER": self._TH2_ROT_CENTER, "RT": rt}
         order = ("CENTER", "LT", "RT")  # CENTER first so ties resolve to CENTER
 
-        # Size ch4 swing steps from speed 9 over the WORST-CASE logical
+        # Size ch4 swing steps from speed 8 over the WORST-CASE logical
         # transition LT<->RT = 2 * half_range deg, so the dial velocity holds
         # for the longest plausible swing. Same per-step delay as the primitive.
         swing_steps = speed_to_steps(
@@ -1836,7 +1844,7 @@ class Movements:
             if targets is None:
                 return
             # Size steps from this companion's own travel to its target at
-            # speed 9 (same per-step delay passed to move_to) so it is paced on
+            # speed 8 (same per-step delay passed to move_to) so it is paced on
             # the dial. targets is a single {channel: angle} entry.
             ch, target = next(iter(targets.items()))
             current = self.trunkController.kit.servo[ch].angle
@@ -1864,20 +1872,20 @@ class Movements:
             )
             return min(order, key=lambda p: abs(target - nominals[p]))
 
-        def _pose_steps(targets):
-            """Size a multi-joint move_to from its LONGEST channel travel @ speed 9."""
+        def _pose_steps(targets, speed):
+            """Size a multi-joint move_to from its LONGEST channel travel @ speed."""
             longest = 0.0
             for ch, tgt in targets.items():
                 current = self.trunkController.kit.servo[ch].angle
                 if current is None:
                     current = constants.REST_POSITIONS.get(ch, tgt)
                 longest = max(longest, abs(tgt - current))
-            return speed_to_steps(longest, self._TH2_SPEED, delay=self._TH2_DELAY)
+            return speed_to_steps(longest, speed, delay=self._TH2_DELAY)
 
-        # Ease the whole arm + head to the fixed start pose (speed 9).
+        # Ease the whole arm + head to the fixed start pose (speed 8).
         self._th2_rot_pos = self._TH2_ROT_CENTER
         await self.trunkController.move_to(
-            self._TH2_START, steps=_pose_steps(self._TH2_START),
+            self._TH2_START, steps=_pose_steps(self._TH2_START, self._TH2_SPEED),
             delay=self._TH2_DELAY)
 
         # The companion for swing i runs CONCURRENTLY with swing i+1 (disjoint
@@ -1893,7 +1901,7 @@ class Movements:
                 _, landing = await asyncio.gather(
                     _companion_move(pending), _swing())
                 pending = _companion_for(landing)
-            await asyncio.sleep(random.uniform(0.25, 0.75))
+            await asyncio.sleep(random.uniform(0.25, 1.0))
 
         # Resolve any owed companion FIRST, then return to rest. The companion
         # touches ch5 or ch7, which REST_POSITIONS also drives, so running them
@@ -1903,8 +1911,10 @@ class Movements:
         # lets the arm end exactly at REST_POSITIONS, without dropping the
         # final companion.
         await _companion_move(pending)
+        # Final return-to-rest paced slower, at speed 6.
         await self.trunkController.move_to(
-            constants.REST_POSITIONS, steps=_pose_steps(constants.REST_POSITIONS),
+            constants.REST_POSITIONS,
+            steps=_pose_steps(constants.REST_POSITIONS, self._TH2_REST_SPEED),
             delay=self._TH2_DELAY)
 
     async def present_palm(self):
