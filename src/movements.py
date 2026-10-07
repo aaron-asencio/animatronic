@@ -1716,8 +1716,6 @@ class Movements:
 
     # Talking hands II pose + band values.
     _TH2_START = {
-        constants.NECK_PAN:            90,
-        constants.NECK_TILT:           90,
         constants.RT_WRIST_TILT:       170,
         constants.RT_ELBOW_ROTATOR:    210,
         constants.RT_ELBOW_TILT:       140,
@@ -1742,9 +1740,11 @@ class Movements:
     async def talking_hands_ii(self, reps=None):
         """Talking hands II: forearm oscillates while a companion joint reacts.
 
-        Channels: NECK_PAN (0), NECK_TILT (1), RT_WRIST_TILT (3),
-                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
-                  RT_SHOULDER_ROTATOR (7).
+        Channels: RT_WRIST_TILT (3), RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5),
+                  RT_SHOULDER_TILT (6), RT_SHOULDER_ROTATOR (7).
+
+        ARM-ONLY Gesture (channels 3-7, neck-free): it never drives NECK_PAN (0)
+        or NECK_TILT (1), so it is safe to layer over neck-only Modes.
 
         Audio-free Gesture. The arm first eases to a fixed start pose, then the
         forearm twist (RT_ELBOW_ROTATOR, ch4) does a "randomize within range
@@ -1802,8 +1802,9 @@ class Movements:
                 ``random.randint(5, 8)`` is used; otherwise the given count.
 
         Returns:
-            None. The gesture always eases every arm + head channel back to
-            ``constants.REST_POSITIONS`` before returning.
+            None. The gesture always eases channels 3-7 back to
+            ``constants.REST_POSITIONS`` before returning (it no longer centers
+            the neck).
         """
         if reps is None:
             reps = random.randint(5, 8)
@@ -1882,7 +1883,8 @@ class Movements:
                 longest = max(longest, abs(tgt - current))
             return speed_to_steps(longest, speed, delay=self._TH2_DELAY)
 
-        # Ease the whole arm + head to the fixed start pose (speed 8).
+        # Ease the arm (channels 3-7, neck-free) to the fixed start pose
+        # (speed 8).
         self._th2_rot_pos = self._TH2_ROT_CENTER
         await self.trunkController.move_to(
             self._TH2_START, steps=_pose_steps(self._TH2_START, self._TH2_SPEED),
@@ -1911,10 +1913,18 @@ class Movements:
         # lets the arm end exactly at REST_POSITIONS, without dropping the
         # final companion.
         await _companion_move(pending)
-        # Final return-to-rest paced slower, at speed 6.
+        # Final return-to-rest paced slower, at speed 6. ARM-ONLY: drive only
+        # channels 3-7 back to REST_POSITIONS (values sourced from
+        # constants.REST_POSITIONS); never write the neck (0/1).
+        arm_rest = {ch: constants.REST_POSITIONS[ch]
+                    for ch in (constants.RT_WRIST_TILT,
+                               constants.RT_ELBOW_ROTATOR,
+                               constants.RT_ELBOW_TILT,
+                               constants.RT_SHOULDER_TILT,
+                               constants.RT_SHOULDER_ROTATOR)}
         await self.trunkController.move_to(
-            constants.REST_POSITIONS,
-            steps=_pose_steps(constants.REST_POSITIONS, self._TH2_REST_SPEED),
+            arm_rest,
+            steps=_pose_steps(arm_rest, self._TH2_REST_SPEED),
             delay=self._TH2_DELAY)
 
     async def present_palm(self):

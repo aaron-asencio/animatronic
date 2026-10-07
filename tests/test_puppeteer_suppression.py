@@ -105,6 +105,7 @@ ARM_ONLY_STANDALONE_FOOTPRINT = {
     'menacingReach':    frozenset({4, 5, 6, 7}),
     'tapSide':          frozenset({3, 4, 5, 6, 7}),
     'talkingWithHands': frozenset({3, 4, 5, 6, 7}),  # owned {3,5,6,7}; ch4 held at 270 (a write)
+    'talkingHandsII':   frozenset({3, 4, 5, 6, 7}),  # neck-free (channels 3-7)
 }
 
 NECK_GROUP_CHANNELS = frozenset({0, 1})

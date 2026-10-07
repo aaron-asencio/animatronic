@@ -93,7 +93,7 @@ ROUTINE_ACTIONS = {
 
 MOVEMENT_ACTIONS = {
     'wave', 'comeHere', 'beckon', 'menacingReach', 'yawnCover', 'facePalm',
-    'fanButt', 'fanNose', 'tapSide', 'talkingWithHands',
+    'fanButt', 'fanNose', 'tapSide', 'talkingWithHands', 'talkingHandsII',
     'yes', 'lookAroundSmall', 'lookAroundRandom', 'neckEllipse',
     'swivelHead', 'shakeHead', 'snapHead', 'smno', 'snuckUp', 'awaken',
     'waveAndSwivelSmooth', 'handVisor',
@@ -138,6 +138,7 @@ PUPPETEER_ACTIONS = {'puppeteer'}
 #   tap_side           {3,4,5,6,7}   neck-free  -> arm
 #   talking_with_hands {3,5,6,7} oscillated; ch4 held static at 270 (still a
 #                      write) -> {3,4,5,6,7}; neck-free -> arm
+#   talking_hands_ii   {3,4,5,6,7}   neck-free  -> arm
 # NECK-DRIVING in standalone form (NOT arm-only; omitted from this set):
 #   fan_butt   start_pose writes NECK_PAN=90, NECK_TILT=85
 #   fan_nose   start_pose writes NECK_PAN, NECK_TILT
@@ -147,6 +148,7 @@ PUPPETEER_ACTIONS = {'puppeteer'}
 #   waveAndSwivelSmooth — all drive the neck.
 ARM_ONLY_MOVEMENTS = {
     'comeHere', 'beckon', 'menacingReach', 'tapSide', 'talkingWithHands',
+    'talkingHandsII',
 }
 
 # The arm-only-safe Scan response-pool candidates, split by kind from the single
