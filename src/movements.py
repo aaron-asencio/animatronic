@@ -1714,6 +1714,142 @@ class Movements:
                 await stack.aclose()
                 self._sleep_stack = None
 
+    # Talking hands II pose + band values.
+    _TH2_START = {
+        constants.NECK_PAN:            90,
+        constants.NECK_TILT:           90,
+        constants.RT_WRIST_TILT:       170,
+        constants.RT_ELBOW_ROTATOR:    210,
+        constants.RT_ELBOW_TILT:       140,
+        constants.RT_SHOULDER_TILT:    150,
+        constants.RT_SHOULDER_ROTATOR: 130,
+    }
+    # Forearm (RT_ELBOW_ROTATOR, ch4) centering band 190-230 => center 210 +/- 20.
+    _TH2_ROT_CENTER = 210
+    _TH2_ROT_HALF_RANGE = 20
+    _TH2_ROT_JITTER_PCT = 0.25
+    # Companion-move eased feel comparable to the centering primitive ("speed 7").
+    _TH2_COMPANION_STEPS = 20
+    _TH2_COMPANION_DELAY = 0.02
+
+    async def talking_hands_ii(self, reps=None):
+        """Talking hands II: forearm oscillates while a companion joint reacts.
+
+        Channels: NECK_PAN (0), NECK_TILT (1), RT_WRIST_TILT (3),
+                  RT_ELBOW_ROTATOR (4), RT_ELBOW_TILT (5), RT_SHOULDER_TILT (6),
+                  RT_SHOULDER_ROTATOR (7).
+
+        Audio-free Gesture. The arm first eases to a fixed start pose, then the
+        forearm twist (RT_ELBOW_ROTATOR, ch4) does a "randomize within range
+        with centering" oscillation over the band ``center 210 +/- 20 = [190,
+        230]`` via :meth:`randomized_centering_move` (per-gesture state in
+        ``_th2_rot_pos``). Each repetition is one swing of ch4; ``reps`` swings
+        run in total.
+
+        OPTION A trigger semantics: after each ch4 swing its commanded target is
+        classified to the NEAREST of the three logical nominals (LT=190,
+        CENTER=210, RT=230; ties -> CENTER), then a companion move is chosen:
+
+            * landed RT (~230): random.choice of
+              RT_SHOULDER_ROTATOR (ch7) -> 140, or RT_ELBOW_TILT (ch5) -> 160.
+            * landed LT (~190): random.choice of
+              RT_SHOULDER_ROTATOR (ch7) -> 120, or RT_ELBOW_TILT (ch5) -> 130.
+            * landed CENTER: NO companion move.
+
+        Concurrency: a companion runs CONCURRENTLY with the NEXT ch4 swing via
+        :func:`asyncio.gather`. The forearm owns ch4 and companions touch only
+        ch5 or ch7 -- always DISJOINT from ch4 -- so gathering is safe. The
+        final iteration's companion is gathered with the return-to-rest so it is
+        never dropped.
+
+        All randomness is drawn from the shared ``random`` module, so
+        ``random.seed(x)`` before a run makes the command sequence
+        deterministic.
+
+        Args:
+            reps: Number of ch4 swings. When ``None`` (default), a random
+                ``random.randint(3, 6)`` is used; otherwise the given count.
+
+        Returns:
+            None. The gesture always eases every arm + head channel back to
+            ``constants.REST_POSITIONS`` before returning.
+        """
+        if reps is None:
+            reps = random.randint(3, 6)
+
+        # Nominal logical positions of the ch4 band, for classifying the landing.
+        lt = self._TH2_ROT_CENTER - self._TH2_ROT_HALF_RANGE   # 190
+        rt = self._TH2_ROT_CENTER + self._TH2_ROT_HALF_RANGE   # 230
+        nominals = {"LT": lt, "CENTER": self._TH2_ROT_CENTER, "RT": rt}
+        order = ("CENTER", "LT", "RT")  # CENTER first so ties resolve to CENTER
+
+        def _companion_for(landing):
+            """Return a ``{channel: angle}`` companion move for a landing, or None."""
+            if landing == "RT":
+                return random.choice([
+                    {constants.RT_SHOULDER_ROTATOR: 140},
+                    {constants.RT_ELBOW_TILT: 160},
+                ])
+            if landing == "LT":
+                return random.choice([
+                    {constants.RT_SHOULDER_ROTATOR: 120},
+                    {constants.RT_ELBOW_TILT: 130},
+                ])
+            return None  # CENTER -> no companion move
+
+        async def _companion_move(targets):
+            """Ease a companion joint to its target, eased like the primitive.
+
+            ``targets`` may be ``None`` (the previous swing landed CENTER, which
+            fires no companion); in that case this is a no-op so it can still be
+            gathered uniformly with the next swing.
+            """
+            if targets is None:
+                return
+            await self.trunkController.move_to(
+                targets,
+                steps=self._TH2_COMPANION_STEPS,
+                delay=self._TH2_COMPANION_DELAY,
+            )
+
+        async def _swing():
+            """One ch4 centering swing; returns its landing logical position."""
+            target = await self.randomized_centering_move(
+                constants.RT_ELBOW_ROTATOR,
+                center=self._TH2_ROT_CENTER,
+                half_range=self._TH2_ROT_HALF_RANGE,
+                jitter_pct=self._TH2_ROT_JITTER_PCT,
+                state_attr="_th2_rot_pos",
+            )
+            return min(order, key=lambda p: abs(target - nominals[p]))
+
+        # Ease the whole arm + head to the fixed start pose.
+        self._th2_rot_pos = self._TH2_ROT_CENTER
+        await self.trunkController.move_to(self._TH2_START, steps=45, delay=0.02)
+
+        # The companion for swing i runs CONCURRENTLY with swing i+1 (disjoint
+        # channels). ``pending`` carries the companion owed from the PREVIOUS
+        # swing's landing; the final one is gathered with the return-to-rest.
+        pending = None
+        for i in range(reps):
+            if i == 0:
+                # First swing has nothing to overlap with yet.
+                pending = _companion_for(await _swing())
+            else:
+                # Overlap the previous swing's companion with this swing.
+                _, landing = await asyncio.gather(
+                    _companion_move(pending), _swing())
+                pending = _companion_for(landing)
+            await asyncio.sleep(random.uniform(1.0, 2.5))
+
+        # Return to rest, gathering any owed companion so it is never dropped.
+        rest_move = self.trunkController.move_to(
+            constants.REST_POSITIONS, steps=45, delay=0.02)
+        if pending is not None:
+            await asyncio.gather(_companion_move(pending), rest_move)
+        else:
+            await rest_move
+
     async def present_palm(self):
         """Present palm: raise the forearm palm-up, gently bob it, then lower.
 

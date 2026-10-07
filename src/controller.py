@@ -58,6 +58,7 @@ def main(args):
         'fanNose':          mv.fan_nose,
         'tapSide':          mv.tap_side,
         'talkingWithHands': mv.talking_with_hands,
+        'talkingHandsII':   mv.talking_hands_ii,
 
         # --- HEAD gestures ---
         'yes':              mv.nod,
