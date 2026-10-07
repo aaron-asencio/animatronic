@@ -6,9 +6,34 @@ inclusion: always
 
 Follow these rules whenever you stage, commit, branch, push, or open pull requests in this repository.
 
+## Who these rules bind (read first)
+
+These rules apply to **every agent that touches git in this repo** — the
+orchestrator AND any delegated workflow/sub-agent (e.g. `wf-coder`,
+`wf-planner`, reviewers). "Implementing a feature" does **not** imply committing
+it. An agent's job ends with the working-tree changes made and verified; it
+leaves the commit to the user unless the user explicitly asked for a commit.
+
+When work is delegated to a workflow:
+
+- The orchestrator MUST state the git policy in the workflow brief: **do not
+  commit, do not create or switch branches, leave changes in the working tree**
+  unless the user explicitly requested a commit. If the user did request a
+  commit, the brief must name the feature branch to use (never `main`).
+- A delegated agent that was NOT told to commit MUST stop at verified
+  working-tree changes and report what it changed. It MUST NOT run
+  `git commit`, `git checkout -b`, `git merge`, or `git push` on its own
+  initiative.
+
 ## Golden Rules
 
-- Only create commits when the user explicitly asks. Never commit unprompted.
+- **Only create commits when the user explicitly asks. Never commit unprompted** —
+  this applies to delegated workflow agents exactly as it applies to the
+  orchestrator. Finishing an implementation is not permission to commit.
+- **Never commit directly to `main`.** `main` is not a commit target for
+  feature work under any circumstance. All work goes on a `<type>/<name>`
+  feature branch cut from an up-to-date `main`, even when the user has asked for
+  a commit.
 - Every feature branch starts from an up-to-date `main`. Never branch off another unmerged feature branch.
 - Stage files by name. Never use `git add .` or `git add -A`.
 - Never force-push, rebase, or reset shared branches without explicit user approval.
@@ -44,6 +69,15 @@ After merge:
 
 ## Anti-Patterns (do NOT do)
 
+- **Committing without the user asking** — including a delegated workflow agent
+  committing its own implementation because the task "felt done." No commit
+  unless the user explicitly requested one.
+- **Committing to `main`** — committing feature work straight onto `main`
+  instead of a feature branch. This has happened via delegated agents; the ban
+  applies to them too.
+- Delegating implementation work in a brief that is silent on git, letting the
+  agent choose to commit. The brief must state the no-commit (or
+  commit-on-named-branch) policy explicitly.
 - Branching `feature-B` off `feature-A` while `feature-A` is still an open PR.
 - Opening a PR whose base is an unmerged feature branch (it can merge into a stale base and never reach `main`, especially after a squash-merge).
 - Assuming a PR reached `main` just because it shows "merged" — always confirm the merge target.

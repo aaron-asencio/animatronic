@@ -16,7 +16,7 @@ inclusion: always
 
 ## Code Quality Standards
 - Never create duplicate files with suffixes like `_fixed`, `_clean`, `_backup`, etc.
-- Work iteratively on existing files (hooks handle commits automatically)
+- Work iteratively on existing files (do not commit unless the user asks — see Version Control Integration)
 - Include relevant documentation links in code comments
 - Follow language-specific conventions (TypeScript for CDK, Python for Lambda)
 - Use meaningful variable and function names
@@ -40,7 +40,12 @@ inclusion: always
 - Include setup and deployment instructions
 
 ## Version Control Integration
-- Commit frequently with meaningful messages
+- **Commit only when the user explicitly asks — never commit unprompted.** This
+  binds delegated workflow agents too, not just the orchestrator. See
+  `git-best-practices.md`, which is authoritative on all git policy. Where this
+  file and `git-best-practices.md` differ, follow `git-best-practices.md`.
+- **Never commit to `main`.** All work goes on a `<type>/<name>` feature branch
+  cut from an up-to-date `main`.
 - Use feature branches for development
 - Keep main branch deployable at all times
 - Tag releases appropriately
