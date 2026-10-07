@@ -3156,17 +3156,45 @@ class Movements:
             await asyncio.sleep(.5)
         await self.trunkController.neck_center()
 
-    async def neck_ellipse(self):
+    async def neck_ellipse(self, loops=2):
         """Trace an oval arc: pan + tilt simultaneously, return to center.
 
         Channels: NECK_PAN (0), NECK_TILT (1)
+
+        The head traces the ellipse ``loops`` times before returning to rest.
+        The opener and closer are eased through ``move_to`` so neither axis
+        snaps: at the start both neck channels glide from wherever they are to
+        the ellipse's starting pose, and at the end they glide back to level
+        rest (pan/tilt 90). This removes the tilt "jerk back" on start and the
+        tilt "jerk down" when finishing. Between consecutive loops the head
+        pauses a random 0.25-1.0s so repeated runs look organic rather than
+        metronomic.
+
+        Args:
+            loops: How many ellipse arcs to trace before returning to rest.
+                   Defaults to 2.
         """
-        await self.trunkController.neck_center()
-        neck_tilt = asyncio.create_task(self.trunkController.neck_tilt(0, 45))
-        neck_pan  = asyncio.create_task(self.trunkController.neck_pan())
-        await asyncio.gather(neck_tilt, neck_pan)
+        # Ellipse start pose: pan sweeps from 30, tilt from 30 (its safe floor).
+        ELLIPSE_PAN_START = 30
+        ELLIPSE_TILT_START = 30
+        # Ease both neck channels into the start pose so tilt doesn't snap from
+        # its current (possibly resting/level) angle.
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: ELLIPSE_PAN_START,
+             constants.NECK_TILT: ELLIPSE_TILT_START})
+        for i in range(loops):
+            neck_tilt = asyncio.create_task(self.trunkController.neck_tilt(0, 45))
+            neck_pan  = asyncio.create_task(self.trunkController.neck_pan())
+            await asyncio.gather(neck_tilt, neck_pan)
+            # Random inter-loop pause (skip after the last loop; the closing
+            # return-to-rest follows instead).
+            if i < loops - 1:
+                await asyncio.sleep(random.uniform(0.25, 1.0))
         await asyncio.sleep(1)
-        await self.trunkController.neck_center()
+        # Ease both neck channels back to level rest so tilt doesn't jerk down.
+        await self.trunkController.move_to(
+            {constants.NECK_PAN: constants.REST_POSITIONS[constants.NECK_PAN],
+             constants.NECK_TILT: constants.REST_POSITIONS[constants.NECK_TILT]})
 
     async def swivel_head(self):
         """Two consecutive neck ellipse arcs, then center.
