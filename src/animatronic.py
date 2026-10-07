@@ -609,6 +609,19 @@ class Animatronic:
         """
         self.run_action_and_audio("_do_awaken", self.music[26])  # awakened.wav
 
+    def exorcist(self):
+        """Exorcist — concurrent neckEllipse + talkingHandsII synced to audio.
+
+        Runs two Gestures at the SAME time over disjoint channels for the whole
+        ``beetel-exorcist.wav`` clip: ``neck_ellipse`` traces oval head arcs on
+        the neck (channels 0-1) while ``talking_hands_ii`` oscillates the arm
+        (channels 3-7). Both gestures loop to the audio DEADLINE so the motion
+        keeps going for the full ~6.7s clip (neither finishes early), then each
+        eases its own channels back to rest. Ungated: motion and audio start
+        together at t=0.
+        """
+        self.run_action_and_audio("_do_exorcist", self.music[0])  # beetel-exorcist.wav
+
     def sneeze(self):
         """Sneeze reaction — cover-mouth arm held until sneeze.wav ends, head snap 5s in.
 
@@ -4033,6 +4046,7 @@ class Animatronic:
             'yawn':           self.yawn,
             'snuckUp':        self.snuck_up,
             'awaken':         self.awaken,
+            'exorcist':       self.exorcist,
             'sneeze':         self.sneeze,
             # Performance-framework routines
             'brains':         self.brains,
@@ -4124,6 +4138,34 @@ class Animatronic:
         mv = Movements("Animatronic")
         duration = self._audio_duration_seconds(self.music[26])  # awakened.wav
         await mv.awaken(duration=duration)
+
+    async def _do_exorcist(self):
+        # Ungated: motion + audio start together at t=0. neck_ellipse (neck
+        # channels 0-1) and talking_hands_ii (arm channels 3-7) own DISJOINT
+        # channels, so they run CONCURRENTLY under one asyncio.gather (the
+        # Movements.awaken pattern). Each gesture is shorter than the clip, so
+        # each is looped to the audio DEADLINE: both keep moving for the whole
+        # beetel-exorcist.wav duration, then each eases its own channels back to
+        # REST_POSITIONS at the end of its final iteration.
+        mv = Movements("Animatronic")
+        duration = self._audio_duration_seconds(self.music[0])  # beetel-exorcist.wav
+        loop = asyncio.get_event_loop()
+        end = loop.time() + max(0.0, duration)
+
+        async def neck_loop():
+            """Trace neck ellipses (ch 0-1) until the audio deadline."""
+            while loop.time() < end:
+                await mv.neck_ellipse(loops=1)
+
+        async def arm_loop():
+            """Oscillate the talking-hands arm (ch 3-7) until the audio deadline."""
+            while loop.time() < end:
+                await mv.talking_hands_ii(reps=2)
+
+        await asyncio.gather(
+            asyncio.create_task(neck_loop()),
+            asyncio.create_task(arm_loop()),
+        )
 
     async def _do_come_get_candy(self):
         # Randomly pick ONE of the two "come toward me" arm gestures per
