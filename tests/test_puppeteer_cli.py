@@ -42,7 +42,7 @@ def _tracking_args(action):
         max_step=None, deadband=None, conf=None, scan_timeout=None,
         aim_frac=None, tilt_center=None, tilt_min=None, tilt_max=None,
         settle_gain=None,
-        nap_timeout=60, awake_timeout=300, scan_timeout_min=60,
+        nap_timeout_min=1, awake_timeout_min=5, scan_timeout_min=60,
     )
 
 

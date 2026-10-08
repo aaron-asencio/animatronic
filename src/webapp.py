@@ -183,19 +183,23 @@ _last_action = {'value': 'idle'}   # for status display
 # the watchdog kills the process, which releases the lock.
 GESTURE_TIMEOUT = 90
 
-# Nap timeout bounds (seconds). The nap is a Mode, not a gesture, so it has no
+# Nap timeout bounds (minutes). The nap is a Mode, not a gesture, so it has no
 # GESTURE_TIMEOUT watchdog — it runs until its own timeout, a sensor wake, or an
-# external stop. Floor keeps a nap from ending instantly; ceiling caps a single
-# nap at 15 minutes so a stray large value can't hold the servo lock for hours.
-NAP_MIN_TIMEOUT = 5
-NAP_MAX_TIMEOUT = 15 * 60  # 900s (15 minutes)
+# external stop. The floor is 0, which means "no timeout": the nap runs until it
+# is stopped manually (web stop button) or a sensor/preemption interrupts it —
+# the timeout deadline is simply never applied. The ceiling caps a single
+# timed nap at 120 minutes so a stray large value can't hold the servo lock
+# indefinitely.
+NAP_MIN_TIMEOUT_MIN = 0   # 0 = no timeout (run until manual stop / sensor)
+NAP_MAX_TIMEOUT_MIN = 120  # caps a single timed nap at 120 minutes
 
-# Awake mode timeout bounds (seconds). Like napping, Awake is a Mode with no
+# Awake mode timeout bounds (minutes). Like napping, Awake is a Mode with no
 # GESTURE_TIMEOUT watchdog — it runs ambient Routines until its own timeout, a
-# sensor, or an external stop. Floor keeps it from ending instantly; ceiling
-# caps a single awake session at 30 minutes.
-AWAKE_MIN_TIMEOUT = 5
-AWAKE_MAX_TIMEOUT = 30 * 60  # 1800s (30 minutes)
+# sensor, or an external stop. The floor is 0 = "no timeout" (run until manual
+# stop / sensor; the deadline is never applied); the ceiling caps a single
+# timed awake session at 120 minutes.
+AWAKE_MIN_TIMEOUT_MIN = 0   # 0 = no timeout (run until manual stop / sensor)
+AWAKE_MAX_TIMEOUT_MIN = 120  # caps a single timed awake session at 120 minutes
 
 
 # ── Subprocess launchers ─────────────────────────────────────────────────────
@@ -214,34 +218,34 @@ def run_movement(action):
     return subprocess.Popen(cmd, cwd=PROJECT_DIR)
 
 
-def run_napping(timeout_seconds):
+def run_napping(timeout_min):
     """Launch animatronic.py --action=napping (the napping MODE).
 
     A Mode runs until interrupted; it holds the servo lock for its whole run.
     Popen (non-blocking) so the HTTP response returns immediately.
 
     Args:
-        timeout_seconds: Seconds before the nap's timeout wake fires.
+        timeout_min: Minutes before the nap's timeout wake fires.
     """
     cmd = [VENV_PYTHON, ANIMATRONIC, '--action=napping',
-           f'--nap-timeout={int(timeout_seconds)}']
+           f'--nap-timeout-min={int(timeout_min)}']
     print(f"[napping] {' '.join(cmd)}")
     # Fresh run: clear any stale stop request so the mode doesn't exit at once.
     nap_signal.clear_stop()
     return subprocess.Popen(cmd, cwd=PROJECT_DIR)
 
 
-def run_awake(timeout_seconds):
+def run_awake(timeout_min):
     """Launch animatronic.py --action=awake (the awake MODE).
 
     A Mode runs until interrupted; it holds the servo lock for its whole run.
     Popen (non-blocking) so the HTTP response returns immediately.
 
     Args:
-        timeout_seconds: Seconds before the awake timeout ends the mode.
+        timeout_min: Minutes before the awake timeout ends the mode.
     """
     cmd = [VENV_PYTHON, ANIMATRONIC, '--action=awake',
-           f'--awake-timeout={int(timeout_seconds)}']
+           f'--awake-timeout-min={int(timeout_min)}']
     print(f"[awake] {' '.join(cmd)}")
     # Fresh run: clear any stale stop request so the mode doesn't exit at once.
     nap_signal.clear_stop()
@@ -731,6 +735,9 @@ def index():
         scan_pool_routines=SCAN_POOL_ROUTINES,
         scan_pool_gestures=SCAN_POOL_GESTURES,
         scan_pools=config_store.load_scan_pools(),
+        # The persisted scan timeout (0..120, 0 = no timeout) so the scan
+        # <select> can pre-select the stored value's <option>.
+        scan_timeout_min=config_store.load_scan_timeout(),
         styles=VOICE_STYLES,
         effects=VOICE_EFFECTS,
         mode_reference=MODE_INTERRUPT_REFERENCE,
@@ -772,7 +779,7 @@ def stop():
 
 
 # ── Route: napping mode ──────────────────────────────────────────────────────
-def launch_napping(timeout_seconds):
+def launch_napping(timeout_min):
     """Serialised launch of the napping MODE subprocess.
 
     Mirrors ``launch_gesture``'s check-and-spawn under ``_launch_lock`` and
@@ -794,34 +801,47 @@ def launch_napping(timeout_seconds):
         if _gesture_busy():
             active = _active_proc['label'] or 'another process'
             return False, f'Servos busy — {active} is still running.'
-        proc = run_napping(timeout_seconds)
+        proc = run_napping(timeout_min)
         _active_proc['proc'] = proc
         _active_proc['label'] = 'napping'
         _last_action['value'] = 'napping'
-        return True, f'napping started (timeout {int(timeout_seconds)}s)'
+        if int(timeout_min) == 0:
+            return True, 'napping started (no timeout)'
+        return True, f'napping started (timeout {int(timeout_min)} min)'
 
 
 @app.route('/nap/<state>', methods=['POST'])
 def nap(state):
     """Start or stop the napping MODE.
 
-    - ``start``: launch napping (optional JSON ``{"timeout": <seconds>}``,
-      default 60, clamped to 5s..15min). A Mode runs until interrupted.
+    - ``start``: launch napping (optional JSON ``{"timeout_min": <minutes>}``,
+      0..120 where 0 = no timeout; default 0 = no timeout when omitted). A Mode
+      runs until interrupted.
     - ``stop``: ask a running nap to wind down via the cross-process stop
       signal; it wakes the head, releases the servo lock, and exits.
     """
     if state == 'start':
         data = request.json or {}
-        try:
-            timeout_seconds = int(data.get('timeout', 60))
-        except (TypeError, ValueError):
-            return jsonify({'status': 'error', 'message': 'timeout must be an integer'}), 400
-        # Clamp into [NAP_MIN_TIMEOUT, NAP_MAX_TIMEOUT] (5s .. 15 min).
-        timeout_seconds = max(NAP_MIN_TIMEOUT,
-                              min(NAP_MAX_TIMEOUT, timeout_seconds))
+        minutes = data.get('timeout_min')
+        if minutes is not None:
+            # Mirror /scan's strict validation: reject a non-int AND an
+            # out-of-range value with 400 rather than silently clamping. bool is
+            # an int subclass, so reject it explicitly. The range is [0,120]
+            # (integer range only — the 10-minute increment is a UI concern);
+            # 0 = no timeout.
+            if isinstance(minutes, bool) or not isinstance(minutes, int):
+                return jsonify({'status': 'error',
+                                'message': 'timeout_min must be an integer'}), 400
+            if not (NAP_MIN_TIMEOUT_MIN <= minutes <= NAP_MAX_TIMEOUT_MIN):
+                return jsonify({'status': 'error',
+                                'message': 'timeout_min must be between 0 and 120'}), 400
+        else:
+            # Omitted: default to 0 = No timeout (matches the new first UI
+            # option — the mode runs until manually stopped or sensor-woken).
+            minutes = 0
         # Route through _launch_mode so requesting napping while a DIFFERENT mode
         # runs preempts it gracefully (FR8) instead of a 409 "busy" refusal.
-        ok, message = _launch_mode(launch_napping, timeout_seconds)
+        ok, message = _launch_mode(launch_napping, minutes)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
@@ -833,7 +853,7 @@ def nap(state):
 
 
 # ── Route: awake mode ────────────────────────────────────────────────────────
-def launch_awake(timeout_seconds):
+def launch_awake(timeout_min):
     """Serialised launch of the awake MODE subprocess.
 
     Mirrors ``launch_napping``: check-and-spawn under ``_launch_lock``, track the
@@ -854,34 +874,47 @@ def launch_awake(timeout_seconds):
         if _gesture_busy():
             active = _active_proc['label'] or 'another process'
             return False, f'Servos busy — {active} is still running.'
-        proc = run_awake(timeout_seconds)
+        proc = run_awake(timeout_min)
         _active_proc['proc'] = proc
         _active_proc['label'] = 'awake'
         _last_action['value'] = 'awake'
-        return True, f'awake started (timeout {int(timeout_seconds)}s)'
+        if int(timeout_min) == 0:
+            return True, 'awake started (no timeout)'
+        return True, f'awake started (timeout {int(timeout_min)} min)'
 
 
 @app.route('/awake/<state>', methods=['POST'])
 def awake(state):
     """Start or stop the awake MODE.
 
-    - ``start``: launch awake (optional JSON ``{"timeout": <seconds>}``, default
-      300, clamped to 5s..30min). A Mode runs ambient Routines until interrupted.
+    - ``start``: launch awake (optional JSON ``{"timeout_min": <minutes>}``,
+      0..120 where 0 = no timeout; default 0 = no timeout when omitted). A Mode
+      runs ambient Routines until interrupted.
     - ``stop``: ask a running awake mode to wind down via the cross-process stop
       signal; it finishes the current routine, returns to rest, releases the
       servo lock, and exits.
     """
     if state == 'start':
         data = request.json or {}
-        try:
-            timeout_seconds = int(data.get('timeout', 300))
-        except (TypeError, ValueError):
-            return jsonify({'status': 'error', 'message': 'timeout must be an integer'}), 400
-        # Clamp into [AWAKE_MIN_TIMEOUT, AWAKE_MAX_TIMEOUT] (5s .. 30 min).
-        timeout_seconds = max(AWAKE_MIN_TIMEOUT,
-                              min(AWAKE_MAX_TIMEOUT, timeout_seconds))
+        minutes = data.get('timeout_min')
+        if minutes is not None:
+            # Mirror /scan's strict validation: reject a non-int AND an
+            # out-of-range value with 400 rather than silently clamping. bool is
+            # an int subclass, so reject it explicitly. The range is [0,120]
+            # (integer range only — the 10-minute increment is a UI concern);
+            # 0 = no timeout.
+            if isinstance(minutes, bool) or not isinstance(minutes, int):
+                return jsonify({'status': 'error',
+                                'message': 'timeout_min must be an integer'}), 400
+            if not (AWAKE_MIN_TIMEOUT_MIN <= minutes <= AWAKE_MAX_TIMEOUT_MIN):
+                return jsonify({'status': 'error',
+                                'message': 'timeout_min must be between 0 and 120'}), 400
+        else:
+            # Omitted: default to 0 = No timeout (matches the new first UI
+            # option — the mode runs until manually stopped or sensor-woken).
+            minutes = 0
         # Route through _launch_mode for graceful mode-switch preemption (FR8).
-        ok, message = _launch_mode(launch_awake, timeout_seconds)
+        ok, message = _launch_mode(launch_awake, minutes)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
@@ -1008,6 +1041,8 @@ def launch_scan(timeout_min):
         _active_proc['proc'] = proc
         _active_proc['label'] = 'scan'
         _last_action['value'] = 'scan'
+        if int(timeout_min) == 0:
+            return True, 'scan started (no timeout)'
         return True, f'scan started (timeout {int(timeout_min)} min)'
 
 
@@ -1017,9 +1052,10 @@ def scan(state):
 
     - ``start``: validate against the ``SCAN_ACTIONS`` allowlist (Req 9.1/9.2),
       then launch Scan. The timeout minutes come from JSON ``{"timeout_min":
-      <int>}`` — if provided it MUST be an int in [1, 120] (both a non-int AND an
-      out-of-range value are rejected with 400, stricter than ``/tracking``); if
-      omitted it falls back to the persisted ``config_store.load_scan_timeout()``.
+      <int>}`` — if provided it MUST be an int in [0, 120] (0 = no timeout; both
+      a non-int AND an out-of-range value are rejected with 400, stricter than
+      ``/tracking``); if omitted it falls back to the persisted
+      ``config_store.load_scan_timeout()``.
       The chosen value is persisted via ``config_store.save_scan_timeout`` before
       launch. A Mode runs until interrupted; it is NOT given a GESTURE_TIMEOUT
       watchdog.
@@ -1044,11 +1080,11 @@ def scan(state):
             if isinstance(minutes, bool) or not isinstance(minutes, int):
                 return jsonify({'status': 'error',
                                 'message': 'timeout_min must be an integer'}), 400
-            if not (1 <= minutes <= 120):
+            if not (0 <= minutes <= 120):
                 return jsonify({'status': 'error',
-                                'message': 'timeout_min must be between 1 and 120'}), 400
+                                'message': 'timeout_min must be between 0 and 120'}), 400
         else:
-            # Omitted: use the persisted (or default 60) timeout.
+            # Omitted: use the persisted (or default 60) timeout. 0 = no timeout.
             minutes = config_store.load_scan_timeout()
         # Persist the chosen value so it survives a restart and is the next
         # default (returns the clamped int actually stored).

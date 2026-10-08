@@ -293,7 +293,7 @@
         <div class="section-title">Napping</div>
         <div class="mode-control-row">
           <button class="action" id="nap-start-btn" onclick="startNap()"
-                  title="Start napping mode with the timeout in Config.">😴 Start nap</button>
+                  title="Start napping mode with the timeout in Config (choose No timeout to run until stopped).">😴 Start nap</button>
           <button class="action" id="nap-stop-btn" onclick="stopNap()" disabled
                   title="Wake the figure: the nap winds down, raises the head, and releases the servos.">
             ⏹ Stop nap
@@ -305,7 +305,7 @@
         <div class="section-title">Awake</div>
         <div class="mode-control-row">
           <button class="action" id="awake-start-btn" onclick="startAwake()"
-                  title="Start awake mode with the timeout in Config.">🙂 Start awake</button>
+                  title="Start awake mode with the timeout in Config (choose No timeout to run until stopped).">🙂 Start awake</button>
           <button class="action" id="awake-stop-btn" onclick="stopAwake()" disabled
                   title="Wind down awake mode: it finishes the current routine, returns to rest, and releases the servos.">
             ⏹ Stop awake
@@ -317,7 +317,7 @@
         <div class="section-title">Scan</div>
         <div class="mode-control-row">
           <button class="action" id="scan-start-btn" onclick="startScan()"
-                  title="Start scan mode with the timeout in Config.">🔎 Start scan</button>
+                  title="Start scan mode with the timeout in Config (choose No timeout to run until stopped).">🔎 Start scan</button>
           <button class="action" id="scan-stop-btn" onclick="stopScan()" disabled
                   title="Wind down scan mode: it cancels any in-flight response, recenters the head, and releases the servos.">
             ⏹ Stop scan
@@ -487,10 +487,22 @@
       </div>
     </div>
     <div class="row">
-      <label>Nap timeout<br><small style="color:var(--muted)">seconds before the head raises</small></label>
-      <input type="range" id="nap-timeout" min="5" max="900" step="5" value="60"
-             oninput="document.getElementById('v-nap-timeout').textContent = this.value">
-      <span class="val" id="v-nap-timeout">60</span>
+      <label>Nap timeout<br><small style="color:var(--muted)">minutes before the head raises; "No timeout" runs until you stop it (or a sensor wakes it)</small></label>
+      <select id="nap-timeout">
+        <option value="0" selected>No timeout</option>
+        <option value="10">10 min</option>
+        <option value="20">20 min</option>
+        <option value="30">30 min</option>
+        <option value="40">40 min</option>
+        <option value="50">50 min</option>
+        <option value="60">60 min</option>
+        <option value="70">70 min</option>
+        <option value="80">80 min</option>
+        <option value="90">90 min</option>
+        <option value="100">100 min</option>
+        <option value="110">110 min</option>
+        <option value="120">120 min</option>
+      </select>
     </div>
     </div>
 
@@ -543,10 +555,22 @@
       </div>
     </div>
     <div class="row">
-      <label>Awake timeout<br><small style="color:var(--muted)">seconds before the mode winds down</small></label>
-      <input type="range" id="awake-timeout" min="5" max="1800" step="5" value="300"
-             oninput="document.getElementById('v-awake-timeout').textContent = this.value">
-      <span class="val" id="v-awake-timeout">300</span>
+      <label>Awake timeout<br><small style="color:var(--muted)">minutes before the mode winds down; "No timeout" runs until you stop it (or a sensor interrupts it)</small></label>
+      <select id="awake-timeout">
+        <option value="0" selected>No timeout</option>
+        <option value="10">10 min</option>
+        <option value="20">20 min</option>
+        <option value="30">30 min</option>
+        <option value="40">40 min</option>
+        <option value="50">50 min</option>
+        <option value="60">60 min</option>
+        <option value="70">70 min</option>
+        <option value="80">80 min</option>
+        <option value="90">90 min</option>
+        <option value="100">100 min</option>
+        <option value="110">110 min</option>
+        <option value="120">120 min</option>
+      </select>
     </div>
     </div>
 
@@ -601,8 +625,13 @@
       </div>
     </div>
     <div class="row">
-      <label>Scan timeout<br><small style="color:var(--muted)">minutes before the mode winds down (1–120)</small></label>
-      <input type="number" id="scan-timeout-min" min="1" max="120" step="1" value="60">
+      <label>Scan timeout<br><small style="color:var(--muted)">minutes before the mode winds down; "No timeout" runs until you stop it (or a routine/movement button winds it down)</small></label>
+      <select id="scan-timeout-min">
+        <option value="0"{% if scan_timeout_min == 0 %} selected{% endif %}>No timeout</option>
+        {% for m in [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120] %}
+        <option value="{{ m }}"{% if scan_timeout_min == m %} selected{% endif %}>{{ m }} min</option>
+        {% endfor %}
+      </select>
     </div>
 
     <!-- Scan response pool: operator-selectable + weighted routines/gestures.
@@ -1142,16 +1171,16 @@
 
     // ── Napping mode ─────────────────────────────────────────────────────────
     async function startNap() {
-      const timeout = +document.getElementById('nap-timeout').value;
+      const minutes = +document.getElementById('nap-timeout').value;
       const res = await fetch('/nap/start', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({timeout}),
+        body: JSON.stringify({timeout_min: minutes}),
       });
       let data = {};
       try { data = await res.json(); } catch (e) {}
       if (res.ok && data.status === 'success') {
-        toast('Napping (' + timeout + 's)');
+        toast(minutes === 0 ? 'Napping (no timeout)' : 'Napping (' + minutes + ' min)');
         setNapActive(true);
       } else {
         toast(data.message || 'Could not start nap', true);
@@ -1174,16 +1203,16 @@
 
     // ── Awake mode ───────────────────────────────────────────────────────────
     async function startAwake() {
-      const timeout = +document.getElementById('awake-timeout').value;
+      const minutes = +document.getElementById('awake-timeout').value;
       const res = await fetch('/awake/start', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({timeout}),
+        body: JSON.stringify({timeout_min: minutes}),
       });
       let data = {};
       try { data = await res.json(); } catch (e) {}
       if (res.ok && data.status === 'success') {
-        toast('Awake (' + timeout + 's)');
+        toast(minutes === 0 ? 'Awake (no timeout)' : 'Awake (' + minutes + ' min)');
         setAwakeActive(true);
       } else {
         toast(data.message || 'Could not start awake', true);
@@ -1215,7 +1244,7 @@
       let data = {};
       try { data = await res.json(); } catch (e) {}
       if (res.ok && data.status === 'success') {
-        toast('Scan (' + minutes + ' min)');
+        toast(minutes === 0 ? 'Scan (no timeout)' : 'Scan (' + minutes + ' min)');
         setScanActive(true);
       } else {
         toast(data.message || 'Could not start scan', true);

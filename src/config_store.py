@@ -49,7 +49,10 @@ VOICE_STYLES_PREVIOUS_KEY = "voice_styles_previous"
 SCAN_KEY = "scan"
 SCAN_TIMEOUT_KEY = "timeout_min"
 SCAN_TIMEOUT_DEFAULT_MIN = 60
-SCAN_TIMEOUT_MIN = 1
+# Valid range is [0, 120] minutes, where 0 means "no timeout / run until
+# manually stopped" (the mode's timeout deadline is simply never applied). The
+# default when unset stays 60.
+SCAN_TIMEOUT_MIN = 0
 SCAN_TIMEOUT_MAX = 120
 
 # --- Scan responder pool persistence ----------------------------------------
@@ -457,10 +460,11 @@ class ConfigStore:
         Reads the ``scan.timeout_min`` value from the Config_File. Any missing
         file/section, corrupt content, or non-integer value yields the default
         (``SCAN_TIMEOUT_DEFAULT_MIN``). Valid values are coerced to int and
-        clamped to ``[SCAN_TIMEOUT_MIN, SCAN_TIMEOUT_MAX]``. Never raises.
+        clamped to ``[SCAN_TIMEOUT_MIN, SCAN_TIMEOUT_MAX]`` (``[0, 120]``, where
+        0 means "no timeout / run until manually stopped"). Never raises.
 
         Returns:
-            The scan timeout in minutes as an int in [1, 120].
+            The scan timeout in minutes as an int in [0, 120] (0 = no timeout).
         """
         raw = self._load_raw()
         section = raw.get(SCAN_KEY, {})
@@ -477,7 +481,8 @@ class ConfigStore:
         """Persist the scan-mode timeout in minutes, preserving other sections.
 
         Validates/coerces ``minutes`` to an int and clamps it to
-        ``[SCAN_TIMEOUT_MIN, SCAN_TIMEOUT_MAX]`` before writing. The existing
+        ``[SCAN_TIMEOUT_MIN, SCAN_TIMEOUT_MAX]`` (``[0, 120]``, where 0 means
+        "no timeout / run until manually stopped") before writing. The existing
         raw JSON is loaded first so other top-level sections (``profiles``,
         ``voice_styles``, ``voice_styles_previous``) are preserved.
 
@@ -620,7 +625,7 @@ def load_scan_timeout():
     """Load the scan-mode timeout (minutes) via the default store.
 
     Returns:
-        The scan timeout in minutes as an int in [1, 120].
+        The scan timeout in minutes as an int in [0, 120] (0 = no timeout).
     """
     return _default_store.load_scan_timeout()
 
@@ -629,7 +634,8 @@ def save_scan_timeout(minutes):
     """Persist the scan-mode timeout (minutes) via the default store.
 
     Args:
-        minutes: The requested timeout in minutes (coerced/clamped to [1, 120]).
+        minutes: The requested timeout in minutes (coerced/clamped to [0, 120],
+                 where 0 = no timeout).
 
     Returns:
         The clamped int that was persisted.
