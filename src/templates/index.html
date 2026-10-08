@@ -1191,6 +1191,44 @@
       toast('Waking…');
       // The mode winds down on its own; the status poll flips the buttons back.
     }
+    // ── Cross-mode button exclusivity ────────────────────────────────────────
+    // Only one background Mode may own the robot at a time. Track which mode is
+    // currently active (null = all idle) and gate every mode's Start button so
+    // the operator can't launch a second mode while one is running. Each
+    // setXActive() reports its state here; the status poll is the source of
+    // truth, so it stays correct across auto-wind-down and preemption too.
+    //
+    // Rule: if ANY mode is active, disable every mode's Start button; if none is
+    // active, enable them all. (Only one mode runs at a time in practice, so a
+    // single active flag is sufficient.) Each mode's own Stop button is handled
+    // by its setXActive(); this helper only touches Start buttons so an idle
+    // transition can never leave one stuck disabled.
+    const MODE_START_BTN_IDS =
+      ['nap-start-btn', 'awake-start-btn', 'scan-start-btn',
+       'puppeteer-start-btn', 'tracking-start-btn'];
+    let _activeMode = null;   // 'nap' | 'awake' | 'scan' | 'puppeteer' | null
+    function setModeActive(name, active) {
+      if (active) _activeMode = name;
+      else if (_activeMode === name) _activeMode = null;
+      const anyActive = _activeMode !== null;
+      MODE_START_BTN_IDS.forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.disabled = anyActive;
+      });
+      // A Mode other than Puppeteer owns the jaw/audio path, so it interrupts
+      // the live mic Stream. The backend already auto-stops the mic when these
+      // modes launch; stop it from the client too so the toggle reflects the
+      // stopped state immediately instead of waiting for the next status poll.
+      // Puppeteer is excluded — it *is* the mic Stream and must keep it running.
+      if (active && name !== 'puppeteer') {
+        const micToggle = document.getElementById('mic-toggle');
+        if (micToggle && micToggle.checked) {
+          micToggle.checked = false;
+          toggleMic(false);
+        }
+      }
+    }
+
     // Reflect nap active/idle state in the Start/Stop buttons + label.
     function setNapActive(active) {
       const startBtn = document.getElementById('nap-start-btn');
@@ -1199,6 +1237,7 @@
       if (startBtn) startBtn.disabled = active;
       if (stopBtn) stopBtn.disabled = !active;
       if (status) status.textContent = active ? 'napping…' : '';
+      setModeActive('nap', active);
     }
 
     // ── Awake mode ───────────────────────────────────────────────────────────
@@ -1231,6 +1270,7 @@
       if (startBtn) startBtn.disabled = active;
       if (stopBtn) stopBtn.disabled = !active;
       if (status) status.textContent = active ? 'awake…' : '';
+      setModeActive('awake', active);
     }
 
     // ── Scan mode ──────────────────────────────────────────────────────────
@@ -1281,6 +1321,7 @@
       if (stopBtn) stopBtn.disabled = !active;
       if (status) status.textContent = active ? 'scanning…' : '';
       syncOverlayToScan(active);
+      setModeActive('scan', active);
     }
 
     // ── Puppeteer mode ─────────────────────────────────────────────────────
@@ -1317,6 +1358,7 @@
       if (startBtn) startBtn.disabled = active;
       if (stopBtn)  stopBtn.disabled  = !active;
       if (status)   status.textContent = active ? 'puppeteering…' : '';
+      setModeActive('puppeteer', active);
       applyPuppeteerGating(active);
     }
 
@@ -1325,7 +1367,9 @@
     //  - Head/neck Gesture buttons DISABLED (would fight the Neck_Group lock).
     //  - Arm-only Gesture buttons ENABLED (disjoint channels 4-7) — left to the
     //    normal busy gating, which pollStatus suppresses for a neck-only hold.
-    //  - Other Mode start buttons DISABLED (napping/awake/scan/tracking).
+    //  - Other Mode start buttons DISABLED: handled by the shared setModeActive()
+    //    exclusivity (called from setPuppeteerActive), so it is NOT duplicated
+    //    here. Every mode now gates the others the same way.
     //  - Standalone mic toggle DISABLED (reflective-only): Puppeteer start/stop
     //    is the single mic authority while it governs the Stream (FR12). The
     //    single `disabled = active` line both disables on entry and re-enables
@@ -1333,10 +1377,6 @@
     function applyPuppeteerGating(active) {
       document.querySelectorAll('.routine-btn').forEach(b => { b.disabled = active; });
       document.querySelectorAll('.gesture-btn[data-group="head"]').forEach(b => { b.disabled = active; });
-      if (active) {
-        ['nap-start-btn','awake-start-btn','scan-start-btn','tracking-start-btn']
-          .forEach(id => { const b = document.getElementById(id); if (b) b.disabled = true; });
-      }
       const micToggle = document.getElementById('mic-toggle');
       if (micToggle) micToggle.disabled = active;
     }
