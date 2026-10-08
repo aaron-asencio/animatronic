@@ -254,3 +254,10 @@ def test_index_renders_puppeteer_controls(client):
     assert 'data-group="arm"' in html
     assert 'data-group="head"' in html
     assert 'routine-btn' in html
+    # Puppeteer Config-tab reference section (mirrors the Scan/Awake/Napping
+    # mode sections) renders with its mode_reference['Puppeteer'] data.
+    assert 'Puppeteer mode' in html
+    assert 'Camera person detection (Camera_Service)' in html
+    # ambient_gestures value from MODE_INTERRUPT_REFERENCE['Puppeteer']; Jinja
+    # HTML-escapes '->' to '-&gt;' in the rendered output.
+    assert 'Neck tracking / Scan_Sweep -&gt; recenter+idle (NECK_PAN)' in html

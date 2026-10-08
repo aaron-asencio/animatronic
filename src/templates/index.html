@@ -431,7 +431,7 @@
        load <strong>demon</strong> then push Distortion above 0.8 and drop Pitch toward 0.6.</p>
   </div>
 
-  <!-- CONFIG: consolidates Napping, Awake, Scan, Sensor range, Jaw Tuning -->
+  <!-- CONFIG: consolidates Napping, Awake, Scan, Puppeteer, Sensor range, Jaw Tuning -->
   <div class="panel" id="config">
 
     <!-- (a) Napping -->
@@ -660,6 +660,63 @@
                 title="Save the selected routines/gestures and weights as Scan's response pool.">
           💾 Save scan pool
         </button>
+      </div>
+    </div>
+    </div>
+
+    <!-- (c2) Puppeteer: reference-only. Puppeteer is neck-only tracking + the
+         operator's live mic Stream + operator-triggered arm Gestures. It owns
+         ONLY the Neck_Group, suppresses detection->Routine triggering, and
+         does NOT wind down on a camera Scan_Sweep timeout (it recenters and
+         idles until a person returns), so there is NO timeout input and NO
+         response pool — unlike Scan. Start/stop is in the top controls. -->
+    <div class="config-section">
+    <div class="section-title">Puppeteer mode</div>
+    <p class="hint" style="margin-top:0;">A live-performance mode: you voice the
+       figure through the mic while the head tracks a detected person and you
+       trigger arm gestures by hand. The head keeps only the neck (so arm-only
+       gestures still work over the top), detection never auto-fires a routine,
+       and if the camera loses the person the head recenters and waits rather
+       than stopping. Runs until you stop it (or another mode/routine preempts
+       it). Start/stop is in the top controls.</p>
+    <div class="tune-group">
+      <div class="section-title">Mode reference</div>
+
+      {# No Audio sub-row: Puppeteer's audio is the operator's live mic Stream,
+         not a dispatched clip, so there is nothing to list here. Same reason
+         Scan/Awake omit the Audio row. #}
+
+      <!-- Section 1: Sensors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Sensors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Live:</span>
+            {{ mode_reference['Puppeteer'].sensors | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Planned:</span>
+            {{ mode_reference['Puppeteer'].planned_sensors | join(', ') or '(none planned)' }}
+        </p>
+      </div>
+
+      <!-- Section 2: Ambient (looping) behaviors -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Ambient (looping) behaviors</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Puppeteer'].ambient_routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Puppeteer'].ambient_gestures | join(', ') or '(N/A)' }}
+        </p>
+      </div>
+
+      <!-- Section 3: Interrupt behaviors (triggered by sensor) -->
+      <div class="mode-ref-section">
+        <div class="mode-ref mode-ref-sub">Interrupt behaviors (triggered by sensor)</div>
+        <p class="hint mode-ref" style="margin:0;">
+          <span class="mode-ref-label">Routines:</span>
+            {{ mode_reference['Puppeteer'].routines | join(', ') or '(N/A)' }}<br>
+          <span class="mode-ref-label">Gestures:</span>
+            {{ mode_reference['Puppeteer'].gestures | join(', ') or '(N/A)' }}
+        </p>
       </div>
     </div>
     </div>
