@@ -145,7 +145,7 @@ animatronic-v2/
 ├── tests/                      # pytest suite (hypothesis property + unit tests)
 ├── audio/                      # WAV/MP3 files — the source of truth, resolved directly at runtime
 ├── models/                     # Camera detector: coco_labels.txt (tracked) + *.tflite (gitignored)
-├── deploy/                     # Deployment assets (systemd unit for Camera_Service)
+├── deploy/                     # systemd units: web panel, mic controller, Camera_Service
 ├── .venv/                      # Python virtualenv (repo root, built --system-site-packages)
 ├── requirements.txt
 └── README.md
@@ -766,6 +766,54 @@ curl -X POST http://localhost:5000/effects \
 
 `GET /status` returns the current jaw config, effect config, and available
 styles.
+
+---
+
+## Running the control panel on boot (systemd)
+
+The web control panel (`src/webapp.py`, :8000) and the mic controller
+(`src/micwebcontroller.py`, loopback :5000) can run as systemd services so they
+start automatically on every reboot and restart on failure. Two units are
+provided in `deploy/`:
+
+| Unit | Script | Bind | Purpose |
+|------|--------|------|---------|
+| `animatronic-webapp.service` | `src/webapp.py` | `0.0.0.0:8000` | Primary operator UI |
+| `animatronic-micweb.service` | `src/micwebcontroller.py` | `127.0.0.1:5000` | Mic stream + jaw + voice FX (proxied by the panel) |
+
+Both run as **root** (for I2C/GPIO/audio access, matching the manual
+`sudo .venv/bin/python3 src/<script>.py` invocation) with `PYTHONPATH=src` and
+the venv interpreter. The reloaders are disabled in the units
+(`WEBAPP_DEV=0` / `MICWEB_DEV=0`) so a code-watch reload never interrupts a
+running routine or the live mic stream. `animatronic-webapp` pulls in
+`animatronic-micweb`, so enabling/starting the panel brings the mic controller
+up with it.
+
+Install and enable both (the mic unit is started as a dependency of the panel,
+but enable it too so it survives a standalone restart):
+
+```bash
+sudo cp deploy/animatronic-webapp.service /etc/systemd/system/animatronic-webapp.service
+sudo cp deploy/animatronic-micweb.service /etc/systemd/system/animatronic-micweb.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now animatronic-micweb      # start now + on every boot
+sudo systemctl enable --now animatronic-webapp      # start now + on every boot
+
+journalctl -u animatronic-webapp -f                 # follow panel logs
+journalctl -u animatronic-micweb -f                 # follow mic controller logs
+curl -s http://127.0.0.1:8000/ -o /dev/null -w '%{http_code}\n'   # panel up?
+```
+
+After editing a unit, re-copy it, `daemon-reload`, then `restart` — a plain
+`restart` reloads the OLD installed copy:
+
+```bash
+sudo cp deploy/animatronic-webapp.service /etc/systemd/system/animatronic-webapp.service
+sudo systemctl daemon-reload && sudo systemctl restart animatronic-webapp
+```
+
+Note: run these services OR a manual `sudo .venv/bin/python3 src/webapp.py` —
+not both, since they would both try to bind port 8000 and claim the servo lock.
 
 ---
 
