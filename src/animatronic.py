@@ -1839,9 +1839,11 @@ class Animatronic:
 
         Interruption signals (checked between whole sleep cycles):
 
-        - **Timeout** (``timeout_seconds``, default 60, configurable): the nap
+        - **Timeout** (``timeout_seconds``; the CLI knob is in MINUTES,
+          0..120 where 0 = no timeout / manual stop only): the nap
           ends and the head is RAISED exactly as at the end of the ``sleep``
-          routine (``sleep_snore_return``).
+          routine (``sleep_snore_return``). When 0/None there is NO timeout
+          deadline — only the sensor and external stop can end the nap.
         - **Sensor** (HC-SR04 approach, see ``_poll_nap_sensor``): when an
           object is confirmed approaching (three consecutive closer readings
           within ``NAP_WAKE_GATE_M``), runs the ``_startle`` response instead of
@@ -1858,7 +1860,11 @@ class Animatronic:
 
         Args:
             timeout_seconds: How long to nap before the timeout interruption
-                raises the head. Default 60s; configurable via the CLI.
+                raises the head. In SECONDS (the hardware-facing unit); the CLI
+                knob that sets it is in MINUTES (``--nap-timeout-min``, 0..120
+                where 0 = no timeout) and is converted at the dispatch site. A
+                falsy value (0/None) runs with NO timeout — manual stop or
+                sensor only.
         """
         # Clear any stale stop request from a previous run so we start clean.
         nap_signal.clear_stop()
@@ -1914,6 +1920,8 @@ class Animatronic:
 
         Args:
             timeout_seconds: Seconds after which the timeout interruption fires.
+                A falsy value (0/None) means NO timeout deadline — only the
+                sensor and external stop end the nap.
 
         Returns:
             One of NAP_INTERRUPT_TIMEOUT / NAP_INTERRUPT_SENSOR /
@@ -1921,7 +1929,13 @@ class Animatronic:
         """
         mv = Movements("Animatronic")
         audio_dir = self._resolve_audio_dir()
-        deadline = time.monotonic() + max(1, timeout_seconds)
+        # No timeout when timeout_seconds is 0/None: the deadline is simply never
+        # applied, so ONLY the sensor and external stop can end the nap. The
+        # max(1, ...) floor applies ONLY to real positive durations — a 0 must
+        # NOT become a 1-second timeout.
+        deadline = (
+            time.monotonic() + max(1, timeout_seconds) if timeout_seconds else None
+        )
 
         # Head drops asleep and the neck-tilt override opens (held until wake).
         await mv.sleep_snore_lead_in()
@@ -1959,7 +1973,7 @@ class Animatronic:
                 if self._poll_nap_sensor():
                     reason = self.NAP_INTERRUPT_SENSOR
                     break
-                if time.monotonic() >= deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     reason = self.NAP_INTERRUPT_TIMEOUT
                     break
 
@@ -2163,8 +2177,10 @@ class Animatronic:
           toggle the mic in its place; the mode ends and exits so the servo lock
           frees for the requested action. This is what makes a web action button
           "arouse" the mode (see the animation-vocabulary Awake mode).
-        - **Timeout** (``timeout_seconds``, default 300): the mode ends after the
-          current action finishes.
+        - **Timeout** (``timeout_seconds``; the CLI knob is in MINUTES,
+          0..120 where 0 = no timeout / manual stop only): the mode ends after
+          the current action finishes. When 0/None there is NO timeout deadline
+          — only an external stop ends the mode.
 
         This loop is SYNCHRONOUS: routines go through ``run_action_and_audio`` /
         the Performance_Framework (which call ``asyncio.run`` internally) and
@@ -2179,7 +2195,10 @@ class Animatronic:
 
         Args:
             timeout_seconds: How long to stay awake before the timeout ends the
-                mode. Default 300s; configurable via the CLI.
+                mode. In SECONDS (the hardware-facing unit); the CLI knob that
+                sets it is in MINUTES (``--awake-timeout-min``, 0..120 where
+                0 = no timeout) and is converted at the dispatch site. A falsy
+                value (0/None) runs with NO timeout — external stop only.
         """
         # Clear any stale stop request from a previous Mode run so we start clean.
         nap_signal.clear_stop()
@@ -2191,7 +2210,10 @@ class Animatronic:
         # the same present/absent contract.)
         self._open_nap_sensor(source="awake", detect_mode="presence")
 
-        print(f"[awake] entering awake mode (timeout {int(timeout_seconds)}s)")
+        if timeout_seconds:
+            print(f"[awake] entering awake mode (timeout {int(timeout_seconds)}s)")
+        else:
+            print("[awake] entering awake mode (no timeout)")
         try:
             # The loop reacts to sensor approaches inline (react + resume) and
             # returns only when STOPPED by the admin console or the timeout.
@@ -2225,14 +2247,16 @@ class Animatronic:
         RESUMES the ambient loop.
 
         Args:
-            deadline: ``time.monotonic()`` value at/after which the timeout fires.
+            deadline: ``time.monotonic()`` value at/after which the timeout
+                fires, or ``None`` for no timeout (the timeout never fires;
+                only an external stop ends the mode).
 
         Returns:
             AWAKE_INTERRUPT_STOP, AWAKE_INTERRUPT_TIMEOUT, or ``None``.
         """
         if nap_signal.stop_requested():
             return self.AWAKE_INTERRUPT_STOP
-        if time.monotonic() >= deadline:
+        if deadline is not None and time.monotonic() >= deadline:
             return self.AWAKE_INTERRUPT_TIMEOUT
         return None
 
@@ -2251,8 +2275,9 @@ class Animatronic:
           than exit.
 
         Args:
-            deadline: Monotonic timeout deadline, forwarded to the interrupt
-                check so the pause also ends when the awake timeout elapses.
+            deadline: Monotonic timeout deadline (or ``None`` for no timeout),
+                forwarded to the interrupt check so the pause also ends when the
+                awake timeout elapses.
 
         Returns:
             AWAKE_INTERRUPT_STOP / AWAKE_INTERRUPT_TIMEOUT (loop should exit),
@@ -2330,12 +2355,19 @@ class Animatronic:
 
         Args:
             timeout_seconds: Seconds after which the timeout interrupt fires.
+                A falsy value (0/None) means NO timeout deadline — only an
+                external stop ends the mode.
 
         Returns:
             AWAKE_INTERRUPT_STOP or AWAKE_INTERRUPT_TIMEOUT (the only two ways
             the mode ends).
         """
-        deadline = time.monotonic() + max(1, timeout_seconds)
+        # No timeout when timeout_seconds is 0/None: the deadline is never
+        # applied, so ONLY an external stop ends the mode. max(1, ...) floors
+        # real positive durations only — a 0 must NOT become a 1-second timeout.
+        deadline = (
+            time.monotonic() + max(1, timeout_seconds) if timeout_seconds else None
+        )
         while True:
             # End only on stop/timeout, checked before each action.
             reason = self._check_awake_interrupt(deadline)
@@ -4607,13 +4639,16 @@ def main(args):
         # a.scan() with no timeout). The call is allowlist-gated: 'scan' is an
         # explicit key in action_map and this is an explicit branch — args.action
         # is never passed to getattr/eval/shell. The timeout minutes are clamped
-        # to [1, 120] here (and converted to seconds). Fail fast if the servos
-        # are already in use.
+        # to [0, 120] here, where 0 = NO timeout -> timeout_seconds=None (scan's
+        # loop already guards `deadline is not None`); other values convert to
+        # seconds. 0 is NOT floored to a 1-second timeout. Fail fast if the
+        # servos are already in use.
         try:
             with servo_lock():
+                scan_min = max(0, min(120, args.scan_timeout_min))
                 a.scan(
                     camera_url=args.camera_url,
-                    timeout_seconds=max(1, min(120, args.scan_timeout_min)) * 60,
+                    timeout_seconds=(None if scan_min == 0 else scan_min * 60),
                     max_step=args.max_step,
                     deadband=args.deadband,
                     conf=args.conf,
@@ -4687,7 +4722,14 @@ def main(args):
         # from the web app). Fail fast if the servos are already in use.
         try:
             with servo_lock():
-                a.napping(timeout_seconds=args.nap_timeout)
+                # CLI knob is in MINUTES; clamp to the web app's bounds (0-120)
+                # so a direct CLI call is bounded too, then convert to the
+                # SECONDS the method/loop operate in (the method stays seconds).
+                # 0 passes through as 0 = NO timeout (the loop guard reads a
+                # falsy timeout_seconds as "no deadline"); it is NOT floored to
+                # a 1-second timeout.
+                nap_min = max(0, min(120, args.nap_timeout_min))
+                a.napping(timeout_seconds=nap_min * 60)
         except ServoBusyError:
             print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
@@ -4698,7 +4740,14 @@ def main(args):
         # app). Fail fast if the servos are already in use.
         try:
             with servo_lock():
-                a.awake(timeout_seconds=args.awake_timeout)
+                # CLI knob is in MINUTES; clamp to the web app's bounds (0-120)
+                # so a direct CLI call is bounded too, then convert to the
+                # SECONDS the method/loop operate in (the method stays seconds).
+                # 0 passes through as 0 = NO timeout (the loop guard reads a
+                # falsy timeout_seconds as "no deadline"); it is NOT floored to
+                # a 1-second timeout.
+                awake_min = max(0, min(120, args.awake_timeout_min))
+                a.awake(timeout_seconds=awake_min * 60)
         except ServoBusyError:
             print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
@@ -4720,13 +4769,16 @@ if __name__ == '__main__':
     )
     parser.add_argument('--action', default=None,
                         help='Action to perform (e.g. startParty, krusty, blah, napping).')
-    parser.add_argument('--nap-timeout', dest='nap_timeout', type=int, default=60,
-                        help='Napping mode: seconds before the timeout wake '
-                             '(default: 60). Only used with --action=napping.')
-    parser.add_argument('--awake-timeout', dest='awake_timeout', type=int,
-                        default=300,
-                        help='Awake mode: seconds before the timeout ends the '
-                             'mode (default: 300). Only used with --action=awake.')
+    parser.add_argument('--nap-timeout-min', dest='nap_timeout_min', type=int,
+                        default=1,
+                        help='Napping mode: minutes before the timeout wake, '
+                             '0..120 where 0 = no timeout (manual stop only) '
+                             '(default 1). Only used with --action=napping.')
+    parser.add_argument('--awake-timeout-min', dest='awake_timeout_min',
+                        type=int, default=5,
+                        help='Awake mode: minutes before the timeout ends the '
+                             'mode, 0..120 where 0 = no timeout (manual stop '
+                             'only) (default 5). Only used with --action=awake.')
     # Tracking Mode flags (only used with --action=tracking). TrackingConfig
     # clamps every numeric value into its documented safe range, so argparse
     # only needs sensible types here; a None default means "use the
@@ -4742,8 +4794,9 @@ if __name__ == '__main__':
     parser.add_argument('--scan-timeout-min', dest='scan_timeout_min', type=int,
                         default=60,
                         help='Scan mode: minutes before the timeout winds the '
-                             'mode down, clamped 1-120 (default 60). Only used '
-                             'with --action=scan.')
+                             'mode down, 0..120 where 0 = no timeout (manual '
+                             'stop only) (default 60). Only used with '
+                             '--action=scan.')
     parser.add_argument('--max-step', dest='max_step', type=int, default=None,
                         help='Tracking mode: max neck angle change per update '
                              'in degrees, clamped to 1-30 (default: 5). Only '

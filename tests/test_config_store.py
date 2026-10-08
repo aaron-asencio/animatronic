@@ -39,7 +39,6 @@ from config_store import (  # noqa: E402
     SCAN_KEY,
     SCAN_TIMEOUT_KEY,
     SCAN_TIMEOUT_DEFAULT_MIN,
-    SCAN_TIMEOUT_MIN,
     SCAN_TIMEOUT_MAX,
     SCAN_ROUTINE_POOL_KEY,
     SCAN_GESTURE_POOL_KEY,
@@ -572,9 +571,9 @@ def test_scan_timeout_default_when_missing(tmp_path):
 @pytest.mark.parametrize(
     "given_value, expected",
     [
-        (0, SCAN_TIMEOUT_MIN),       # below floor -> clamp up to 1
-        (-5, SCAN_TIMEOUT_MIN),      # negative -> clamp up to 1
-        (1, SCAN_TIMEOUT_MIN),       # exact floor
+        (0, 0),                      # exact floor (0 = no timeout) stays 0
+        (-5, 0),                     # negative -> clamp up to 0 (the floor)
+        (1, 1),                      # 1 is now inside range -> unchanged
         (120, SCAN_TIMEOUT_MAX),     # exact ceiling
         (999, SCAN_TIMEOUT_MAX),     # above ceiling -> clamp down to 120
         (60, 60),                    # mid-range unchanged
@@ -582,10 +581,19 @@ def test_scan_timeout_default_when_missing(tmp_path):
     ],
 )
 def test_scan_timeout_save_clamps(tmp_path, given_value, expected):
-    """save_scan_timeout coerces and clamps to [1, 120] and returns the result."""
+    """save_scan_timeout coerces and clamps to [0, 120] and returns the result."""
     store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
     assert store.save_scan_timeout(given_value) == expected
     assert store.load_scan_timeout() == expected
+
+
+def test_scan_timeout_zero_round_trip(tmp_path):
+    """The no-timeout sentinel 0 persists and loads back as 0 (not clamped away)."""
+    store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
+    assert store.save_scan_timeout(0) == 0
+    assert store.load_scan_timeout() == 0
+    # A fresh store on the same path reads the same 0.
+    assert ConfigStore(config_path=str(tmp_path / "tuning.json")).load_scan_timeout() == 0
 
 
 def test_scan_timeout_save_rejects_non_numeric(tmp_path):

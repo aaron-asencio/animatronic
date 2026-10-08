@@ -280,19 +280,19 @@ lock.
 
 | Action | Mode | Lock held | Interrupted by |
 |--------|------|-----------|----------------|
-| `napping` | Sleep — resting/idle until roused | whole-robot `servo_lock()` | `--nap-timeout`, sensor, web stop |
-| `awake` | Awake — performs ambient Routines on a loop | whole-robot `servo_lock()` | `--awake-timeout`, sensor, web stop |
+| `napping` | Sleep — resting/idle until roused | whole-robot `servo_lock()` | `--nap-timeout-min` (0–120, 0 = no timeout), sensor, web stop |
+| `awake` | Awake — performs ambient Routines on a loop | whole-robot `servo_lock()` | `--awake-timeout-min` (0–120, 0 = no timeout), sensor, web stop |
 | `tracking` | Head tracking (neck follows a detected person) | **Neck_Group only** (arm gestures may run concurrently) | Scan_Sweep timeout, web stop |
-| `scan` | Neck tracker + concurrent arm-only responder | whole-robot `servo_lock()` | `--scan-timeout-min` (1–120), web stop |
+| `scan` | Neck tracker + concurrent arm-only responder | whole-robot `servo_lock()` | `--scan-timeout-min` (0–120, 0 = no timeout), web stop |
 | `puppeteer` | Live mic Stream + neck-only tracking + operator arm Gestures (triggers suppressed) | **Neck_Group only** (arm gestures may run concurrently) | web stop, mode preemption |
 | `mic` | Live mic passthrough (audio only) | **no lock** (does not move servos) | Enter key / web stop |
 
 ```bash
-# Sleep mode with a 60s timeout wake
-sudo .venv/bin/python src/animatronic.py --action=napping --nap-timeout 60
+# Sleep mode with a 10-minute timeout wake (0 = no timeout, stop manually)
+sudo .venv/bin/python src/animatronic.py --action=napping --nap-timeout-min 10
 
-# Awake mode for 5 minutes
-sudo .venv/bin/python src/animatronic.py --action=awake --awake-timeout 300
+# Awake mode for 20 minutes (0 = no timeout, stop manually)
+sudo .venv/bin/python src/animatronic.py --action=awake --awake-timeout-min 20
 
 # Head tracking (needs Camera_Service running — see Camera vision)
 sudo .venv/bin/python src/animatronic.py --action=tracking \

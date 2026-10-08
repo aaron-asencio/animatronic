@@ -8,7 +8,8 @@ pointed at a tmp file) so round-trips don't touch the real tuning.json.
 
 Assertions:
   - ``POST /scan/start`` with a valid minutes value persists it and succeeds.
-  - A non-int and out-of-range (0, 121) value returns 400 and launches nothing.
+  - 0 is accepted (no timeout): it launches with 0 and persists 0.
+  - A non-int and out-of-range (121) value returns 400 and launches nothing.
   - Omitting the value reads the persisted/default 60.
   - ``POST /scan/stop`` calls ``nap_signal.request_stop()``.
   - ``'scan'`` is in ``SCAN_ACTIONS`` and ``_MODE_LABELS``.
@@ -119,12 +120,21 @@ def test_start_omitted_reads_previously_persisted(client):
     assert client._launched['calls'] == [99]
 
 
-@pytest.mark.parametrize("bad", [0, 121, -5, 1000])
+@pytest.mark.parametrize("bad", [121, -5, 1000])
 def test_start_out_of_range_rejected(client, bad):
     """Out-of-range minutes return 400 and launch nothing."""
     res = client.post('/scan/start', json={'timeout_min': bad})
     assert res.status_code == 400
     assert client._launched['calls'] == []
+
+
+def test_start_zero_accepted_no_timeout(client):
+    """0 (no timeout) is accepted: it launches with 0 and persists 0."""
+    res = client.post('/scan/start', json={'timeout_min': 0})
+    assert res.status_code == 200
+    assert res.get_json()['status'] == 'success'
+    assert client._launched['calls'] == [0]
+    assert config_store.load_scan_timeout() == 0
 
 
 @pytest.mark.parametrize("bad", ["60", 1.5, True])
