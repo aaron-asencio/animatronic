@@ -1,0 +1,52 @@
+[Unit]
+# Animatronic web control panel — the primary operator UI (Flask, :8000).
+# Runs the gesture/routine subprocesses and proxies the mic controller (:5000)
+# into one dashboard. See src/webapp.py.
+Description=Animatronic Web Control Panel (Flask, :8000)
+# Prefer to come up after the network and basic multi-user targets are ready.
+After=network-online.target
+Wants=network-online.target
+# The mic controller is a separate unit this app proxies to. It is not a hard
+# dependency (the panel still loads if the mic stream is down), but we want it
+# started alongside the panel so the Mic/Voice-FX tabs work after a reboot.
+Wants=animatronic-micweb.service
+After=animatronic-micweb.service
+# Restart rate limit: if the service fails >5 times in 60s, stop retrying and
+# surface the failure instead of hammering a broken start.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Runs as root: webapp.py launches the gesture scripts as root for I2C/GPIO
+# access and reads the servo lock / range sensor, matching how the project is
+# run manually (sudo .venv/bin/python3 src/webapp.py).
+User=root
+Group=root
+
+WorkingDirectory=/home/aaron/workspace/animatronic-v2
+
+# src/ holds the project modules, which import each other by bare name
+# (e.g. `from servo_lock import ...`), so src/ must be on PYTHONPATH.
+Environment=PYTHONPATH=src
+# Disable Flask's auto-reloader for the always-on service: a reload triggered
+# mid-routine would interrupt servo motion (see the WEBAPP_DEV note in
+# src/webapp.py). This also keeps a single, systemd-tracked worker process.
+Environment=WEBAPP_DEV=0
+
+# Use the venv interpreter literally (do not resolve the symlink), matching
+# camera-service.service — the venv has the project's pinned deps.
+ExecStart=/home/aaron/workspace/animatronic-v2/.venv/bin/python3 src/webapp.py
+
+# Keep the panel up; retry a few times on failure then back off.
+Restart=on-failure
+RestartSec=5
+
+# Logs go to the journal: `journalctl -u animatronic-webapp -f`
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=animatronic-webapp
+
+[Install]
+WantedBy=multi-user.target

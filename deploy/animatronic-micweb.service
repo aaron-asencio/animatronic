@@ -1,0 +1,44 @@
+[Unit]
+# Animatronic mic controller — live mic passthrough, jaw sync, and voice FX
+# (Flask, loopback 127.0.0.1:5000). webapp.py (:8000) proxies this into the
+# Mic / Voice-FX / Jaw-Tuning tabs. See src/micwebcontroller.py.
+Description=Animatronic Mic Controller (mic stream + jaw + FX, :5000)
+After=network-online.target sound.target
+Wants=network-online.target
+# Restart rate limit: if the service fails >5 times in 60s, stop retrying.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Runs as root: owns the PyAudio stream and drives the jaw motor / eye LED via
+# GPIO, matching how it is run manually (sudo .venv/bin/python3
+# src/micwebcontroller.py).
+User=root
+Group=root
+
+WorkingDirectory=/home/aaron/workspace/animatronic-v2
+
+# src/ holds the project modules imported by bare name, so it must be on
+# PYTHONPATH.
+Environment=PYTHONPATH=src
+# Disable Flask's debug reloader for the service: the reloader forks a child,
+# which would break Type=simple PID tracking and could tear down the live mic
+# stream on reload (see the MICWEB_DEV note in src/micwebcontroller.py).
+Environment=MICWEB_DEV=0
+
+# Use the venv interpreter literally (do not resolve the symlink).
+ExecStart=/home/aaron/workspace/animatronic-v2/.venv/bin/python3 src/micwebcontroller.py
+
+# Keep the mic controller up; retry a few times on failure then back off.
+Restart=on-failure
+RestartSec=5
+
+# Logs go to the journal: `journalctl -u animatronic-micweb -f`
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=animatronic-micweb
+
+[Install]
+WantedBy=multi-user.target

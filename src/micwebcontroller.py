@@ -853,4 +853,13 @@ def get_status():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True, threaded=True)
+    # Debug/reloader is ON by default for manual runs, but must be OFF under
+    # systemd: the Werkzeug reloader forks a child process, so Type=simple would
+    # track the watcher PID (not the worker that owns the mic stream), and a
+    # reload mid-stream would tear down the live PyAudio stream. Set MICWEB_DEV=0
+    # (as the service unit does) to disable it. Accepts 0/false/no/off.
+    dev_reload = os.environ.get('MICWEB_DEV', '1').strip().lower() not in (
+        '0', 'false', 'no', 'off')
+    # Bind host/port stay at Flask defaults (127.0.0.1:5000): this controller is
+    # loopback-only and proxied by webapp.py (see project overview).
+    app.run(debug=dev_reload, threaded=True, use_reloader=dev_reload)
