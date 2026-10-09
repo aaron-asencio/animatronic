@@ -4797,13 +4797,16 @@ def main(args):
                 # falsy timeout_seconds as "no deadline"); it is NOT floored to
                 # a 1-second timeout.
                 awake_min = max(0, min(120, args.awake_timeout_min))
-                # Snapshot whether auto-chaining is enabled ONCE at launch (like
-                # timeout_seconds). When enabled, awake ends on the first
-                # presence event so it can chain to napping; a mid-chain config
-                # edit affects only the NEXT operator-started chain.
-                budget = config_store.load_chain_max_transitions()
+                # Awake NEVER ends on a sensor event: by design it only returns
+                # to sleep on its TIMEOUT (a presence event just triggers one
+                # react-and-resume reaction, since whoever woke the figure is
+                # typically still standing in the gate). So chain_sensor_end is
+                # always False — ending awake on sensor made it bounce straight
+                # back to sleep the moment it woke. Awake still chains to napping
+                # via its timeout (AWAKE_INTERRUPT_TIMEOUT is chainable); sleep
+                # still wakes to awake on sensor OR timeout.
                 reason = a.awake(timeout_seconds=awake_min * 60,
-                                 chain_sensor_end=budget > 0)
+                                 chain_sensor_end=False)
         except ServoBusyError:
             print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
