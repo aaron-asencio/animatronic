@@ -37,6 +37,7 @@ from performance import (
     PlaybackController,
 )
 import nap_signal
+import mode_exit
 import constants
 import config_store
 from range_sensor import ApproachDetector
@@ -1751,9 +1752,11 @@ class Animatronic:
         Args:
             source: Retained for logging/back-compat (the web app is the actual
                 gauge publisher now).
-            detect_mode: ``"approach"`` (default — getting-closer trend, used by
-                napping) or ``"presence"`` (object simply within the gate, used
-                by awake). See ``range_sensor.ApproachDetector``.
+            detect_mode: ``"approach"`` (getting-closer trend), ``"presence"``
+                (object simply within the gate, used by awake), or ``"both"``
+                (fire on either — used by napping so a person who walks in and
+                stands still still wakes it). See
+                ``range_sensor.ApproachDetector``.
         """
         self._nap_detector = None
         try:
@@ -1770,8 +1773,10 @@ class Animatronic:
             # Poll the PUBLISHED reading in the background (cheap file read); the
             # loop just checks the latched flag between cycles.
             self._nap_detector.start_polling()
-            mode_desc = ("present within" if detect_mode == "presence"
-                         else "approaches within")
+            mode_desc = {
+                "presence": "present within",
+                "both": "approaching or present within",
+            }.get(detect_mode, "approaching within")
             print(f"[nap] sensor detection armed ({detect_mode}: trigger if an "
                   f"object is {mode_desc} {self.NAP_WAKE_GATE_M} m; reading from "
                   f"the web app's published feed)")
@@ -1871,7 +1876,11 @@ class Animatronic:
 
         # Arm the proximity wake sensor for this nap (best-effort; the nap still
         # runs and simply won't sensor-wake if the sensor can't be opened).
-        self._open_nap_sensor()
+        # "both": wake on EITHER a getting-closer approach OR someone simply
+        # standing within the gate. Approach-only never fired for a person who
+        # walks in and stands still (no sustained closing motion), so Sleep now
+        # also honours presence.
+        self._open_nap_sensor(detect_mode="both")
 
         # 1. Yawn first (gesture + yawn.wav), reusing the standard runner.
         # Audio gated 300ms so the cover gesture leads the yawn sound.
@@ -1886,7 +1895,9 @@ class Animatronic:
             self._safe_rest()
             self._close_nap_sensor()
             nap_signal.clear_stop()
-            return
+            # Fail safe: a crashed-then-recovered nap reports a non-chaining
+            # reason so the webapp watcher never chains on an error path.
+            return self.NAP_INTERRUPT_STOP
 
         # 3. React to how the nap ended.
         if reason == self.NAP_INTERRUPT_SENSOR:
@@ -1901,6 +1912,10 @@ class Animatronic:
         # and the requesting web-app action can proceed once the lock frees.
         self._close_nap_sensor()
         nap_signal.clear_stop()
+
+        # Report WHY the nap ended so the webapp chain watcher can decide whether
+        # to chain to the opposite mode (timeout/sensor chain; stop does not).
+        return reason
 
     async def _run_nap_loop(self, timeout_seconds):
         """Drive the head-lowered snore loop until interrupted; return the reason.
@@ -2135,7 +2150,7 @@ class Animatronic:
     # noticed promptly while the figure still reads as idly looking around.
     _AWAKE_GESTURE_DURATION_S = 6.0
 
-    def awake(self, timeout_seconds=300):
+    def awake(self, timeout_seconds=300, chain_sensor_end=False):
         """AWAKE mode: weighted ambient gestures/routines with 30s pauses.
 
         A Mode (per the animation vocabulary) is a continuous background
@@ -2199,6 +2214,13 @@ class Animatronic:
                 sets it is in MINUTES (``--awake-timeout-min``, 0..120 where
                 0 = no timeout) and is converted at the dispatch site. A falsy
                 value (0/None) runs with NO timeout — external stop only.
+            chain_sensor_end: When True (set by ``main()`` only when auto-chaining
+                is enabled), a confirmed PRESENCE event ENDS awake mode after one
+                reaction so it can chain to napping. When False (the default and
+                standalone behaviour), a presence event triggers one reaction and
+                the ambient loop RESUMES (react-and-resume), exactly as before.
+                This flag is snapshotted at launch and fixed for the subprocess's
+                life, like ``timeout_seconds``.
         """
         # Clear any stale stop request from a previous Mode run so we start clean.
         nap_signal.clear_stop()
@@ -2215,15 +2237,19 @@ class Animatronic:
         else:
             print("[awake] entering awake mode (no timeout)")
         try:
-            # The loop reacts to sensor approaches inline (react + resume) and
-            # returns only when STOPPED by the admin console or the timeout.
-            reason = self._run_awake_loop(timeout_seconds)
+            # The loop reacts to sensor presence inline (react + resume) unless
+            # chain_sensor_end is set, in which case it ends after one reaction
+            # so the webapp can chain to napping. It otherwise returns only when
+            # STOPPED by the admin console or the timeout.
+            reason = self._run_awake_loop(timeout_seconds, chain_sensor_end)
         except Exception as e:
             print(f"[awake] error during awake loop: {e}")
             self._safe_rest()
             self._close_nap_sensor()
             nap_signal.clear_stop()
-            return
+            # Fail safe: a crashed-then-recovered awake reports a non-chaining
+            # reason so the webapp watcher never chains on an error path.
+            return self.AWAKE_INTERRUPT_STOP
 
         print(f"[awake] {reason} interrupt -> winding down")
         # Ensure a clean, unloaded rest pose on exit regardless of how the last
@@ -2235,6 +2261,10 @@ class Animatronic:
         # frees.
         self._close_nap_sensor()
         nap_signal.clear_stop()
+
+        # Report WHY awake ended so the webapp chain watcher can decide whether
+        # to chain to napping (timeout/sensor chain; stop does not).
+        return reason
 
     def _check_awake_interrupt(self, deadline):
         """Return a loop-ENDING interrupt reason, or None to keep running.
@@ -2334,7 +2364,7 @@ class Animatronic:
         else:
             getattr(self, name)()
 
-    def _run_awake_loop(self, timeout_seconds):
+    def _run_awake_loop(self, timeout_seconds, chain_sensor_end=False):
         """Run weighted ambient actions with 30s pauses until stopped/timeout.
 
         Each iteration: check the loop-ending interrupts, handle any pending
@@ -2357,10 +2387,14 @@ class Animatronic:
             timeout_seconds: Seconds after which the timeout interrupt fires.
                 A falsy value (0/None) means NO timeout deadline — only an
                 external stop ends the mode.
+            chain_sensor_end: When True, a confirmed PRESENCE event ends the mode
+                (``AWAKE_INTERRUPT_SENSOR``) AFTER running exactly one reaction,
+                so the webapp can chain to napping. When False (default), the
+                figure reacts and RESUMES the loop (today's behaviour).
 
         Returns:
-            AWAKE_INTERRUPT_STOP or AWAKE_INTERRUPT_TIMEOUT (the only two ways
-            the mode ends).
+            AWAKE_INTERRUPT_STOP, AWAKE_INTERRUPT_TIMEOUT, or — only when
+            ``chain_sensor_end`` is True — AWAKE_INTERRUPT_SENSOR.
         """
         # No timeout when timeout_seconds is 0/None: the deadline is never
         # applied, so ONLY an external stop ends the mode. max(1, ...) floors
@@ -2374,9 +2408,13 @@ class Animatronic:
             if reason is not None:
                 return reason
 
-            # A pending sensor approach: react, reset the latch, then resume.
+            # A pending sensor presence: react once. When chaining is enabled,
+            # END after that one reaction so the webapp chains to napping;
+            # otherwise reset the latch and RESUME the loop (today's behaviour).
             if self._poll_nap_sensor():
                 self._awake_approach_reaction()
+                if chain_sensor_end:
+                    return self.AWAKE_INTERRUPT_SENSOR
                 self._reset_nap_sensor()
                 continue
 
@@ -2387,8 +2425,13 @@ class Animatronic:
             # Pause ~30s between actions, reacting promptly to any signal.
             reason = self._awake_pause(deadline)
             if reason == self.AWAKE_INTERRUPT_SENSOR:
-                # Sensor fired mid-pause: react and RESUME the loop (do not end).
+                # Sensor fired mid-pause: react once. When chaining is enabled,
+                # END after that one reaction so the webapp chains to napping;
+                # otherwise reset the latch and RESUME the loop (today's
+                # behaviour — do not end).
                 self._awake_approach_reaction()
+                if chain_sensor_end:
+                    return self.AWAKE_INTERRUPT_SENSOR
                 self._reset_nap_sensor()
                 continue
             if reason is not None:
@@ -4720,6 +4763,7 @@ def main(args):
         # holds the servo lock for its whole run just like a routine. It runs
         # until interrupted (timeout, sensor-TBD, or an external stop request
         # from the web app). Fail fast if the servos are already in use.
+        reason = None
         try:
             with servo_lock():
                 # CLI knob is in MINUTES; clamp to the web app's bounds (0-120)
@@ -4729,15 +4773,21 @@ def main(args):
                 # falsy timeout_seconds as "no deadline"); it is NOT floored to
                 # a 1-second timeout.
                 nap_min = max(0, min(120, args.nap_timeout_min))
-                a.napping(timeout_seconds=nap_min * 60)
+                reason = a.napping(timeout_seconds=nap_min * 60)
         except ServoBusyError:
             print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
+        # OUTSIDE the lock + busy handler: report WHY the nap ended via the exit
+        # code (10 timeout / 11 sensor / 12 stop) so the webapp chain watcher can
+        # decide whether to chain. A busy refusal already exited 3; an uncaught
+        # non-busy crash still produces Python's default exit 1 (non-chaining).
+        sys.exit(mode_exit.reason_to_exit_code(reason))
     elif args.action == 'awake':
         # Awake is a MODE: it performs ambient Routines on a loop, so it holds
         # the servo lock for its whole run just like napping. It runs until
         # interrupted (timeout, sensor, or an external stop request from the web
         # app). Fail fast if the servos are already in use.
+        reason = None
         try:
             with servo_lock():
                 # CLI knob is in MINUTES; clamp to the web app's bounds (0-120)
@@ -4747,10 +4797,21 @@ def main(args):
                 # falsy timeout_seconds as "no deadline"); it is NOT floored to
                 # a 1-second timeout.
                 awake_min = max(0, min(120, args.awake_timeout_min))
-                a.awake(timeout_seconds=awake_min * 60)
+                # Snapshot whether auto-chaining is enabled ONCE at launch (like
+                # timeout_seconds). When enabled, awake ends on the first
+                # presence event so it can chain to napping; a mid-chain config
+                # edit affects only the NEXT operator-started chain.
+                budget = config_store.load_chain_max_transitions()
+                reason = a.awake(timeout_seconds=awake_min * 60,
+                                 chain_sensor_end=budget > 0)
         except ServoBusyError:
             print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
+        # OUTSIDE the lock + busy handler: report WHY awake ended via the exit
+        # code (10 timeout / 11 sensor / 12 stop) so the webapp chain watcher can
+        # decide whether to chain. A busy refusal already exited 3; an uncaught
+        # non-busy crash still produces Python's default exit 1 (non-chaining).
+        sys.exit(mode_exit.reason_to_exit_code(reason))
     elif args.action == 'mic':
         # Mic mode is audio-only and does not move servos, so it does NOT take
         # the servo lock (that would needlessly block gesture routines).

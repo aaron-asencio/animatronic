@@ -276,9 +276,12 @@ class ApproachDetector:
                              getting-closer trend; ``"presence"`` fires whenever
                              an object simply sits within ``presence_gate_m`` for
                              ``presence_consecutive`` readings — no motion
-                             required. Presence is the right fit for "someone is
-                             standing in front of me" and is the contract a PIR
-                             sensor will later satisfy directly.
+                             required. ``"both"`` fires if EITHER confirms, so it
+                             wakes both for someone walking toward the sensor and
+                             for someone already standing within the gate.
+                             Presence is the right fit for "someone is standing
+                             in front of me" and is the contract a PIR sensor
+                             will later satisfy directly.
             presence_gate_m: Distance in meters within which an object counts as
                              "present" (presence mode). Defaults to ``gate_m``.
             presence_consecutive: Consecutive in-range readings required to
@@ -362,6 +365,25 @@ class ApproachDetector:
         # Publish the raw reading for the live dashboard gauge (best-effort).
         self._maybe_publish(distance)
 
+        return self._classify_approach(distance)
+
+    def _classify_approach(self, distance):
+        """Run the approach classifier on an ALREADY-READ distance.
+
+        Split out from ``approaching()`` so ``detect_mode="both"`` can run both
+        the approach and presence classifiers against a SINGLE sensor read (one
+        ``distance_m()`` call, one ``_maybe_publish``) per poll — calling the
+        public ``approaching()`` and ``present()`` back to back would consume two
+        readings and double-publish. ``approaching()`` reads + publishes, then
+        delegates here; ``detect()`` reads + publishes once, then calls this and
+        ``_classify_present`` on the same value.
+
+        Args:
+            distance: The distance in meters already read from the sensor.
+
+        Returns:
+            True if an approach is confirmed on this reading, else False.
+        """
         # ``why`` records how this sample was classified, for RANGE_SENSOR_DEBUG.
         why = None
         with self._lock:
@@ -464,6 +486,21 @@ class ApproachDetector:
         distance = self.sensor.distance_m()
         self._maybe_publish(distance)
 
+        return self._classify_present(distance)
+
+    def _classify_present(self, distance):
+        """Run the presence classifier on an ALREADY-READ distance.
+
+        The presence counterpart to ``_classify_approach``; see that method for
+        why the read/publish is split from the classification (shared single
+        read under ``detect_mode="both"``).
+
+        Args:
+            distance: The distance in meters already read from the sensor.
+
+        Returns:
+            True if presence is confirmed on this reading, else False.
+        """
         with self._lock:
             # No-echo glitch: ignore entirely so one dropped ping doesn't reset a
             # genuine, sustained presence.
@@ -486,6 +523,41 @@ class ApproachDetector:
             self._present_streak = 0
             self._debug(distance, f"absent (> {gate}m) - reset")
             return False
+
+    def detect(self):
+        """Take one reading and report a trigger per the configured mode.
+
+        The single entry point the background poller uses. It reads the sensor
+        ONCE and publishes once, then applies the classifier(s) for
+        ``detect_mode``:
+
+        - ``"approach"`` — fire on a sustained getting-closer trend.
+        - ``"presence"`` — fire whenever an object sits within the gate.
+        - ``"both"``     — fire if EITHER confirms on this reading. This wakes
+          for both realistic arrivals: someone walking toward the sensor
+          (approach) AND someone who is simply standing within the gate without
+          moving (presence), which approach-only never catches.
+
+        Both classifiers run against the SAME reading, so the duplicate-read and
+        glitch guards each already apply, and there is exactly one sensor read /
+        one publish per poll regardless of mode.
+
+        Returns:
+            True on the reading that confirms a trigger for the active mode,
+            else False.
+        """
+        if self.detect_mode == "presence":
+            return self.present()
+        if self.detect_mode == "both":
+            # One read, one publish, both classifiers. Evaluate BOTH (no
+            # short-circuit) so each keeps its own streak state up to date; fire
+            # if either confirms.
+            distance = self.sensor.distance_m()
+            self._maybe_publish(distance)
+            approached = self._classify_approach(distance)
+            present = self._classify_present(distance)
+            return approached or present
+        return self.approaching()
 
     def _live_gate(self, fallback):
         """Return the current gate in meters (live provider, else ``fallback``).
@@ -564,12 +636,10 @@ class ApproachDetector:
         """
         while not self._stop_event.is_set():
             try:
-                # Sample via the mode-appropriate classifier. Both publish the
-                # reading and latch triggered() on confirmation.
-                if self.detect_mode == "presence":
-                    self.present()
-                else:
-                    self.approaching()
+                # Sample via the mode dispatcher (approach / presence / both).
+                # It reads once, publishes once, and latches triggered() on
+                # confirmation.
+                self.detect()
             except Exception as e:
                 print(f"range_sensor: background poll read failed: {e}")
             # Wait returns immediately if stop is set, so shutdown is prompt.

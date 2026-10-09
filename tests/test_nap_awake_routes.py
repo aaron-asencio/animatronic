@@ -35,6 +35,10 @@ import nap_signal  # noqa: E402
 class FakeProc:
     """Minimal stand-in for subprocess.Popen (poll() reports still-running)."""
 
+    # A real Popen exposes returncode (None until it exits); the napping/awake
+    # launchers now start a _chain_watch daemon that reads it after wait().
+    returncode = None
+
     def poll(self):
         return None
 

@@ -65,6 +65,18 @@ SCAN_GESTURE_POOL_KEY = "gesture_pool"
 SCAN_POOL_WEIGHT_MIN = 1
 SCAN_POOL_WEIGHT_MAX = 10
 
+# --- Mode auto-chaining persistence -----------------------------------------
+# Top-level tuning.json section + key for the Sleep/Awake auto-chaining budget:
+# the number of auto-transitions (handoffs) the chain is allowed to perform
+# before it stops. 0 disables chaining (a mode just ends); the max is a sane
+# ceiling so a corrupt/huge stored value can never pin the robot in an unbounded
+# chain. Default 4 = a small, visible number of alternations out of the box.
+CHAIN_KEY = "chain"
+CHAIN_MAX_TRANSITIONS_KEY = "max_transitions"
+CHAIN_MAX_TRANSITIONS_DEFAULT = 4
+CHAIN_MAX_TRANSITIONS_MIN = 0    # 0 = chaining disabled
+CHAIN_MAX_TRANSITIONS_MAX = 20   # sane ceiling (bounded alternating loop)
+
 
 def _default_profile():
     """Return a fresh copy of the default jaw-tuning profile.
@@ -604,6 +616,65 @@ class ConfigStore:
             SCAN_GESTURE_POOL_KEY: clean_gesture,
         }
 
+    def load_chain_max_transitions(self):
+        """Load the mode auto-chaining budget, clamped to a safe range.
+
+        Reads ``chain.max_transitions`` from the Config_File. Any missing
+        file/section, non-dict section, or non-integer value yields the default
+        (``CHAIN_MAX_TRANSITIONS_DEFAULT``). Valid values are coerced to int and
+        clamped to ``[CHAIN_MAX_TRANSITIONS_MIN, CHAIN_MAX_TRANSITIONS_MAX]``
+        (``[0, 20]``, where 0 means "chaining disabled"). Never raises.
+
+        Returns:
+            The number of auto-transitions as an int in [0, 20] (0 = disabled).
+        """
+        raw = self._load_raw()
+        section = raw.get(CHAIN_KEY, {})
+        if not isinstance(section, dict):
+            return CHAIN_MAX_TRANSITIONS_DEFAULT
+        value = section.get(CHAIN_MAX_TRANSITIONS_KEY, CHAIN_MAX_TRANSITIONS_DEFAULT)
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            return CHAIN_MAX_TRANSITIONS_DEFAULT
+        return max(CHAIN_MAX_TRANSITIONS_MIN, min(CHAIN_MAX_TRANSITIONS_MAX, count))
+
+    def save_chain_max_transitions(self, count):
+        """Persist the mode auto-chaining budget, preserving other sections.
+
+        Validates/coerces ``count`` to an int and clamps it to
+        ``[CHAIN_MAX_TRANSITIONS_MIN, CHAIN_MAX_TRANSITIONS_MAX]`` (``[0, 20]``,
+        where 0 = chaining disabled) before writing. The existing raw JSON is
+        loaded first so other top-level sections (``scan``, ``voice_styles``,
+        ``voice_styles_previous``, ``profiles``) are preserved.
+
+        Args:
+            count: The requested number of auto-transitions. Out-of-range values
+                are clamped rather than rejected.
+
+        Returns:
+            The clamped int that was persisted.
+
+        Raises:
+            ValueError: If ``count`` cannot be coerced to an int.
+        """
+        try:
+            clamped = int(count)
+        except (TypeError, ValueError):
+            raise ValueError("chain max_transitions must be an integer")
+        clamped = max(CHAIN_MAX_TRANSITIONS_MIN,
+                      min(CHAIN_MAX_TRANSITIONS_MAX, clamped))
+
+        raw = self._load_raw()
+        section = raw.get(CHAIN_KEY)
+        if not isinstance(section, dict):
+            section = {}
+        section[CHAIN_MAX_TRANSITIONS_KEY] = clamped
+        raw[CHAIN_KEY] = section
+        self._write_raw(raw)
+        print(f"Chain max transitions saved: {clamped}")
+        return clamped
+
 
 # Module-level default instance + thin wrappers for simple call sites.
 _default_store = ConfigStore()
@@ -663,3 +734,25 @@ def save_scan_pools(routine_pool, gesture_pool):
         A dict ``{"routine_pool": {..}, "gesture_pool": {..}}`` as stored.
     """
     return _default_store.save_scan_pools(routine_pool, gesture_pool)
+
+
+def load_chain_max_transitions():
+    """Load the mode auto-chaining budget via the default store.
+
+    Returns:
+        The number of auto-transitions as an int in [0, 20] (0 = disabled).
+    """
+    return _default_store.load_chain_max_transitions()
+
+
+def save_chain_max_transitions(count):
+    """Persist the mode auto-chaining budget via the default store.
+
+    Args:
+        count: The requested number of auto-transitions (coerced/clamped to
+            [0, 20], where 0 = disabled).
+
+    Returns:
+        The clamped int that was persisted.
+    """
+    return _default_store.save_chain_max_transitions(count)

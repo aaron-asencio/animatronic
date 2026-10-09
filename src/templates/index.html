@@ -306,6 +306,10 @@
       </div>
       <div class="mic-right">
         <span id="active-trigger"></span>
+        <!-- Additive auto-chain readout: shows "Auto-chain: N left" while a
+             Sleep/Awake chain is in progress; blank otherwise. -->
+        <span id="chain-readout" style="font-size:0.8rem; color:var(--muted);
+              margin-left:8px;"></span>
       </div>
     </div>
 
@@ -654,6 +658,23 @@
         <option value="{{ m }}"{% if scan_timeout_min == m %} selected{% endif %}>{{ m }} min</option>
         {% endfor %}
       </select>
+    </div>
+
+    <div class="row">
+      <label>Mode auto-chaining
+        <br><small style="color:var(--muted)">auto-transitions between Sleep and
+        Awake before the chain stops; "Off" disables chaining (a mode just
+        ends). A stop or any button press always breaks the chain. The chain
+        reuses each mode's own timeout — a mode started with "No timeout" only
+        advances on a sensor event, not a timeout.</small>
+      </label>
+      <select id="chain-max-transitions">
+        <option value="0"{% if chain_max_transitions == 0 %} selected{% endif %}>Off</option>
+        {% for n in [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20] %}
+        <option value="{{ n }}"{% if chain_max_transitions == n %} selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+      <button class="action" onclick="saveChainConfig(this)">Save</button>
     </div>
 
     <!-- Scan response pool: operator-selectable + weighted routines/gestures.
@@ -1399,6 +1420,18 @@
       if (data && data.status === 'success') toast('Scan pool saved');
     }
 
+    // ── Mode auto-chaining config ────────────────────────────────────────────
+    // Persist the Sleep/Awake auto-transition budget (0 = Off). The <select> is
+    // Jinja-seeded on page load, so no fetch is needed to show the current value.
+    async function saveChainConfig(btn) {
+      const value = +document.getElementById('chain-max-transitions').value;
+      const data = await post('/chain/config', btn, { max_transitions: value });
+      if (data && data.status === 'success') {
+        toast('Auto-chaining: ' + (data.max_transitions === 0
+          ? 'Off' : data.max_transitions + ' transitions'));
+      }
+    }
+
     // ── Active Routine/Gesture readout (right half of the mic bar) ───────────
     // webapp.py keeps a SINGLE run slot (_last_action / _active_proc): launching
     // a Routine/Movement preempts any active Mode and overwrites the label, so
@@ -1449,6 +1482,13 @@
         document.getElementById('last-action').textContent = data.last_action || 'idle';
         // Right half of the top bar: show the currently running Routine/Gesture.
         updateActiveTrigger(data.last_action);
+        // Additive auto-chain readout: show "Auto-chain: N left" while a chain
+        // is in progress, otherwise render nothing.
+        const chainEl = document.getElementById('chain-readout');
+        if (chainEl) {
+          chainEl.textContent = (data.chain && data.chain.active)
+            ? 'Auto-chain: ' + data.chain.remaining + ' left' : '';
+        }
         const streaming = data.mic && data.mic.is_streaming;
         document.getElementById('mic-status').textContent = 'mic: ' + (streaming ? 'streaming' : 'idle');
         // Puppeteer holds ONLY the Neck_Group, but is_locked() reports
