@@ -36,6 +36,7 @@ import urllib.error
 
 from servo_lock import is_locked
 import nap_signal
+import mode_exit
 import range_publish
 import config_store
 # Read-only reference data for the mode panels (sensors + interrupt allowlists).
@@ -349,6 +350,22 @@ def run_puppeteer(scan_timeout_seconds=None):
 _launch_lock = threading.Lock()
 _active_proc = {'proc': None, 'label': None}
 
+# ── Sleep/Awake mode auto-chaining state ─────────────────────────────────────
+# When napping or awake ends NATURALLY (timeout/sensor), a per-launch watcher
+# daemon chains to the OTHER mode, up to a configurable number of transitions. A
+# stop or any operator-initiated launch breaks the chain. All reads/writes of
+# this dict follow the uniform "callers hold _launch_lock" rule.
+#   remaining        — auto-transitions still allowed in THIS chain
+#   generation       — monotonic token bumped on every operator launch & every
+#                       stop/preempt; a watcher captures it at launch and
+#                       re-checks it before (and after) relaunching, so an
+#                       operator action in the exit->relaunch window invalidates
+#                       the chain
+#   nap_timeout_min  — operator's chosen nap timeout for THIS chain (minutes)
+#   awake_timeout_min— operator's chosen awake timeout for THIS chain (minutes)
+_chain = {'remaining': 0, 'generation': 0,
+          'nap_timeout_min': 0, 'awake_timeout_min': 0}
+
 
 def _gesture_busy():
     """True if a gesture subprocess we launched is still running, or another
@@ -388,6 +405,10 @@ def stop_active_gesture(reason='manual stop'):
     Returns a human-readable message describing what happened.
     """
     with _launch_lock:
+        # Bump the generation so any in-flight chain watcher is invalidated — a
+        # force stop BREAKS the chain. Done before/with termination so the chain
+        # is cancelled even if termination is slow.
+        _bump_generation()
         proc = _active_proc['proc']
         label = _active_proc['label']
         if proc is None or proc.poll() is not None:
@@ -418,6 +439,180 @@ def _watchdog(proc, label):
                 _active_proc['proc'] = None
                 _active_proc['label'] = None
                 _last_action['value'] = f'timeout:{label}'
+
+
+# ── Sleep/Awake mode auto-chaining helpers ───────────────────────────────────
+# The uniform locking rule is "callers hold _launch_lock". _bump_generation does
+# NO locking of its own; every call site must already hold _launch_lock
+# (stop_active_gesture and _preempt_mode_if_running already do; the two stop
+# routes wrap their bump in `with _launch_lock:`). Self-acquiring here would
+# deadlock the non-reentrant lock at the sites that already hold it.
+def _bump_generation():
+    """Invalidate any in-flight chain watcher by advancing the generation token.
+
+    Must be called while holding ``_launch_lock``. Every stop/preempt/operator
+    launch bumps the token so a watcher launched under an older generation drops
+    its chain (operator intent always wins).
+    """
+    _chain['generation'] += 1
+
+
+def _clear_active_if(proc):
+    """Clear ``_active_proc`` only if it still points at ``proc``.
+
+    Mirrors the guard ``_watchdog`` uses so a stale observer never clears a slot
+    another launch has since repopulated. Must be called while holding
+    ``_launch_lock``.
+
+    Args:
+        proc: The subprocess whose slot should be cleared.
+    """
+    if _active_proc['proc'] is proc:
+        _active_proc['proc'] = None
+        _active_proc['label'] = None
+
+
+def _await_lock_free(proc, timeout_s=15):
+    """Wait, bounded, until ``proc`` has exited AND the servo lock is free.
+
+    Best-effort gate (mirrors ``_preempt_mode_if_running``'s two-condition wait)
+    so the watcher does not relaunch between the ending child's loop-exit and
+    its process-exit. Does NOT hold ``_launch_lock`` while sleeping. Relaunch
+    correctness against a concurrent lock holder is actually enforced by
+    ``launch_fn``'s ``_gesture_busy()`` plus the child's own ``servo_lock()``
+    fail-fast, not by this timing gate.
+
+    Args:
+        proc: The ending mode subprocess to wait on.
+        timeout_s: Max seconds to wait.
+
+    Returns:
+        True once ``proc`` has exited and the lock is free; False on timeout.
+    """
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if proc.poll() is not None and not is_locked():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def _chain_timeout_min(mode):
+    """Return the chain's captured timeout (minutes) for ``mode``.
+
+    Must be called while holding ``_launch_lock``.
+
+    Args:
+        mode: ``'napping'`` or ``'awake'``.
+
+    Returns:
+        The captured timeout minutes for that mode's side of the chain.
+    """
+    if mode == 'napping':
+        return _chain['nap_timeout_min']
+    return _chain['awake_timeout_min']
+
+
+def _terminate_if_still(proc):
+    """Terminate ``proc`` ONLY if it is still the active tracked process.
+
+    Cancellation-by-identity primitive used by ``_chain_watch`` step 7 (never
+    ``stop_active_gesture``, which re-reads the slot and could kill an operator's
+    brand-new action). Re-acquires ``_launch_lock`` and, only if
+    ``_active_proc['proc'] is proc`` and ``proc`` is still running, terminates it
+    and clears the slot. Otherwise it is a no-op.
+
+    Args:
+        proc: The exact chained child to cancel.
+
+    Returns:
+        True if ``proc`` was terminated; False if it was a no-op.
+    """
+    with _launch_lock:
+        if _active_proc['proc'] is proc and proc.poll() is None:
+            _terminate_proc(proc, 'chain cancelled by operator')
+            _clear_active_if(proc)
+            return True
+    return False
+
+
+def _chain_watch(proc, mode_label, generation):
+    """Watch a chainable mode subprocess and chain to the OTHER mode on a natural end.
+
+    Daemon-thread target started by ``launch_napping`` / ``launch_awake`` for the
+    two chainable modes only (never tracking/scan/puppeteer/mic). Blocks on
+    ``proc.wait()``, reads the exit code, and — only if the code is chainable
+    (timeout/sensor), the generation token still matches (no stop/preempt/operator
+    launch intervened), and the chain budget remaining > 0 — relaunches the other
+    mode via ``_launch_mode`` (continuing the SAME chain, decrementing remaining).
+
+    Implements Decision 4's Phase A/B/C exactly. A crash (1) or busy (3) exit is
+    NON-chainable (fail-safe) and ends the chain with no transition — there is
+    deliberately no crash-retry logic.
+
+    Args:
+        proc: The mode subprocess to watch.
+        mode_label: ``'napping'`` or ``'awake'`` (the mode that was launched).
+        generation: The ``_chain['generation']`` snapshot taken at launch.
+    """
+    proc.wait()
+    code = proc.returncode
+    other = 'awake' if mode_label == 'napping' else 'napping'
+
+    # --- Phase A: decide whether to chain (all under _launch_lock) ---
+    with _launch_lock:
+        # 1. Still our launch? A stop/preempt/other launch moves generation
+        #    -> drop the chain silently.
+        if _chain['generation'] != generation:
+            _clear_active_if(proc)
+            return
+        # 2. The slot must still be OUR process (defense in depth).
+        if _active_proc['proc'] is not proc:
+            return
+        # 3. Only chain on a natural end (timeout/sensor). STOP/crash/busy -> no.
+        if code not in mode_exit.CHAINABLE_EXIT_CODES:
+            _clear_active_if(proc)
+            return
+        # 4. Budget check.
+        if _chain['remaining'] <= 0:
+            _clear_active_if(proc)
+            return
+        # 5. Decrement BEFORE launching so a crash mid-launch can't loop.
+        _chain['remaining'] -= 1
+        # 6. Clear the slot so the next launcher's _gesture_busy() passes.
+        _clear_active_if(proc)
+        timeout_min = _chain_timeout_min(other)
+
+    # --- Phase B: wait for the ending child to fully exit AND free the lock ---
+    if not _await_lock_free(proc, timeout_s=15):
+        print("[chain] lock stuck - abandoning")
+        return
+
+    # --- Phase C: relaunch via the SAME serialized path an operator uses ---
+    # _launch_mode re-acquires _launch_lock itself (not reentrant), so we cannot
+    # hold the lock across this call. We spawn, then re-check generation under
+    # the lock and stop ONLY the just-spawned child if an operator intervened.
+    launch_fn = launch_awake if other == 'awake' else launch_napping
+    ok, _msg = _launch_mode(launch_fn, timeout_min)   # reset_chain defaults False
+    if not ok:
+        return  # busy/409 -> abandon the chain (operator action won)
+
+    # 7. Final anti-race re-check: if generation moved during the spawn window,
+    #    an operator issued a stop/launch after Phase A -> operator wins. Stop
+    #    ONLY the child we just spawned (by identity), never an unrelated action.
+    #    Capture the cancellation target under the lock, then release it before
+    #    calling _terminate_if_still (which re-acquires _launch_lock itself and
+    #    re-validates identity, so it must NOT be called while the lock is held).
+    cancel_target = None
+    with _launch_lock:
+        if _chain['generation'] != generation:
+            spawned = _active_proc['proc']
+            if (spawned is not None and spawned.poll() is None
+                    and _active_proc['label'] == other):
+                cancel_target = spawned
+    if cancel_target is not None:
+        print("[chain] cancelled by operator")
+        _terminate_if_still(cancel_target)
 
 
 def _mic_is_streaming():
@@ -500,6 +695,11 @@ def _preempt_mode_if_running(wait_seconds=15):
 
     print(f"[launch] preempting {label} mode - requesting stop and waiting")
     nap_signal.request_stop()
+    # Bump the generation immediately (before the bounded wait) so even a preempt
+    # that TIMES OUT has invalidated any in-flight chain watcher — a late-exiting
+    # mode can never chain after a preempt. Called while holding _launch_lock
+    # (this function's contract).
+    _bump_generation()
 
     # Wait for the mode process to exit AND the servo lock to free, so the new
     # action can take the lock cleanly.
@@ -738,6 +938,9 @@ def index():
         # The persisted scan timeout (0..120, 0 = no timeout) so the scan
         # <select> can pre-select the stored value's <option>.
         scan_timeout_min=config_store.load_scan_timeout(),
+        # The persisted mode auto-chaining budget (0..20, 0 = off) so the Config
+        # <select> can pre-select the stored value's <option>.
+        chain_max_transitions=config_store.load_chain_max_transitions(),
         styles=VOICE_STYLES,
         effects=VOICE_EFFECTS,
         mode_reference=MODE_INTERRUPT_REFERENCE,
@@ -779,7 +982,7 @@ def stop():
 
 
 # ── Route: napping mode ──────────────────────────────────────────────────────
-def launch_napping(timeout_min):
+def launch_napping(timeout_min, reset_chain=False):
     """Serialised launch of the napping MODE subprocess.
 
     Mirrors ``launch_gesture``'s check-and-spawn under ``_launch_lock`` and
@@ -788,6 +991,18 @@ def launch_napping(timeout_min):
     already busy. No watchdog is attached: unlike a routine, a Mode is meant to
     run open-endedly (until timeout/sensor/stop), so the GESTURE_TIMEOUT
     backstop would wrongly kill it.
+
+    On every real spawn it starts a ``_chain_watch`` daemon so a natural end can
+    auto-chain to awake. When ``reset_chain`` is True (an operator start, not a
+    watcher relaunch) it also bumps the generation and re-seeds the chain budget
+    from config — so a redundant Start (the ``_launch_mode`` "already running"
+    no-op) never re-seeds an in-flight chain.
+
+    Args:
+        timeout_min: Nap timeout in minutes (0 = no timeout).
+        reset_chain: When True, treat this as a fresh operator-started chain:
+            bump the generation and re-seed ``_chain`` from config. The watcher's
+            relaunch leaves this False to continue the same chain.
 
     Returns:
         (ok, message). ok=False means the servos were busy.
@@ -805,6 +1020,18 @@ def launch_napping(timeout_min):
         _active_proc['proc'] = proc
         _active_proc['label'] = 'napping'
         _last_action['value'] = 'napping'
+        if reset_chain:
+            # Fresh operator-started chain: new identity + budget from config.
+            _bump_generation()
+            _chain['remaining'] = config_store.load_chain_max_transitions()
+            # Seed BOTH timeout keys deterministically so a stale timeout from a
+            # prior chain can't leak into the opposite side of the new chain.
+            _chain['nap_timeout_min'] = int(timeout_min)
+            _chain['awake_timeout_min'] = 0
+        # Snapshot generation AFTER any bump, then start the chain watcher.
+        generation = _chain['generation']
+        threading.Thread(target=_chain_watch, args=(proc, 'napping', generation),
+                         daemon=True).start()
         if int(timeout_min) == 0:
             return True, 'napping started (no timeout)'
         return True, f'napping started (timeout {int(timeout_min)} min)'
@@ -841,19 +1068,26 @@ def nap(state):
             minutes = 0
         # Route through _launch_mode so requesting napping while a DIFFERENT mode
         # runs preempts it gracefully (FR8) instead of a 409 "busy" refusal.
-        ok, message = _launch_mode(launch_napping, minutes)
+        # reset_chain=True so a fresh operator Start seeds a new chain (the
+        # launcher does the reset on the real spawn, NOT the "already running"
+        # no-op).
+        ok, message = _launch_mode(launch_napping, minutes, reset_chain=True)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
     if state == 'stop':
         # Signal the mode to wind down; it releases the lock and exits itself.
+        # Bump the generation (under the lock) so any in-flight chain watcher is
+        # invalidated — a stop BREAKS the chain, it does not transition.
         nap_signal.request_stop()
+        with _launch_lock:
+            _bump_generation()
         return jsonify({'status': 'success', 'message': 'nap stop requested'})
     return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
 
 
 # ── Route: awake mode ────────────────────────────────────────────────────────
-def launch_awake(timeout_min):
+def launch_awake(timeout_min, reset_chain=False):
     """Serialised launch of the awake MODE subprocess.
 
     Mirrors ``launch_napping``: check-and-spawn under ``_launch_lock``, track the
@@ -861,6 +1095,16 @@ def launch_awake(timeout_min):
     and force-stop all see it. Refuses if the servos are already busy. No
     watchdog is attached — like napping, a Mode runs open-endedly (until
     timeout/sensor/stop), so the GESTURE_TIMEOUT backstop would wrongly kill it.
+
+    On every real spawn it starts a ``_chain_watch`` daemon so a natural end can
+    auto-chain to napping. When ``reset_chain`` is True (an operator start) it
+    also bumps the generation and re-seeds the chain budget from config.
+
+    Args:
+        timeout_min: Awake timeout in minutes (0 = no timeout).
+        reset_chain: When True, treat this as a fresh operator-started chain:
+            bump the generation and re-seed ``_chain`` from config. The watcher's
+            relaunch leaves this False to continue the same chain.
 
     Returns:
         (ok, message). ok=False means the servos were busy.
@@ -878,6 +1122,18 @@ def launch_awake(timeout_min):
         _active_proc['proc'] = proc
         _active_proc['label'] = 'awake'
         _last_action['value'] = 'awake'
+        if reset_chain:
+            # Fresh operator-started chain: new identity + budget from config.
+            _bump_generation()
+            _chain['remaining'] = config_store.load_chain_max_transitions()
+            # Seed BOTH timeout keys deterministically so a stale timeout from a
+            # prior chain can't leak into the opposite side of the new chain.
+            _chain['awake_timeout_min'] = int(timeout_min)
+            _chain['nap_timeout_min'] = 0
+        # Snapshot generation AFTER any bump, then start the chain watcher.
+        generation = _chain['generation']
+        threading.Thread(target=_chain_watch, args=(proc, 'awake', generation),
+                         daemon=True).start()
         if int(timeout_min) == 0:
             return True, 'awake started (no timeout)'
         return True, f'awake started (timeout {int(timeout_min)} min)'
@@ -914,13 +1170,18 @@ def awake(state):
             # option — the mode runs until manually stopped or sensor-woken).
             minutes = 0
         # Route through _launch_mode for graceful mode-switch preemption (FR8).
-        ok, message = _launch_mode(launch_awake, minutes)
+        # reset_chain=True so a fresh operator Start seeds a new chain.
+        ok, message = _launch_mode(launch_awake, minutes, reset_chain=True)
         if not ok:
             return jsonify({'status': 'busy', 'message': message}), 409
         return jsonify({'status': 'success', 'message': message})
     if state == 'stop':
         # Signal the mode to wind down; it releases the lock and exits itself.
+        # Bump the generation (under the lock) so any in-flight chain watcher is
+        # invalidated — a stop BREAKS the chain, it does not transition.
         nap_signal.request_stop()
+        with _launch_lock:
+            _bump_generation()
         return jsonify({'status': 'success', 'message': 'awake stop requested'})
     return jsonify({'status': 'error', 'message': "state must be 'start' or 'stop'"}), 400
 
@@ -1200,7 +1461,7 @@ _LAUNCHER_LABEL = {
 }
 
 
-def _launch_mode(launch_fn, *args):
+def _launch_mode(launch_fn, *args, reset_chain=False):
     """Launch a background Mode, gracefully preempting a DIFFERENT running Mode.
 
     FR8/FR9 policy for the five mode launchers (napping/awake/tracking/scan/
@@ -1227,6 +1488,10 @@ def _launch_mode(launch_fn, *args):
     Args:
         launch_fn: One of the launch_* mode functions (keys of _LAUNCHER_LABEL).
         *args: Positional args forwarded to ``launch_fn`` (e.g. a timeout).
+        reset_chain: Forwarded ONLY to the two chainable launchers
+            (launch_napping/launch_awake); tracking/scan/puppeteer take no such
+            kwarg, so it is never passed to them (no TypeError). Operator starts
+            pass True; the watcher's relaunch leaves it False.
 
     Returns:
         (ok, message) from the preemption/launch — ok=False means busy (-> 409).
@@ -1251,6 +1516,12 @@ def _launch_mode(launch_fn, *args):
     # was preempted it has freed its servo lock (verified in
     # _preempt_mode_if_running via is_locked()), so launch_fn's _gesture_busy()
     # now passes.
+    #
+    # Forward reset_chain ONLY to the two chainable launchers — tracking/scan/
+    # puppeteer take no such kwarg, so forwarding it unconditionally would raise
+    # TypeError on those three start paths.
+    if launch_fn in (launch_napping, launch_awake):
+        return launch_fn(*args, reset_chain=reset_chain)
     return launch_fn(*args)
 
 
@@ -1308,6 +1579,32 @@ def scan_pool_post():
     return jsonify({'status': 'success', **stored})
 
 
+# ── Route: mode auto-chaining config (config write; NO servo command) ────────
+@app.route('/chain/config', methods=['POST'])
+def chain_config():
+    """Persist the Sleep/Awake mode auto-chaining budget.
+
+    Body: ``{"max_transitions": <int in [0, 20]>}`` — the number of
+    auto-transitions the chain may perform before it stops (0 = chaining
+    disabled). Mirrors ``/nap``/``/awake``/``/scan`` strict validation: a non-int
+    or bool is rejected with 400, and an out-of-range value is rejected with 400
+    (``save_chain_max_transitions`` also clamps defensively as a second layer).
+    This handler runs NO servo command — it is a config write only.
+    """
+    data = request.json or {}
+    value = data.get('max_transitions')
+    # bool is an int subclass, so reject it explicitly.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return jsonify({'status': 'error',
+                        'message': 'max_transitions must be an integer'}), 400
+    if not (config_store.CHAIN_MAX_TRANSITIONS_MIN <= value
+            <= config_store.CHAIN_MAX_TRANSITIONS_MAX):
+        return jsonify({'status': 'error',
+                        'message': 'max_transitions must be between 0 and 20'}), 400
+    stored = config_store.save_chain_max_transitions(value)
+    return jsonify({'status': 'success', 'max_transitions': stored})
+
+
 # ── Routes: mic stream (proxied) ─────────────────────────────────────────────
 @app.route('/mic/<state>', methods=['POST'])
 def mic(state):
@@ -1361,11 +1658,17 @@ def effects_revert():
 @app.route('/status', methods=['GET'])
 def status():
     """Aggregate local run state with the mic controller's status."""
+    # Proxy the mic status BEFORE taking _launch_lock, then hold it only long
+    # enough to copy the chain budget into a local — never across proxy work.
     mic_body, _ = _proxy('GET', '/status')
+    with _launch_lock:
+        chain_remaining = _chain['remaining']
+    chain = {'remaining': chain_remaining, 'active': chain_remaining > 0}
     return jsonify({
         'last_action': _last_action['value'],
         'servos_busy': _gesture_busy(),
         'mic': mic_body,
+        'chain': chain,
     })
 
 
