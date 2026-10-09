@@ -35,9 +35,24 @@
       padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
     }
     .tab-btn.active { background: var(--accent); color: #1a1a1f; font-weight: 600; border-color: var(--accent); }
-    .mic-bar { display: flex; align-items: center; justify-content: space-between;
+    .mic-bar { display: flex; align-items: stretch;
                gap: 12px; background: var(--panel); border: 1px solid var(--border);
                border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+    /* Split the top bar into two equal halves: the LEFT holds the existing mic
+       toggle + record cluster, the RIGHT shows the currently running Routine /
+       Gesture (see #active-trigger). Each half takes ~50% of the width. */
+    .mic-bar .mic-left { flex: 1 1 0; display: flex; align-items: center; gap: 12px; }
+    .mic-bar .mic-right { flex: 1 1 0; display: flex; align-items: center;
+               justify-content: flex-start; border-left: 1px solid var(--border);
+               padding-left: 14px; min-width: 0; }
+    /* The running-trigger readout. Empty when no Routine/Gesture is running —
+       it then renders nothing visible (no text, no box). */
+    #active-trigger { font-size: 0.9rem; color: var(--text); min-width: 0;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #active-trigger .active-trigger-kind { color: var(--muted);
+               text-transform: uppercase; letter-spacing: 0.05em;
+               font-size: 0.72rem; margin-right: 6px; }
+    #active-trigger .active-trigger-name { color: var(--accent); font-weight: 600; }
     .mic-bar label:first-child { font-size: 0.9rem; }
     .panel { display: none; background: var(--panel); border: 1px solid var(--border);
              border-radius: 12px; padding: 16px; }
@@ -273,18 +288,25 @@
        The live-mic toggle plus the three per-mode start/stop clusters, moved
        out of their old panels so they are always reachable from the top. -->
   <div class="top-controls">
-    <!-- Persistent live-mic toggle -->
+    <!-- Persistent live-mic toggle (LEFT half) + running Routine/Gesture
+         readout (RIGHT half). The right half shows nothing when no
+         Routine/Gesture is running (see pollStatus / #active-trigger). -->
     <div class="mic-bar">
-      <label>Live mic passthrough</label>
-      <label class="switch">
-        <input type="checkbox" id="mic-toggle" onchange="toggleMic(this.checked)">
-        <span class="slider-sw"></span>
-      </label>
-      &nbsp;|&nbsp;
-      <button id="record-btn" onclick="toggleRecord()" disabled
-              title="Record the FX-processed mic voice to audio/live_mic_<timestamp>.wav (mic must be on)">
-        ● Record
-      </button>
+      <div class="mic-left">
+        <label>Live mic passthrough</label>
+        <label class="switch">
+          <input type="checkbox" id="mic-toggle" onchange="toggleMic(this.checked)">
+          <span class="slider-sw"></span>
+        </label>
+        &nbsp;|&nbsp;
+        <button id="record-btn" onclick="toggleRecord()" disabled
+                title="Record the FX-processed mic voice to audio/live_mic_<timestamp>.wav (mic must be on)">
+          ● Record
+        </button>
+      </div>
+      <div class="mic-right">
+        <span id="active-trigger"></span>
+      </div>
     </div>
 
     <!-- Per-mode start/stop clusters (Napping / Awake / Scan / Puppeteer) -->
@@ -1377,12 +1399,56 @@
       if (data && data.status === 'success') toast('Scan pool saved');
     }
 
+    // ── Active Routine/Gesture readout (right half of the mic bar) ───────────
+    // webapp.py keeps a SINGLE run slot (_last_action / _active_proc): launching
+    // a Routine/Movement preempts any active Mode and overwrites the label, so
+    // the two are never present at once. 'last_action' therefore holds EITHER a
+    // bare mode name OR 'routine:<name>' / 'movement:<name>'. We show the name
+    // only for the routine/movement forms (a Routine or Gesture is running) and
+    // render NOTHING for a bare mode, 'idle', or a transient stopped:/timeout:
+    // value — so the right half is blank unless a Routine/Gesture is running.
+    function prettifyActionName(raw) {
+      // Split a camelCase / snake_case / kebab-case identifier into words and
+      // Title-Case them, e.g. 'menacingReach' -> 'Menacing Reach'.
+      const spaced = String(raw)
+        .replace(/[_-]+/g, ' ')
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .trim();
+      return spaced.replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+    function updateActiveTrigger(lastAction) {
+      const el = document.getElementById('active-trigger');
+      if (!el) return;
+      let kind = null;
+      let name = null;
+      if (typeof lastAction === 'string') {
+        if (lastAction.startsWith('routine:')) {
+          kind = 'Routine';
+          name = lastAction.slice('routine:'.length);
+        } else if (lastAction.startsWith('movement:')) {
+          kind = 'Gesture';
+          name = lastAction.slice('movement:'.length);
+        }
+      }
+      if (kind && name) {
+        el.innerHTML = '<span class="active-trigger-kind"></span>'
+                     + '<span class="active-trigger-name"></span>';
+        el.querySelector('.active-trigger-kind').textContent = kind + ':';
+        el.querySelector('.active-trigger-name').textContent = prettifyActionName(name);
+      } else {
+        // Nothing running (bare mode / idle / transient) — render nothing.
+        el.textContent = '';
+      }
+    }
+
     // ── Status poll ────────────────────────────────────────────────────────
     async function pollStatus() {
       try {
         const res = await fetch('/status');
         const data = await res.json();
         document.getElementById('last-action').textContent = data.last_action || 'idle';
+        // Right half of the top bar: show the currently running Routine/Gesture.
+        updateActiveTrigger(data.last_action);
         const streaming = data.mic && data.mic.is_streaming;
         document.getElementById('mic-status').textContent = 'mic: ' + (streaming ? 'streaming' : 'idle');
         // Puppeteer holds ONLY the Neck_Group, but is_locked() reports

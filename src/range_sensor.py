@@ -390,6 +390,21 @@ class ApproachDetector:
 
             delta = self._prev_m - distance  # >0 means closer than LAST sample
 
+            # Ignore an exact-duplicate published sample. The sole sensor owner
+            # (webapp's range poller) publishes every RANGE_POLL_INTERVAL_S
+            # (0.2s), but this detector polls the published feed twice as often
+            # (~0.1s), so roughly every other poll re-reads the SAME value
+            # before the publisher has refreshed it. A duplicate (delta==0.0) is
+            # "no new information," NOT a stationary target: without this guard
+            # it would fall into the jitter branch below and reset the streak
+            # between every genuine closer step, so the approach streak could
+            # never reach ``consecutive`` and Sleep mode never woke on approach.
+            # Return without touching _closer_steps or _prev_m so the next fresh
+            # sample compares against the last REAL reading.
+            if delta == 0.0:
+                self._debug(distance, "duplicate published read - ignored")
+                return False
+
             # Compare each sample to the PREVIOUS one. A qualifying closer sample
             # advances the streak by exactly ONE; anything else resets it. So an
             # approach must be SUSTAINED across ``consecutive`` polls in a row —
