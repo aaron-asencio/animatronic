@@ -55,6 +55,18 @@ SCAN_TIMEOUT_DEFAULT_MIN = 60
 SCAN_TIMEOUT_MIN = 0
 SCAN_TIMEOUT_MAX = 120
 
+# Top-level tuning.json sections + key for the Sleep (napping) and Awake mode
+# timeouts, in minutes. Same contract as the scan timeout: [0, 120] where 0 =
+# "no timeout / run until manually stopped or (for sleep) a sensor event". These
+# persist the operator's dropdown choice so it survives a hard browser refresh.
+# Default 0 = "No timeout", matching the dropdowns' first option.
+NAP_KEY = "napping"
+AWAKE_KEY = "awake"
+MODE_TIMEOUT_KEY = "timeout_min"
+MODE_TIMEOUT_DEFAULT_MIN = 0
+MODE_TIMEOUT_MIN = 0
+MODE_TIMEOUT_MAX = 120
+
 # --- Scan responder pool persistence ----------------------------------------
 # Operator-selected routine/gesture pools (with per-action integer weights) that
 # bias Scan's weighted picker. Both live inside the existing ``scan`` section so
@@ -64,6 +76,19 @@ SCAN_ROUTINE_POOL_KEY = "routine_pool"
 SCAN_GESTURE_POOL_KEY = "gesture_pool"
 SCAN_POOL_WEIGHT_MIN = 1
 SCAN_POOL_WEIGHT_MAX = 10
+
+# --- Awake responder pool persistence ---------------------------------------
+# Operator-selected routine/gesture pools (with per-action integer weights) that
+# bias Awake mode's ambient picker. These mirror the Scan pools exactly but live
+# inside the existing ``awake`` section so they coexist with ``timeout_min``.
+# The one deliberate difference from Scan is seeding: Awake is a whole-robot mode
+# so its UI/validation uses the FULL routine/gesture allowlists, not the
+# arm-only-safe Scan subset. Same key names and the SAME weight bounds
+# (SCAN_POOL_WEIGHT_MIN/MAX) and ``_coerce_pool`` helper are reused. Each pool
+# maps action-name -> int weight in [SCAN_POOL_WEIGHT_MIN, SCAN_POOL_WEIGHT_MAX];
+# absent name = excluded.
+AWAKE_ROUTINE_POOL_KEY = "routine_pool"
+AWAKE_GESTURE_POOL_KEY = "gesture_pool"
 
 # --- Mode auto-chaining persistence -----------------------------------------
 # Top-level tuning.json section + key for the Sleep/Awake auto-chaining budget:
@@ -526,6 +551,84 @@ class ConfigStore:
         print(f"Scan timeout saved: {clamped} min")
         return clamped
 
+    def _load_mode_timeout(self, section_key):
+        """Load a mode timeout (minutes) from ``section_key``, clamped safely.
+
+        Shared by the Sleep (``napping``) and Awake timeout loaders. Reads
+        ``<section_key>.timeout_min``. Any missing file/section, non-dict
+        section, or non-integer value yields ``MODE_TIMEOUT_DEFAULT_MIN`` (0 =
+        no timeout). Valid values are coerced to int and clamped to
+        ``[MODE_TIMEOUT_MIN, MODE_TIMEOUT_MAX]`` (``[0, 120]``). Never raises.
+
+        Args:
+            section_key: The top-level section (``NAP_KEY`` or ``AWAKE_KEY``).
+
+        Returns:
+            The timeout in minutes as an int in [0, 120] (0 = no timeout).
+        """
+        raw = self._load_raw()
+        section = raw.get(section_key, {})
+        if not isinstance(section, dict):
+            return MODE_TIMEOUT_DEFAULT_MIN
+        value = section.get(MODE_TIMEOUT_KEY, MODE_TIMEOUT_DEFAULT_MIN)
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            return MODE_TIMEOUT_DEFAULT_MIN
+        return max(MODE_TIMEOUT_MIN, min(MODE_TIMEOUT_MAX, minutes))
+
+    def _save_mode_timeout(self, section_key, minutes):
+        """Persist a mode timeout (minutes) under ``section_key``, merging.
+
+        Shared by the Sleep (``napping``) and Awake timeout savers. Validates/
+        coerces ``minutes`` to an int and clamps it to
+        ``[MODE_TIMEOUT_MIN, MODE_TIMEOUT_MAX]`` (``[0, 120]``) before writing.
+        The existing raw JSON is loaded first and the value is MERGED into any
+        existing section so other keys in it (and all other top-level sections)
+        survive.
+
+        Args:
+            section_key: The top-level section (``NAP_KEY`` or ``AWAKE_KEY``).
+            minutes: The requested timeout; out-of-range values are clamped.
+
+        Returns:
+            The clamped int that was persisted.
+
+        Raises:
+            ValueError: If ``minutes`` cannot be coerced to an int.
+        """
+        try:
+            clamped = int(minutes)
+        except (TypeError, ValueError):
+            raise ValueError("mode timeout must be an integer number of minutes")
+        clamped = max(MODE_TIMEOUT_MIN, min(MODE_TIMEOUT_MAX, clamped))
+
+        raw = self._load_raw()
+        section = raw.get(section_key)
+        if not isinstance(section, dict):
+            section = {}
+        section[MODE_TIMEOUT_KEY] = clamped
+        raw[section_key] = section
+        self._write_raw(raw)
+        print(f"{section_key} timeout saved: {clamped} min")
+        return clamped
+
+    def load_nap_timeout(self):
+        """Load the Sleep (napping) timeout in minutes, clamped to [0, 120]."""
+        return self._load_mode_timeout(NAP_KEY)
+
+    def save_nap_timeout(self, minutes):
+        """Persist the Sleep (napping) timeout in minutes (clamped to [0, 120])."""
+        return self._save_mode_timeout(NAP_KEY, minutes)
+
+    def load_awake_timeout(self):
+        """Load the Awake timeout in minutes, clamped to [0, 120]."""
+        return self._load_mode_timeout(AWAKE_KEY)
+
+    def save_awake_timeout(self, minutes):
+        """Persist the Awake timeout in minutes (clamped to [0, 120])."""
+        return self._save_mode_timeout(AWAKE_KEY, minutes)
+
     def _coerce_pool(self, pool):
         """Coerce a stored/raw pool map to ``{name: int in [1,10]}``.
 
@@ -616,6 +719,70 @@ class ConfigStore:
             SCAN_GESTURE_POOL_KEY: clean_gesture,
         }
 
+    def load_awake_pools(self):
+        """Load the operator-selected Awake routine/gesture pools, best-effort.
+
+        Structural copy of ``load_scan_pools`` reading the ``awake`` section
+        instead of ``scan``. Reads ``awake.routine_pool`` and
+        ``awake.gesture_pool`` from the Config_File. Any missing file/section,
+        corrupt JSON, or non-mapping pool yields an empty dict for that pool.
+        Weights are coerced to int, entries below ``SCAN_POOL_WEIGHT_MIN`` are
+        dropped, and kept weights are clamped to ``[SCAN_POOL_WEIGHT_MIN,
+        SCAN_POOL_WEIGHT_MAX]``. Names are NOT allowlist-validated at this leaf
+        layer (the webapp validates against the FULL allowlists on save). Never
+        raises.
+
+        Returns:
+            A dict ``{"routine_pool": {name: int}, "gesture_pool": {name: int}}``.
+        """
+        raw = self._load_raw()
+        section = raw.get(AWAKE_KEY, {})
+        if not isinstance(section, dict):
+            section = {}
+        return {
+            AWAKE_ROUTINE_POOL_KEY: self._coerce_pool(section.get(AWAKE_ROUTINE_POOL_KEY)),
+            AWAKE_GESTURE_POOL_KEY: self._coerce_pool(section.get(AWAKE_GESTURE_POOL_KEY)),
+        }
+
+    def save_awake_pools(self, routine_pool, gesture_pool):
+        """Persist the Awake routine/gesture pools, preserving the rest.
+
+        Structural copy of ``save_scan_pools`` targeting the ``awake`` section.
+        Loads existing raw JSON via ``_load_raw()`` and MERGES the two pools into
+        the existing ``awake`` section (keeping ``awake.timeout_min`` and every
+        other top-level section such as ``scan``/``profiles``/``voice_styles``).
+        Inputs are assumed already sanitized by the caller, but weights are
+        clamped defensively here as well (coerced to int, below
+        ``SCAN_POOL_WEIGHT_MIN`` dropped, clamped to ``[SCAN_POOL_WEIGHT_MIN,
+        SCAN_POOL_WEIGHT_MAX]``). Written atomically (0644) via ``_write_raw()``.
+
+        Args:
+            routine_pool: A mapping of routine name -> weight.
+            gesture_pool: A mapping of gesture name -> weight.
+
+        Returns:
+            A dict ``{"routine_pool": {..}, "gesture_pool": {..}}`` as stored.
+        """
+        clean_routine = self._coerce_pool(routine_pool)
+        clean_gesture = self._coerce_pool(gesture_pool)
+
+        raw = self._load_raw()
+        section = raw.get(AWAKE_KEY)
+        if not isinstance(section, dict):
+            section = {}
+        section[AWAKE_ROUTINE_POOL_KEY] = clean_routine
+        section[AWAKE_GESTURE_POOL_KEY] = clean_gesture
+        raw[AWAKE_KEY] = section
+        self._write_raw(raw)
+        print(
+            f"Awake pools saved: {len(clean_routine)} routine(s), "
+            f"{len(clean_gesture)} gesture(s)"
+        )
+        return {
+            AWAKE_ROUTINE_POOL_KEY: clean_routine,
+            AWAKE_GESTURE_POOL_KEY: clean_gesture,
+        }
+
     def load_chain_max_transitions(self):
         """Load the mode auto-chaining budget, clamped to a safe range.
 
@@ -701,6 +868,34 @@ def load_scan_timeout():
     return _default_store.load_scan_timeout()
 
 
+def load_nap_timeout():
+    """Load the Sleep (napping) timeout (minutes) via the default store."""
+    return _default_store.load_nap_timeout()
+
+
+def save_nap_timeout(minutes):
+    """Persist the Sleep (napping) timeout (minutes) via the default store.
+
+    Returns:
+        The clamped int that was persisted (0..120, 0 = no timeout).
+    """
+    return _default_store.save_nap_timeout(minutes)
+
+
+def load_awake_timeout():
+    """Load the Awake timeout (minutes) via the default store."""
+    return _default_store.load_awake_timeout()
+
+
+def save_awake_timeout(minutes):
+    """Persist the Awake timeout (minutes) via the default store.
+
+    Returns:
+        The clamped int that was persisted (0..120, 0 = no timeout).
+    """
+    return _default_store.save_awake_timeout(minutes)
+
+
 def save_scan_timeout(minutes):
     """Persist the scan-mode timeout (minutes) via the default store.
 
@@ -734,6 +929,28 @@ def save_scan_pools(routine_pool, gesture_pool):
         A dict ``{"routine_pool": {..}, "gesture_pool": {..}}`` as stored.
     """
     return _default_store.save_scan_pools(routine_pool, gesture_pool)
+
+
+def load_awake_pools():
+    """Load the Awake routine/gesture pools via the default store.
+
+    Returns:
+        A dict ``{"routine_pool": {name: int}, "gesture_pool": {name: int}}``.
+    """
+    return _default_store.load_awake_pools()
+
+
+def save_awake_pools(routine_pool, gesture_pool):
+    """Persist the Awake routine/gesture pools via the default store.
+
+    Args:
+        routine_pool: A mapping of routine name -> weight.
+        gesture_pool: A mapping of gesture name -> weight.
+
+    Returns:
+        A dict ``{"routine_pool": {..}, "gesture_pool": {..}}`` as stored.
+    """
+    return _default_store.save_awake_pools(routine_pool, gesture_pool)
 
 
 def load_chain_max_transitions():

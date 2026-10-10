@@ -44,6 +44,10 @@ from config_store import (  # noqa: E402
     SCAN_GESTURE_POOL_KEY,
     SCAN_POOL_WEIGHT_MIN,
     SCAN_POOL_WEIGHT_MAX,
+    AWAKE_KEY,
+    AWAKE_ROUTINE_POOL_KEY,
+    AWAKE_GESTURE_POOL_KEY,
+    MODE_TIMEOUT_KEY,
     VOICE_STYLES_KEY,
     sanitize_scan_pool,
 )
@@ -863,4 +867,164 @@ def test_module_level_scan_pool_wrappers(tmp_path, monkeypatch):
     assert config_store.load_scan_pools() == {
         SCAN_ROUTINE_POOL_KEY: {"brains": 4},
         SCAN_GESTURE_POOL_KEY: {"wave": 9},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Awake responder pool (load/save_awake_pools) — mirrors the scan-pool block
+# above but targets the ``awake`` section. The one deliberate difference from
+# Scan is seeding (FULL lists), which is enforced by the webapp, not this leaf
+# store; the store itself is name-agnostic, so these tests mirror the Scan
+# round-trip / clamp / empty-on-missing / coerce behavior for the awake section.
+# ---------------------------------------------------------------------------
+
+
+def test_save_awake_pools_round_trip_preserves_timeout_profile_voice_style(tmp_path):
+    """Saving awake pools preserves awake.timeout_min, a profile, and a voice_style."""
+    config_file = tmp_path / "tuning.json"
+    store = ConfigStore(config_path=str(config_file))
+
+    pair = {
+        PROFILE_FILE: _expected_default_profile(),
+        PROFILE_MIC: _expected_default_profile(),
+    }
+    store.save_profiles(pair)
+    store.save_voice_style("ghost", {})
+    store.save_awake_timeout(30)
+
+    # A HEAD gesture (wave) and a non-arm-only routine (startParty) are legal
+    # here — the Awake store is name-agnostic (FULL-list seeding lives in the
+    # webapp), unlike the arm-only-safe Scan pool.
+    stored = store.save_awake_pools({"startParty": 5}, {"wave": 8, "lookAroundRandom": 3})
+    assert stored == {
+        AWAKE_ROUTINE_POOL_KEY: {"startParty": 5},
+        AWAKE_GESTURE_POOL_KEY: {"wave": 8, "lookAroundRandom": 3},
+    }
+
+    with open(config_file, "r") as f:
+        raw = json.load(f)
+
+    assert raw[AWAKE_KEY][MODE_TIMEOUT_KEY] == 30
+    assert raw[AWAKE_KEY][AWAKE_ROUTINE_POOL_KEY] == {"startParty": 5}
+    assert raw[AWAKE_KEY][AWAKE_GESTURE_POOL_KEY] == {"wave": 8, "lookAroundRandom": 3}
+
+    assert raw["profiles"][PROFILE_FILE] == _expected_default_profile()
+    assert VOICE_STYLES_KEY in raw and "ghost" in raw[VOICE_STYLES_KEY]
+
+    fresh = ConfigStore(config_path=str(config_file))
+    assert fresh.load_awake_timeout() == 30
+    assert fresh.load_awake_pools() == {
+        AWAKE_ROUTINE_POOL_KEY: {"startParty": 5},
+        AWAKE_GESTURE_POOL_KEY: {"wave": 8, "lookAroundRandom": 3},
+    }
+    assert fresh.load_profiles() == pair
+
+
+def test_save_awake_timeout_after_pools_preserves_pools(tmp_path):
+    """A later save_awake_timeout merges and keeps the previously saved pools."""
+    config_file = tmp_path / "tuning.json"
+    store = ConfigStore(config_path=str(config_file))
+
+    store.save_awake_pools({"yawn": 2}, {"handVisor": 4})
+    store.save_awake_timeout(60)
+
+    with open(config_file, "r") as f:
+        raw = json.load(f)
+    assert raw[AWAKE_KEY][MODE_TIMEOUT_KEY] == 60
+    assert raw[AWAKE_KEY][AWAKE_ROUTINE_POOL_KEY] == {"yawn": 2}
+    assert raw[AWAKE_KEY][AWAKE_GESTURE_POOL_KEY] == {"handVisor": 4}
+
+
+def test_save_awake_pools_clamps_defensively(tmp_path):
+    """save_awake_pools coerces/clamps even if the caller passes raw values."""
+    store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
+    stored = store.save_awake_pools({"brains": 99, "yawn": 0}, {"wave": "6"})
+    assert stored == {
+        AWAKE_ROUTINE_POOL_KEY: {"brains": SCAN_POOL_WEIGHT_MAX},  # 99 -> 10
+        AWAKE_GESTURE_POOL_KEY: {"wave": 6},                       # "6" -> 6
+    }
+    assert "yawn" not in stored[AWAKE_ROUTINE_POOL_KEY]
+
+
+def test_load_awake_pools_empty_on_missing(tmp_path):
+    """Missing file yields two empty pools without raising."""
+    store = ConfigStore(config_path=str(tmp_path / "absent.json"))
+    assert store.load_awake_pools() == {
+        AWAKE_ROUTINE_POOL_KEY: {},
+        AWAKE_GESTURE_POOL_KEY: {},
+    }
+
+
+def test_load_awake_pools_empty_on_corrupt_or_missing_section(tmp_path):
+    """Corrupt JSON, missing awake section, or non-dict pools yield empty maps."""
+    config_file = tmp_path / "tuning.json"
+
+    config_file.write_text("{not valid json")
+    assert ConfigStore(config_path=str(config_file)).load_awake_pools() == {
+        AWAKE_ROUTINE_POOL_KEY: {},
+        AWAKE_GESTURE_POOL_KEY: {},
+    }
+
+    config_file.write_text(json.dumps({"profiles": {}}))
+    assert ConfigStore(config_path=str(config_file)).load_awake_pools() == {
+        AWAKE_ROUTINE_POOL_KEY: {},
+        AWAKE_GESTURE_POOL_KEY: {},
+    }
+
+    config_file.write_text(
+        json.dumps({AWAKE_KEY: {AWAKE_ROUTINE_POOL_KEY: "oops", AWAKE_GESTURE_POOL_KEY: 5}})
+    )
+    assert ConfigStore(config_path=str(config_file)).load_awake_pools() == {
+        AWAKE_ROUTINE_POOL_KEY: {},
+        AWAKE_GESTURE_POOL_KEY: {},
+    }
+
+
+def test_load_awake_pools_coerces_and_clamps(tmp_path):
+    """Stored awake pool weights are coerced to int, dropped if <1, clamped to [1,10]."""
+    config_file = tmp_path / "tuning.json"
+    config_file.write_text(
+        json.dumps(
+            {
+                AWAKE_KEY: {
+                    AWAKE_ROUTINE_POOL_KEY: {"brains": 99, "yawn": 0, "x": "3"},
+                    AWAKE_GESTURE_POOL_KEY: {"wave": -1, "handVisor": 7},
+                }
+            }
+        )
+    )
+    pools = ConfigStore(config_path=str(config_file)).load_awake_pools()
+    assert pools[AWAKE_ROUTINE_POOL_KEY] == {"brains": SCAN_POOL_WEIGHT_MAX, "x": 3}
+    assert pools[AWAKE_GESTURE_POOL_KEY] == {"handVisor": 7}
+
+
+def test_awake_and_scan_pools_are_independent(tmp_path):
+    """Awake and Scan pools persist in separate sections and don't collide."""
+    store = ConfigStore(config_path=str(tmp_path / "tuning.json"))
+    store.save_scan_pools({"brains": 3}, {"wave": 2})
+    store.save_awake_pools({"startParty": 7}, {"menacingReach": 9})
+
+    assert store.load_scan_pools() == {
+        SCAN_ROUTINE_POOL_KEY: {"brains": 3},
+        SCAN_GESTURE_POOL_KEY: {"wave": 2},
+    }
+    assert store.load_awake_pools() == {
+        AWAKE_ROUTINE_POOL_KEY: {"startParty": 7},
+        AWAKE_GESTURE_POOL_KEY: {"menacingReach": 9},
+    }
+
+
+def test_module_level_awake_pool_wrappers(tmp_path, monkeypatch):
+    """The thin module-level awake-pool wrappers delegate to the default store."""
+    config_file = tmp_path / "tuning.json"
+    monkeypatch.setenv(CONFIG_PATH_OVERRIDE_ENV_PRIMARY, str(config_file))
+    monkeypatch.setattr(config_store, "_default_store", ConfigStore())
+
+    assert config_store.save_awake_pools({"brains": 4}, {"wave": 9}) == {
+        AWAKE_ROUTINE_POOL_KEY: {"brains": 4},
+        AWAKE_GESTURE_POOL_KEY: {"wave": 9},
+    }
+    assert config_store.load_awake_pools() == {
+        AWAKE_ROUTINE_POOL_KEY: {"brains": 4},
+        AWAKE_GESTURE_POOL_KEY: {"wave": 9},
     }
