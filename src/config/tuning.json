@@ -114,7 +114,8 @@
   "scan": {
     "routine_pool": {
       "brains": 5,
-      "hypnotic": 5
+      "hypnotic": 5,
+      "maximus": 5
     },
     "gesture_pool": {
       "beckon": 5,
@@ -123,5 +124,46 @@
       "wave": 5
     },
     "timeout_min": 60
+  },
+  "napping": {
+    "timeout_min": 10
+  },
+  "awake": {
+    "timeout_min": 10,
+    "routine_pool": {
+      "blah": 5,
+      "brains": 5,
+      "burp": 5,
+      "clearThroat": 5,
+      "comeGetCandy": 5,
+      "coughLong": 5,
+      "coughMedium": 5,
+      "exorcist": 5,
+      "fart": 5,
+      "fartGhost": 5,
+      "hypnotic": 5,
+      "krusty": 5,
+      "maximus": 5,
+      "moreCandy": 5,
+      "niceDay": 5,
+      "sneeze": 5,
+      "snuckUp": 5,
+      "startParty": 5,
+      "vincentPrice": 5,
+      "yawn": 5
+    },
+    "gesture_pool": {
+      "beckon": 5,
+      "comeHere": 5,
+      "facePalm": 4,
+      "fanButt": 5,
+      "fanNose": 5,
+      "handVisor": 4,
+      "menacingReach": 5,
+      "talkingHandsII": 5,
+      "talkingWithHands": 5,
+      "tapSide": 5,
+      "wave": 5
+    }
   }
 }

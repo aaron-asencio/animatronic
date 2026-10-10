@@ -2122,6 +2122,50 @@ class Animatronic:
     # The 10% "occasional" bucket splits evenly between these two Routines.
     _AWAKE_OCCASIONAL_ROUTINES = ("yawn", "clear_throat")
 
+    # camelCase gesture action name -> Movements method name, for the OPTIONAL
+    # operator-configured Awake response pool (the Config-tab "Awake response
+    # pool"). Unlike the ambient _AWAKE_AMBIENT_POOL above (which only names the
+    # handful of _do_* gesture coroutines), the operator pool is seeded from the
+    # FULL MOVEMENT_ACTIONS list, so an arbitrary gesture may be picked and the
+    # runtime cannot rely on a _do_* coroutine existing for it. This map is a
+    # VERIFIED-IDENTICAL copy of controller.py's gesture action_map (camelCase ->
+    # Movements coroutine) — kept as a copy rather than imported because
+    # controller.py has a CLI main() and importing it here would be heavyweight
+    # and risk an import cycle. If controller.py's action_map changes, update
+    # this to match. Driven via asyncio.run WITHOUT re-taking servo_lock() (Awake
+    # already holds the whole-robot lock for its life). Routines are translated
+    # separately via self.build_action_map() (camelCase -> bound Animatronic
+    # method).
+    _AWAKE_POOL_GESTURE_METHODS = {
+        # --- ARM gestures ---
+        'wave':             'wave',
+        'beckon':           'beckon',
+        'comeHere':         'come_here',
+        'menacingReach':    'menacing_reach',
+        'yawnCover':        'yawn_cover',
+        'facePalm':         'face_palm',
+        'fanButt':          'fan_butt',
+        'fanNose':          'fan_nose',
+        'tapSide':          'tap_side',
+        'talkingWithHands': 'talking_with_hands',
+        'talkingHandsII':   'talking_hands_ii',
+        # --- HEAD gestures ---
+        'yes':              'nod',
+        'lookAroundSmall':  'look_around_small',
+        'lookAroundRandom': 'look_around_random',
+        'neckEllipse':      'neck_ellipse',
+        'swivelHead':       'swivel_head',
+        'shakeHead':        'shake_head',
+        'snapHead':         'snap_head',
+        'smno':             'small_shake_no',
+        'snuckUp':          'snuck_up',
+        'awaken':           'awaken',
+        'headFocus':        'head_focus',
+        # --- COMPOSITE gestures ---
+        'waveAndSwivelSmooth': 'wave_and_swivel_smooth',
+        'handVisor':        'hand_visor',
+    }
+
     # On a confirmed sensor approach the mode reacts with ONE reaction, chosen at
     # random across BOTH typed sets below, before resuming (mirrors napping's
     # startle response). Split by kind so a GESTURE (no audio, driven via the
@@ -2224,6 +2268,12 @@ class Animatronic:
         """
         # Clear any stale stop request from a previous Mode run so we start clean.
         nap_signal.clear_stop()
+
+        # Load the OPTIONAL operator-configured Awake response pool ONCE at mode
+        # entry (mirrors how scan() does `pools = config_store.load_scan_pools()`
+        # before its loop). When BOTH pools are empty/unset the loop falls back
+        # to the hard-coded ambient behaviour (_AWAKE_AMBIENT_POOL) unchanged.
+        self._awake_pools = config_store.load_awake_pools()
 
         # Arm the proximity sensor in PRESENCE mode (best-effort): awake reacts
         # to someone simply standing in front of the sensor, not only to a
@@ -2364,6 +2414,77 @@ class Animatronic:
         else:
             getattr(self, name)()
 
+    def _pick_awake_pool_action(self):
+        """Pick a ``(kind, camelCase_name)`` from the operator Awake pool.
+
+        Builds a weighted list from ``self._awake_pools`` — each routine name
+        repeated by its (int >= 1) weight tagged ``"routine"`` and each gesture
+        name tagged ``"gesture"`` — then draws one via ``random.choice``. Modeled
+        on ``detection_routine_map.choose_scan_action_weighted`` but WITHOUT the
+        arm-only-safe ``allow`` intersection: Awake is a whole-robot mode, so any
+        FULL-list routine/gesture is a legal pick. Uses the shared stdlib
+        ``random`` so ``random.seed(x)`` stays reproducible.
+
+        Returns:
+            A tuple ``(kind, name)`` with ``kind`` ``"routine"`` or ``"gesture"``
+            and ``name`` the camelCase action name, or ``None`` when the pool is
+            empty (so the caller can fall back to the default ambient behaviour).
+        """
+        pools = getattr(self, "_awake_pools", None) or {}
+        routine_pool = pools.get("routine_pool") or {}
+        gesture_pool = pools.get("gesture_pool") or {}
+
+        weighted = []
+        for pool, kind in ((routine_pool, "routine"), (gesture_pool, "gesture")):
+            if not isinstance(pool, dict):
+                continue
+            for name, raw_weight in pool.items():
+                try:
+                    weight = int(raw_weight)
+                except (TypeError, ValueError):
+                    continue
+                if weight < 1:
+                    continue
+                weighted.extend([(kind, name)] * weight)
+
+        if not weighted:
+            return None
+        return random.choice(weighted)
+
+    def _run_awake_pool_action(self, kind, name):
+        """Run one operator-pool action (camelCase) to completion.
+
+        Translates the camelCase action name to the internal callable BEFORE
+        dispatch (the camelCase name is the security boundary — never passed to
+        ``getattr``/``eval``/a shell on a raw value): routines via
+        ``self.build_action_map()`` (camelCase -> bound ``Animatronic`` method, called
+        directly so the routine manages its own audio + event loop), gestures via
+        ``_AWAKE_POOL_GESTURE_METHODS`` (camelCase -> ``Movements`` method name,
+        driven with ``asyncio.run``). Neither re-takes the servo lock — Awake
+        already holds the whole-robot lock for its whole life (exactly like
+        ``_run_awake_action``).
+
+        An unknown/untranslatable name is skipped with a warning rather than
+        raising, so a stale persisted name can never crash the loop.
+
+        Args:
+            kind: ``"routine"`` or ``"gesture"`` (from ``_pick_awake_pool_action``).
+            name: The camelCase action name to dispatch.
+        """
+        if kind == "routine":
+            method = self.build_action_map().get(name)
+            if method is None:
+                print(f"[awake] skipping unknown pool routine: {name!r}")
+                return
+            method()
+        else:
+            method_name = self._AWAKE_POOL_GESTURE_METHODS.get(name)
+            if method_name is None:
+                print(f"[awake] skipping unknown pool gesture: {name!r}")
+                return
+            mv = Movements("Animatronic")
+            asyncio.run(getattr(mv, method_name)())
+
     def _run_awake_loop(self, timeout_seconds, chain_sensor_end=False):
         """Run weighted ambient actions with 30s pauses until stopped/timeout.
 
@@ -2418,9 +2539,21 @@ class Animatronic:
                 self._reset_nap_sensor()
                 continue
 
-            kind, name = self._pick_ambient_action()
-            print(f"[awake] performing {kind}: {name}")
-            self._run_awake_action(kind, name)
+            # Prefer the operator-configured response pool when one is saved;
+            # otherwise fall back to today's hard-coded ambient behaviour
+            # (_pick_ambient_action + _run_awake_action), unchanged. The pool
+            # names are camelCase (FULL lists) so they dispatch through the
+            # camelCase translation in _run_awake_pool_action; the ambient
+            # fallback uses the internal _do_*/snake_case names as before.
+            pool_pick = self._pick_awake_pool_action()
+            if pool_pick is not None:
+                kind, name = pool_pick
+                print(f"[awake] performing {kind}: {name}")
+                self._run_awake_pool_action(kind, name)
+            else:
+                kind, name = self._pick_ambient_action()
+                print(f"[awake] performing {kind}: {name}")
+                self._run_awake_action(kind, name)
 
             # Pause ~30s between actions, reacting promptly to any signal.
             reason = self._awake_pause(deadline)

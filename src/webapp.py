@@ -935,9 +935,20 @@ def index():
         scan_pool_routines=SCAN_POOL_ROUTINES,
         scan_pool_gestures=SCAN_POOL_GESTURES,
         scan_pools=config_store.load_scan_pools(),
+        # The Awake response pool, unlike Scan, is seeded from the FULL
+        # routine/gesture allowlists (not the arm-only-safe subset): Awake is a
+        # whole-robot mode holding the whole-robot servo_lock, so any routine or
+        # gesture is a legal pick. Sorted for stable UI ordering.
+        awake_pool_routines=sorted(ROUTINE_ACTIONS),
+        awake_pool_gestures=sorted(MOVEMENT_ACTIONS),
+        awake_pools=config_store.load_awake_pools(),
         # The persisted scan timeout (0..120, 0 = no timeout) so the scan
         # <select> can pre-select the stored value's <option>.
         scan_timeout_min=config_store.load_scan_timeout(),
+        # The persisted Sleep/Awake timeouts (0..120, 0 = no timeout) so those
+        # <select>s survive a hard refresh instead of resetting to the default.
+        nap_timeout_min=config_store.load_nap_timeout(),
+        awake_timeout_min=config_store.load_awake_timeout(),
         # The persisted mode auto-chaining budget (0..20, 0 = off) so the Config
         # <select> can pre-select the stored value's <option>.
         chain_max_transitions=config_store.load_chain_max_transitions(),
@@ -1063,9 +1074,13 @@ def nap(state):
                 return jsonify({'status': 'error',
                                 'message': 'timeout_min must be between 0 and 120'}), 400
         else:
-            # Omitted: default to 0 = No timeout (matches the new first UI
-            # option — the mode runs until manually stopped or sensor-woken).
-            minutes = 0
+            # Omitted: use the persisted timeout (0 = No timeout) so a hard
+            # browser refresh — which reseeds the dropdown from storage — starts
+            # with the operator's last choice instead of silently resetting.
+            minutes = config_store.load_nap_timeout()
+        # Persist the chosen value so it survives a restart / hard refresh and is
+        # the next default (returns the clamped int actually stored).
+        minutes = config_store.save_nap_timeout(minutes)
         # Route through _launch_mode so requesting napping while a DIFFERENT mode
         # runs preempts it gracefully (FR8) instead of a 409 "busy" refusal.
         # reset_chain=True so a fresh operator Start seeds a new chain (the
@@ -1166,9 +1181,11 @@ def awake(state):
                 return jsonify({'status': 'error',
                                 'message': 'timeout_min must be between 0 and 120'}), 400
         else:
-            # Omitted: default to 0 = No timeout (matches the new first UI
-            # option — the mode runs until manually stopped or sensor-woken).
-            minutes = 0
+            # Omitted: use the persisted timeout (0 = No timeout) so a hard
+            # browser refresh starts with the operator's last choice.
+            minutes = config_store.load_awake_timeout()
+        # Persist the chosen value so it survives a restart / hard refresh.
+        minutes = config_store.save_awake_timeout(minutes)
         # Route through _launch_mode for graceful mode-switch preemption (FR8).
         # reset_chain=True so a fresh operator Start seeds a new chain.
         ok, message = _launch_mode(launch_awake, minutes, reset_chain=True)
@@ -1579,6 +1596,63 @@ def scan_pool_post():
     return jsonify({'status': 'success', **stored})
 
 
+# ── Routes: awake response pool (config read/write; NO servo command) ────────
+@app.route('/awake/pool', methods=['GET'])
+def awake_pool_get():
+    """Return the persisted Awake response pool.
+
+    Read-only: emits ``{"routine_pool": {name: weight}, "gesture_pool":
+    {name: weight}}`` straight from ``config_store.load_awake_pools()``. Issues
+    no servo command and dispatches no action — this only reads config.
+    """
+    return jsonify(config_store.load_awake_pools())
+
+
+@app.route('/awake/pool', methods=['POST'])
+def awake_pool_post():
+    """Persist the operator-selected Awake response pool (SECURITY BOUNDARY).
+
+    Body: ``{"routine_pool": {name: weight}, "gesture_pool": {name: weight}}``.
+    EVERY submitted routine name is validated against ``ROUTINE_ACTIONS`` and
+    every gesture name against ``MOVEMENT_ACTIONS`` via :func:`_validate_allowlist`
+    BEFORE anything is persisted. Unlike Scan (which validates against the
+    arm-only-safe subset), the Awake pool validates against the FULL allowlists
+    because Awake is a whole-robot mode. If ANY name is unknown the whole request
+    is rejected with 400 and nothing is written — a raw submitted name is never
+    passed to ``getattr``/``eval``/``subprocess`` and this handler runs NO servo
+    command (config read/write only). Validated maps are then sanitized (weights
+    coerced to int, clamped to [1,10], <1 dropped) and saved via
+    ``config_store.save_awake_pools``, which preserves ``awake.timeout_min``.
+    """
+    data = request.json or {}
+    routine_pool = data.get('routine_pool') or {}
+    gesture_pool = data.get('gesture_pool') or {}
+    if not isinstance(routine_pool, dict) or not isinstance(gesture_pool, dict):
+        return jsonify({'status': 'error',
+                        'message': 'pool must be an object'}), 400
+
+    # Allowlist gate: reject the WHOLE request if any name is unknown, persist
+    # nothing. Names are the single security boundary — only known action names
+    # may ever be written to tuning.json or later dispatched by Awake. Awake
+    # uses the FULL allowlists (whole-robot mode), not the Scan arm-only subset.
+    for name in routine_pool:
+        if _validate_allowlist(name, ROUTINE_ACTIONS) is None:
+            print(f"[awake/pool] rejected unknown routine name: {name!r}")
+            return jsonify({'status': 'error',
+                            'message': f'Unknown routine: {name}'}), 400
+    for name in gesture_pool:
+        if _validate_allowlist(name, MOVEMENT_ACTIONS) is None:
+            print(f"[awake/pool] rejected unknown gesture name: {name!r}")
+            return jsonify({'status': 'error',
+                            'message': f'Unknown gesture: {name}'}), 400
+
+    clean_r = config_store.sanitize_scan_pool(routine_pool, ROUTINE_ACTIONS)
+    clean_g = config_store.sanitize_scan_pool(gesture_pool, MOVEMENT_ACTIONS)
+    stored = config_store.save_awake_pools(clean_r, clean_g)
+    print(f"[awake/pool] saved routine_pool={clean_r} gesture_pool={clean_g}")
+    return jsonify({'status': 'success', **stored})
+
+
 # ── Route: mode auto-chaining config (config write; NO servo command) ────────
 @app.route('/chain/config', methods=['POST'])
 def chain_config():
@@ -1603,6 +1677,51 @@ def chain_config():
                         'message': 'max_transitions must be between 0 and 20'}), 400
     stored = config_store.save_chain_max_transitions(value)
     return jsonify({'status': 'success', 'max_transitions': stored})
+
+
+# ── Routes: Sleep / Awake timeout autosave (config write; NO servo command) ──
+# These persist the mode-timeout dropdown choice the instant the operator picks
+# it, so the value survives a hard browser refresh WITHOUT needing to Start the
+# mode first. /nap/start and /awake/start also persist (and fall back to) the
+# stored value, so either path keeps the dropdown sticky. Config write only.
+@app.route('/nap/config', methods=['POST'])
+def nap_config():
+    """Persist the Sleep (napping) timeout dropdown choice.
+
+    Body: ``{"timeout_min": <int in [0, 120]>}`` (0 = no timeout). Mirrors the
+    strict validation of ``/nap/start`` (non-int/bool and out-of-range both
+    rejected with 400); ``save_nap_timeout`` clamps defensively as well. Runs NO
+    servo command — it does not start or affect a running mode.
+    """
+    data = request.json or {}
+    value = data.get('timeout_min')
+    if isinstance(value, bool) or not isinstance(value, int):
+        return jsonify({'status': 'error',
+                        'message': 'timeout_min must be an integer'}), 400
+    if not (NAP_MIN_TIMEOUT_MIN <= value <= NAP_MAX_TIMEOUT_MIN):
+        return jsonify({'status': 'error',
+                        'message': 'timeout_min must be between 0 and 120'}), 400
+    stored = config_store.save_nap_timeout(value)
+    return jsonify({'status': 'success', 'timeout_min': stored})
+
+
+@app.route('/awake/config', methods=['POST'])
+def awake_config():
+    """Persist the Awake timeout dropdown choice.
+
+    Body: ``{"timeout_min": <int in [0, 120]>}`` (0 = no timeout). Same strict
+    validation and defensive clamp as ``/nap/config``. Config write only.
+    """
+    data = request.json or {}
+    value = data.get('timeout_min')
+    if isinstance(value, bool) or not isinstance(value, int):
+        return jsonify({'status': 'error',
+                        'message': 'timeout_min must be an integer'}), 400
+    if not (AWAKE_MIN_TIMEOUT_MIN <= value <= AWAKE_MAX_TIMEOUT_MIN):
+        return jsonify({'status': 'error',
+                        'message': 'timeout_min must be between 0 and 120'}), 400
+    stored = config_store.save_awake_timeout(value)
+    return jsonify({'status': 'success', 'timeout_min': stored})
 
 
 # ── Routes: mic stream (proxied) ─────────────────────────────────────────────

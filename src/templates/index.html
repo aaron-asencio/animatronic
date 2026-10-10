@@ -244,21 +244,29 @@
       margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
     }
 
-    /* Scan response pool: per-action checkbox + weight slider rows. */
-    #scanpool .scanpool-list { margin-top: 10px; }
-    #scanpool .scanpool-row {
+    /* Scan/Awake response pool: per-action checkbox + weight slider rows.
+       #awakepool reuses the same .scanpool-* classes as #scanpool so the two
+       response-pool UIs stay visually identical with no duplicated CSS. */
+    #scanpool .scanpool-list,
+    #awakepool .scanpool-list { margin-top: 10px; }
+    #scanpool .scanpool-row,
+    #awakepool .scanpool-row {
       display: flex; align-items: center; gap: 10px;
       padding: 4px 6px; border-bottom: 1px solid var(--border);
     }
-    #scanpool .scanpool-name {
+    #scanpool .scanpool-name,
+    #awakepool .scanpool-name {
       flex: 1 1 auto; display: flex; align-items: center; gap: 8px;
       min-width: 0; word-break: break-word;
     }
-    #scanpool .scanpool-row input[type=range] {
+    #scanpool .scanpool-row input[type=range],
+    #awakepool .scanpool-row input[type=range] {
       flex: 0 0 120px;
     }
-    #scanpool .scanpool-row input[type=range]:disabled { opacity: 0.4; }
-    #scanpool .scanpool-weight {
+    #scanpool .scanpool-row input[type=range]:disabled,
+    #awakepool .scanpool-row input[type=range]:disabled { opacity: 0.4; }
+    #scanpool .scanpool-weight,
+    #awakepool .scanpool-weight {
       flex: 0 0 1.5em; text-align: right; color: var(--muted);
     }
 
@@ -514,20 +522,11 @@
     </div>
     <div class="row">
       <label>Nap timeout<br><small style="color:var(--muted)">minutes before the head raises; "No timeout" runs until you stop it (or a sensor wakes it)</small></label>
-      <select id="nap-timeout">
-        <option value="0" selected>No timeout</option>
-        <option value="10">10 min</option>
-        <option value="20">20 min</option>
-        <option value="30">30 min</option>
-        <option value="40">40 min</option>
-        <option value="50">50 min</option>
-        <option value="60">60 min</option>
-        <option value="70">70 min</option>
-        <option value="80">80 min</option>
-        <option value="90">90 min</option>
-        <option value="100">100 min</option>
-        <option value="110">110 min</option>
-        <option value="120">120 min</option>
+      <select id="nap-timeout" onchange="saveNapTimeout()">
+        <option value="0"{% if nap_timeout_min == 0 %} selected{% endif %}>No timeout</option>
+        {% for m in [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120] %}
+        <option value="{{ m }}"{% if nap_timeout_min == m %} selected{% endif %}>{{ m }} min</option>
+        {% endfor %}
       </select>
     </div>
     </div>
@@ -582,21 +581,74 @@
     </div>
     <div class="row">
       <label>Awake timeout<br><small style="color:var(--muted)">minutes before the mode winds down; "No timeout" runs until you stop it (or a sensor interrupts it)</small></label>
-      <select id="awake-timeout">
-        <option value="0" selected>No timeout</option>
-        <option value="10">10 min</option>
-        <option value="20">20 min</option>
-        <option value="30">30 min</option>
-        <option value="40">40 min</option>
-        <option value="50">50 min</option>
-        <option value="60">60 min</option>
-        <option value="70">70 min</option>
-        <option value="80">80 min</option>
-        <option value="90">90 min</option>
-        <option value="100">100 min</option>
-        <option value="110">110 min</option>
-        <option value="120">120 min</option>
+      <select id="awake-timeout" onchange="saveAwakeTimeout()">
+        <option value="0"{% if awake_timeout_min == 0 %} selected{% endif %}>No timeout</option>
+        {% for m in [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120] %}
+        <option value="{{ m }}"{% if awake_timeout_min == m %} selected{% endif %}>{{ m }} min</option>
+        {% endfor %}
       </select>
+    </div>
+
+    <!-- Awake response pool: operator-selectable + weighted routines/gestures.
+         Mirrors #scanpool exactly (reusing the .scanpool-* classes) BUT is
+         seeded from the FULL routine/gesture lists, not the arm-only-safe Scan
+         subset — Awake is a whole-robot mode. A checked row is INCLUDED with its
+         1–10 weight; unchecked = excluded; an empty pool uses the default
+         ambient behavior shown above. Server-seeded from awake_pools; names are
+         allowlist-validated against the FULL lists on save. -->
+    <div class="tune-group" id="awakepool">
+      <div class="section-title">Awake response pool</div>
+      <p class="hint" style="margin-top:0;">Pick which routines and gestures
+         Awake draws from each ambient tick, and weight each (1–10 — higher fires
+         more often). Unchecked = excluded. A saved pool overrides the default
+         ambient list shown above; leave the pool empty to keep the defaults.</p>
+
+      <div class="scanpool-list">
+        <div class="section-title">Routines</div>
+        {% for name in awake_pool_routines %}
+        {% set w = awake_pools.routine_pool.get(name) %}
+        <div class="scanpool-row">
+          <label class="scanpool-name">
+            <input type="checkbox" id="awakepool-routine-cb-{{ name }}"
+                   {% if w %}checked{% endif %}
+                   onchange="awakePoolToggle('routine', '{{ name }}')">
+            {{ name }}
+          </label>
+          <input type="range" min="1" max="10" step="1"
+                 id="awakepool-routine-w-{{ name }}"
+                 value="{{ w if w else 5 }}" {% if not w %}disabled{% endif %}
+                 oninput="awakePoolWeight('routine', '{{ name }}')">
+          <span class="scanpool-weight" id="awakepool-routine-wv-{{ name }}">{{ w if w else 5 }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="scanpool-list">
+        <div class="section-title">Gestures</div>
+        {% for name in awake_pool_gestures %}
+        {% set w = awake_pools.gesture_pool.get(name) %}
+        <div class="scanpool-row">
+          <label class="scanpool-name">
+            <input type="checkbox" id="awakepool-gesture-cb-{{ name }}"
+                   {% if w %}checked{% endif %}
+                   onchange="awakePoolToggle('gesture', '{{ name }}')">
+            {{ name }}
+          </label>
+          <input type="range" min="1" max="10" step="1"
+                 id="awakepool-gesture-w-{{ name }}"
+                 value="{{ w if w else 5 }}" {% if not w %}disabled{% endif %}
+                 oninput="awakePoolWeight('gesture', '{{ name }}')">
+          <span class="scanpool-weight" id="awakepool-gesture-wv-{{ name }}">{{ w if w else 5 }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="fx-actions" style="margin-top:14px;">
+        <button class="action" id="awakepool-save-btn" onclick="saveAwakePool(this)"
+                title="Save the selected routines/gestures and weights as Awake's response pool.">
+          💾 Save awake pool
+        </button>
+      </div>
     </div>
     </div>
 
@@ -668,13 +720,12 @@
         reuses each mode's own timeout — a mode started with "No timeout" only
         advances on a sensor event, not a timeout.</small>
       </label>
-      <select id="chain-max-transitions">
+      <select id="chain-max-transitions" onchange="saveChainConfig()">
         <option value="0"{% if chain_max_transitions == 0 %} selected{% endif %}>Off</option>
         {% for n in [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20] %}
         <option value="{{ n }}"{% if chain_max_transitions == n %} selected{% endif %}>{{ n }}</option>
         {% endfor %}
       </select>
-      <button class="action" onclick="saveChainConfig(this)">Save</button>
     </div>
 
     <!-- Scan response pool: operator-selectable + weighted routines/gestures.
@@ -1420,15 +1471,74 @@
       if (data && data.status === 'success') toast('Scan pool saved');
     }
 
+    // ── Awake response pool ────────────────────────────────────────────────
+    // Mirrors the Scan response pool JS exactly (same enable/disable-on-check
+    // behavior) but with the awakepool- id prefix and the /awake/pool target.
+    // Checking a row enables its weight slider; unchecking disables/greys it
+    // (an unchecked row is omitted on save = excluded from the pool).
+    function awakePoolToggle(kind, name) {
+      const cb = document.getElementById('awakepool-' + kind + '-cb-' + name);
+      const slider = document.getElementById('awakepool-' + kind + '-w-' + name);
+      if (!cb || !slider) return;
+      slider.disabled = !cb.checked;
+    }
+    // Mirror the live slider value into its readout span.
+    function awakePoolWeight(kind, name) {
+      const slider = document.getElementById('awakepool-' + kind + '-w-' + name);
+      const out = document.getElementById('awakepool-' + kind + '-wv-' + name);
+      if (slider && out) out.textContent = slider.value;
+    }
+    // Collect CHECKED rows into {name: weight}; unchecked rows are omitted so
+    // they persist as excluded. Validation of names happens server-side.
+    function collectAwakePool(kind) {
+      const pool = {};
+      document.querySelectorAll('[id^="awakepool-' + kind + '-cb-"]').forEach(cb => {
+        if (!cb.checked) return;
+        const name = cb.id.slice(('awakepool-' + kind + '-cb-').length);
+        const slider = document.getElementById('awakepool-' + kind + '-w-' + name);
+        pool[name] = slider ? +slider.value : 5;
+      });
+      return pool;
+    }
+    async function saveAwakePool(btn) {
+      const body = {
+        routine_pool: collectAwakePool('routine'),
+        gesture_pool: collectAwakePool('gesture'),
+      };
+      const data = await post('/awake/pool', btn, body);
+      if (data && data.status === 'success') toast('Awake pool saved');
+    }
+
     // ── Mode auto-chaining config ────────────────────────────────────────────
-    // Persist the Sleep/Awake auto-transition budget (0 = Off). The <select> is
-    // Jinja-seeded on page load, so no fetch is needed to show the current value.
-    async function saveChainConfig(btn) {
+    // Autosave the Sleep/Awake auto-transition budget (0 = Off) the instant the
+    // dropdown changes, consistent with the Nap/Awake timeout autosave. The
+    // <select> is Jinja-seeded on page load, so no fetch is needed to show the
+    // current value.
+    async function saveChainConfig() {
       const value = +document.getElementById('chain-max-transitions').value;
-      const data = await post('/chain/config', btn, { max_transitions: value });
+      const data = await post('/chain/config', null, { max_transitions: value });
       if (data && data.status === 'success') {
         toast('Auto-chaining: ' + (data.max_transitions === 0
           ? 'Off' : data.max_transitions + ' transitions'));
+      }
+    }
+
+    // Autosave the Sleep / Awake timeout the instant the dropdown changes, so
+    // the value persists across a hard browser refresh WITHOUT needing to Start
+    // the mode. The <select>s are Jinja-seeded from the stored value on load;
+    // these keep storage in sync when the operator picks a new value.
+    async function saveNapTimeout() {
+      const value = +document.getElementById('nap-timeout').value;
+      const data = await post('/nap/config', null, { timeout_min: value });
+      if (data && data.status === 'success') {
+        toast('Nap timeout: ' + (value === 0 ? 'No timeout' : value + ' min'));
+      }
+    }
+    async function saveAwakeTimeout() {
+      const value = +document.getElementById('awake-timeout').value;
+      const data = await post('/awake/config', null, { timeout_min: value });
+      if (data && data.status === 'success') {
+        toast('Awake timeout: ' + (value === 0 ? 'No timeout' : value + ' min'));
       }
     }
 
