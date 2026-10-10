@@ -1367,6 +1367,13 @@
     // — including auto-wind-down (timeout) and preemption. The detection
     // overlay follows scan here so it turns on/off with the real mode state,
     // not just the explicit Start/Stop buttons.
+    //
+    // Tracks the previous scan state so the overlay is driven only on a scan
+    // transition (off→on turns it on, on→off turns it off). On a steady state
+    // we leave the overlay alone — otherwise every status poll would re-assert
+    // "scan is off → overlay off" and stomp a manual toggle the instant the
+    // operator flips it on while no mode is running.
+    let _scanActive = false;
     function setScanActive(active) {
       const startBtn = document.getElementById('scan-start-btn');
       const stopBtn = document.getElementById('scan-stop-btn');
@@ -1374,7 +1381,10 @@
       if (startBtn) startBtn.disabled = active;
       if (stopBtn) stopBtn.disabled = !active;
       if (status) status.textContent = active ? 'scanning…' : '';
-      syncOverlayToScan(active);
+      if (active !== _scanActive) {
+        _scanActive = active;
+        syncOverlayToScan(active);
+      }
     }
 
     // ── Puppeteer mode ─────────────────────────────────────────────────────
