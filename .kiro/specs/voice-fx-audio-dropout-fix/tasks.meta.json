@@ -1,0 +1,344 @@
+{
+  "pbtResults": {
+    "1. Write bug condition exploration test (teardown order + DSP leak)": {
+      "status": "passed",
+      "failingExample": "Exploration test FAILS on unfixed code as required (failure = bug confirmed). Concrete counterexamples:\n- Case 1 (teardown order, root cause #1): audio_state['stream'] is None after start_streaming()/stop_streaming(); live stream recorded calls = ['open','start_stream'] with no stop_stream()/close() before terminate().\n- Case 2 (mic->routine, root cause #1/#2): mic owner recorded calls = ['open','start_stream','terminate'] — device not released cleanly before the Routine owner opened its stream on output_device_index=2.\n- Case 3 (routine-after-routine, root cause #3): first-pass RMS ~8879 vs second-pass ~10627 (delta +1747, ~19.7%, >2% tol) from leaked echo_buffer/reverb_buffer/effect_state phase across the transition.\n- Case 3b (preset change, root cause #3): first post-switch RMS ~10063 vs clean same-preset pass ~8408 (delta +1654, ~19.7%); set_effects() does not reset transient DSP state.\nRoot cause #4 (pitch resample amplitude) NOT isolated — drift dominated by #3.",
+      "lastRunTimestamp": 1791776983536
+    }
+  },
+  "executionHistory": {
+    "1. Write bug condition exploration test (teardown order + DSP leak)": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776583790
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776596502
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777008659
+      }
+    ],
+    "2. Write preservation property tests (BEFORE implementing the fix)": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776585286
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777025404
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777396129
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834229454
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834447946
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834832953
+      }
+    ],
+    "3.1 Capture the live stream handle in `start_streaming()`": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776585940
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777404549
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777557426
+      }
+    ],
+    "3.2 Orderly teardown in `stop_streaming()`": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776586402
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777561422
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777686293
+      }
+    ],
+    "3.3 Add `_reset_audio_dsp_state()` and call it on stream start/stop": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776586849
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777691133
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777845355
+      }
+    ],
+    "3.4 Reset transient DSP state on preset change in `set_effects()`": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776587281
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777849002
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777969293
+      }
+    ],
+    "3.5 Confirm `AudioPlayer` per-clip teardown is already correct": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776587706
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791777973391
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778041204
+      }
+    ],
+    "3.6 Verify bug condition exploration test now passes": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776588121
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778045289
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778092577
+      }
+    ],
+    "3.7 Verify preservation tests still pass": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776588549
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778096121
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778144815
+      }
+    ],
+    "4. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791776588988
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778151241
+      },
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778230370
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834232823
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791836369412
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791836439229
+      }
+    ],
+    "3. Fix the Voice-FX audio dropout on the shared output device": [
+      {
+        "executionId": "cc21bb5a-fcfd-4e16-a052-7143b0289fe9",
+        "chatSessionId": "sess_126f9edc-ccbe-49f3-8213-7eeb1805ae1b",
+        "timestamp": 1791778146047
+      }
+    ],
+    "1. Write bug condition exploration test (GPIO leak via post-stop callback)": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834228339
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834240335
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834444038
+      }
+    ],
+    "3.1 Guard `talk()` / `audio_callback` device (re)creation on `is_streaming`": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834229910
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834842655
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834958840
+      }
+    ],
+    "3.2 Close the live stream BEFORE releasing GPIO in `stop_streaming()`": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834230772
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834965821
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791835031458
+      }
+    ],
+    "3.3 Confirm `_release_gpio()` frees the pins in-process and nothing re-grabs them": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834231165
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791835035798
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791835125206
+      }
+    ],
+    "3.4 Keep the orderly PyAudio teardown + `_reset_audio_dsp_state()` intact (preserve)": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834231619
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791835129029
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791835196814
+      }
+    ],
+    "3.5 Verify bug condition exploration test now passes": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834232014
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791835205003
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791836300296
+      }
+    ],
+    "3.6 Verify preservation tests still pass": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791834232412
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791836304636
+      },
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791836364296
+      }
+    ],
+    "3. Fix the cross-process GPIO ownership leak in the mic process": [
+      {
+        "executionId": "17e21e9a-cae8-4166-9fb7-9d064b5e0778",
+        "chatSessionId": "sess_99194e8e-62e7-41d3-8409-178032169202",
+        "timestamp": 1791836364837
+      }
+    ]
+  }
+}

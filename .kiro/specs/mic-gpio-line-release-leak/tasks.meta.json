@@ -1,0 +1,94 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Write bug-condition exploration test (hardware-faithful, MUST FAIL on unfixed code)": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845447525
+      },
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845461567
+      }
+    ],
+    "2.1 Live-stream ownership preservation (3.1)": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845448103
+      }
+    ],
+    "2.2 Mic re-toggle re-claim preservation (3.2)": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845448664
+      }
+    ],
+    "2.3 Effects/recording/config untouched preservation (3.3)": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845449141
+      }
+    ],
+    "2.4 Victim modules unchanged preservation (3.4)": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845449612
+      }
+    ],
+    "2.5 In-process stop-path ORDERING logic test (documented limitation)": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845450148
+      }
+    ],
+    "3.1 Import `Device` and close the pin factory in `_release_gpio()`": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845450655
+      }
+    ],
+    "3.2 Confirm the call site is unchanged": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845451181
+      }
+    ],
+    "3.3 Keep existing `is_streaming` guards in `talk()`/`audio_callback` as-is": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845451652
+      }
+    ],
+    "3.4 Verify bug-condition exploration test now PASSES": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845452147
+      }
+    ],
+    "3.5 Verify preservation tests still PASS": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845452714
+      }
+    ],
+    "4. Checkpoint — ensure all checks pass": [
+      {
+        "executionId": "1402e6a6-d2e0-453a-9a7c-ba2a7af0a2ae",
+        "chatSessionId": "sess_a7ad3976-3b15-4203-ae66-bdac7906563c",
+        "timestamp": 1791845453183
+      }
+    ]
+  }
+}
