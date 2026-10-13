@@ -73,6 +73,11 @@ _gpiozero_stub = types.ModuleType("gpiozero")
 _gpiozero_stub.PWMLED = MagicMock(name="PWMLED")
 _gpiozero_stub.LED = MagicMock(name="LED")
 _gpiozero_stub.DigitalOutputDevice = MagicMock(name="DigitalOutputDevice")
+# micwebcontroller imports gpiozero.Device to close the pin factory in
+# _release_gpio() (mic-gpio-line-release-leak fix). The /config and /status
+# endpoints under test never hit the stop/release path, so a MagicMock with a
+# pin_factory attribute is enough to satisfy the import.
+_gpiozero_stub.Device = MagicMock(name="Device")
 _install_stub("gpiozero", _gpiozero_stub)
 
 # --- utils.audio_utils stub: AudioUtils may pull hardware transitively. ------

@@ -1,0 +1,240 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Write thread-faithful bug-condition exploration test (MUST FAIL on unfixed code)": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845535011
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845549735
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791846261068
+      }
+    ],
+    "2.1 DSP output equality (single-threaded + PBT)": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845535665
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791846269323
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791846794184
+      }
+    ],
+    "2.2 Endpoint behavior (Flask test-client + temp `ConfigStore`)": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845536221
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791846798131
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847021891
+      }
+    ],
+    "2.3 Lifecycle unaffected": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845536723
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847025457
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847303535
+      }
+    ],
+    "2.4 `_reset_audio_dsp_state` intent preserved": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845537209
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847307152
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847455712
+      }
+    ],
+    "3.1 Add the module-level DSP lock": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845538026
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847460024
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847520151
+      }
+    ],
+    "3.2 Guard the callback's DSP work": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845538770
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847523863
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847623192
+      }
+    ],
+    "3.3 Make `effects_config` writes whole-chain atomic rebinds under the lock": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845539235
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847626888
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847784965
+      }
+    ],
+    "3.4 Make `_reset_audio_dsp_state` thread-safe (build-new-then-atomic-rebind)": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845539891
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847788990
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848071074
+      }
+    ],
+    "3.5 (Secondary / belt-and-suspenders) Wrap locked DSP in try/except passthrough": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845540427
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848075523
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848208027
+      }
+    ],
+    "3.6 Verify bug-condition exploration test now PASSES": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845540933
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848213236
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848399115
+      }
+    ],
+    "3.7 Verify preservation tests still PASS": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845541449
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848403262
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848486187
+      }
+    ],
+    "4. Checkpoint — ensure all tests pass": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791845541884
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848491309
+      },
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848600374
+      }
+    ],
+    "2. Write preservation tests BEFORE the fix (observation-first; MUST PASS on unfixed code)": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791847456078
+      }
+    ],
+    "3. Fix the voice-FX style-change stream crash (synchronization only — DSP math untouched)": [
+      {
+        "executionId": "3d7884a0-121c-4c90-833c-32d7ac577efd",
+        "chatSessionId": "sess_6ba65424-5dfb-4ad4-89f6-bf85b5ceacfa",
+        "timestamp": 1791848486818
+      }
+    ]
+  }
+}

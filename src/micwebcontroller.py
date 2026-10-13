@@ -8,6 +8,7 @@ import time
 from gpiozero import PWMLED
 from gpiozero import LED
 from gpiozero import DigitalOutputDevice
+from gpiozero import Device
 from datetime import datetime
 from utils.audio_utils import AudioUtils
 from constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
@@ -144,6 +145,162 @@ effect_state = {
     'ring_phase': 0.0,
 }
 
+# NOTE (bugfix H3): there is deliberately NO lock on the real-time DSP path.
+# An earlier design serialised the PortAudio callback and the Flask request
+# thread with a _dsp_lock, but a real-time audio callback on a shared duplex
+# ALSA device must never block on a lock a non-real-time thread can hold -- on
+# the Pi the GIL hand-off during an FX change delayed the callback past one
+# CHUNK deadline and permanently wedged the duplex stream. The race the lock
+# used to close is now closed structurally instead: effects_config is only ever
+# REBOUND wholesale (the callback reads it with a single atomic reference read
+# per frame -> no torn read), and the per-frame DSP state (echo deque, reverb
+# buffer, phases) is owned EXCLUSIVELY by the callback thread (the request
+# thread never mutates it; it bumps _dsp_reset_generation and the callback
+# resets itself). So no "deque mutated during iteration" race and no lock.
+
+# ── Lock-free hand-off to the real-time callback (bugfix H3) ─────────────────
+# The PortAudio callback runs on a hard real-time deadline on a shared duplex
+# ALSA device. It MUST NOT block on a lock a non-real-time (Flask request)
+# thread can hold: on the Pi, the GIL hand-off of _dsp_lock during an FX change
+# delayed the callback past one CHUNK period, underrunning the duplex output
+# ring. ALSA never re-primed, so the stream wedged silent forever (PortAudio
+# reported status 6 = paOutputUnderflow|paInputOverflow every frame) until the
+# process was restarted. The fix: the callback reads shared config via a single
+# ATOMIC reference read (CPython ref assignment is atomic under the GIL, no lock
+# needed) and OWNS its per-frame DSP state exclusively. The request thread never
+# mutates the callback's live DSP buffers; to request a reset it just bumps a
+# generation counter, and the callback performs the reset itself at the top of a
+# frame. So the callback never blocks and never sees torn/mid-swap state.
+#
+# _dsp_reset_generation: bumped (atomic int rebind) by the request thread on a
+# style change / stream (re)start to ask the callback to re-initialise its
+# transient DSP state. The callback compares it to the generation it last
+# applied and resets locally when they differ.
+_dsp_reset_generation = 0
+
+# Set by the callback when it detects a PERSISTENT output underflow (the duplex
+# wedge). The stream thread watches this and reopens the stream to re-prime
+# ALSA, since a wedged duplex link never self-recovers.
+_stream_needs_recovery = threading.Event()
+
+# Recurring-exception surfacing for the real-time audio callback (bugfix 2.4,
+# H2/H3). The callback wraps its DSP work in a broad try/except so a single
+# unforeseen error can never propagate out and be treated as fatal by PortAudio
+# (which would silently kill the stream for the rest of the session). But an
+# unconditional swallow would MASK a per-frame error that repeats EVERY frame
+# after an FX change into permanent silence with nothing an operator can see.
+#
+# To surface a recurring failure without flooding the log, we keep a
+# module-level consecutive-error counter: it is reset to 0 on any successful
+# frame, and incremented on every caught exception. _note_callback_dsp_error()
+# emits a RATE-LIMITED diagnostic (the first occurrence, then every Nth) that
+# carries the consecutive-error COUNT and the exception detail, so an operator /
+# log sees that FX processing is failing every frame (not just one undiffer-
+# entiated line). This is pure error-path observability on the (lock-free)
+# callback thread; the happy path is untouched.
+_consecutive_callback_errors = 0
+
+# Emit the first error, then one in every _CALLBACK_ERROR_LOG_EVERY after it, so
+# a per-frame failure stays visible but does not spam a line per 21 ms frame.
+# At the 48 kHz/1024-frame rate (~21 ms/frame) 10 consecutive failures is ~0.2 s
+# -- fast enough that a genuinely-recurring failure surfaces an operator-visible
+# "still recurring" line almost immediately, while a one-off error (counter
+# reset on the next good frame) never reaches it.
+_CALLBACK_ERROR_LOG_EVERY = 10
+
+
+def _note_callback_dsp_error(exc):
+    """Record a caught audio-callback DSP error and emit a rate-limited,
+    operator-visible RECURRING diagnostic (bugfix 2.4, H2/H3).
+
+    Increments the module-level consecutive-error counter and prints a
+    diagnostic on the first error and then every ``_CALLBACK_ERROR_LOG_EVERY``
+    consecutive errors. The message carries the consecutive count (e.g.
+    ``(42x consecutive)``) and the exception detail, so a per-frame failure that
+    the broad try/except would otherwise swallow into permanent silence is
+    surfaced as a recurring, rate-limited signal rather than one undifferentiated
+    line per frame.
+
+    Called from the callback's except branch (the live DSP path is lock-free --
+    bugfix H3). Call _reset_callback_dsp_errors() on any successful frame.
+    """
+    global _consecutive_callback_errors
+    _consecutive_callback_errors += 1
+    n = _consecutive_callback_errors
+    if n == 1 or n % _CALLBACK_ERROR_LOG_EVERY == 0:
+        # Markers an operator/log can key on: the word "consecutive" and a
+        # "(Nx ...)" occurrence count both signal this is a RECURRING failure,
+        # not a one-off. The first line fires immediately; the "still failing"
+        # follow-ups are rate-limited so a per-frame error does not flood stdout.
+        if n == 1:
+            print(f"audio_callback DSP error (passing through): {exc}")
+        else:
+            print(
+                f"audio_callback DSP error STILL RECURRING: failed on "
+                f"{n} consecutive frames ({n}x in a row) -- live FX processing "
+                f"is failing every frame; passing audio through unprocessed. "
+                f"Last error: {exc}"
+            )
+
+
+def _reset_callback_dsp_errors():
+    """Reset the consecutive audio-callback error counter after a successful
+    frame (bugfix 2.4). Keeps the rate-limited recurring diagnostic scoped to a
+    genuine run of back-to-back failures, so an isolated one-off error (then
+    recovery) does not leave the counter armed."""
+    global _consecutive_callback_errors
+    _consecutive_callback_errors = 0
+
+
+# Persistent-underflow detection for the duplex stream (bugfix H3). PortAudio
+# ORs these flags into `status`; a wedged duplex device repeats
+# paOutputUnderflow|paInputOverflow every frame. We count CONSECUTIVE frames
+# carrying an output-underflow flag and, past a threshold, (a) emit one
+# rate-limited diagnostic and (b) set _stream_needs_recovery so the stream
+# thread reopens the stream to re-prime ALSA. A single transient underflow
+# (counter cleared on the next clean frame) never trips recovery.
+_consecutive_underflow_frames = 0
+_UNDERFLOW_RECOVERY_FRAMES = 25  # ~0.5 s at 48 kHz / 1024 before reopening.
+_STREAM_STATUS_LOG_EVERY = 50    # rate-limit the raw "Status:" line.
+_stream_status_log_count = 0
+
+
+def _note_stream_status(status):
+    """Handle a non-zero PortAudio callback status flag (bugfix H3).
+
+    Rate-limits the raw status print and, on a PERSISTENT output underflow
+    (the duplex wedge), signals the stream thread to reopen the stream. Pure
+    CPU + flag/counter bookkeeping; no lock, safe on the real-time thread.
+    """
+    global _consecutive_underflow_frames, _stream_status_log_count
+
+    # Rate-limited raw status (first, then every Nth) so a wedge does not flood.
+    if _stream_status_log_count == 0 or _stream_status_log_count % _STREAM_STATUS_LOG_EVERY == 0:
+        print(f"Status: {status}")
+    _stream_status_log_count += 1
+
+    if status & pyaudio.paOutputUnderflow:
+        _consecutive_underflow_frames += 1
+        if _consecutive_underflow_frames == _UNDERFLOW_RECOVERY_FRAMES:
+            print(
+                f"Duplex output underflow on {_UNDERFLOW_RECOVERY_FRAMES} "
+                f"consecutive frames -- stream wedged; requesting reopen to "
+                f"re-prime ALSA (bugfix H3)."
+            )
+            _stream_needs_recovery.set()
+    else:
+        _consecutive_underflow_frames = 0
+
+
+def _reset_stream_status_tracking():
+    """Clear underflow/status bookkeeping and the recovery flag for a fresh
+    stream (bugfix H3)."""
+    global _consecutive_underflow_frames, _stream_status_log_count
+    _consecutive_underflow_frames = 0
+    _stream_status_log_count = 0
+    _stream_needs_recovery.clear()
+
+
 # ── Saved (tuned) voice-style overrides ──────────────────────────────────────
 # The operator can tune a style (e.g. "ghost") and SAVE it; the saved override
 # is persisted in tuning.json via the Config_Store and layered on top of the
@@ -167,18 +324,34 @@ def _factory_preset(style):
 
 
 def _apply_chain_to_live(chain):
-    """Overwrite the live effects_config in place from a full effect chain.
+    """Swap the live effects_config for a whole new chain atomically.
 
-    Mutates the module-global effects_config the stream callback reads each
-    frame, so the change takes effect immediately on any running stream. Only
-    known effect names are touched; the chain is trusted (already sanitised).
+    Builds a COMPLETE new effects_config dict from the current config plus the
+    supplied chain (only known effect names are updated; the chain is trusted
+    and already sanitised), then rebinds the module global in a SINGLE atomic
+    assignment (atomic under the GIL -- no lock). The callback thread reads
+    effects_config once per frame with a single reference read, so it can never
+    observe a half-updated chain (a torn read -- bugfix 1.5 / 2.2); it sees
+    either the whole old chain or the whole new chain, never a mix. No lock is
+    taken, so the real-time callback can never block on this rebind (bugfix H3).
 
     Args:
         chain: A full effect chain {effect: {"enabled": bool, "amount": float}}.
     """
+    global effects_config
+    # Build a complete new chain off-lock: copy every existing effect, then
+    # overlay the supplied params for known names (deep-copying each effect's
+    # param dict so the live config shares no mutable state with `chain`).
+    new_config = {name: dict(params) for name, params in effects_config.items()}
     for name, params in chain.items():
-        if name in effects_config:
-            effects_config[name] = dict(params)
+        if name in new_config:
+            new_config[name] = dict(params)
+    # Publish with a single atomic reference rebind (atomic under the GIL). The
+    # real-time callback reads effects_config once per frame with no lock and
+    # sees either the whole old or whole new chain -- never a torn mix. No lock
+    # is taken here so the callback can never block on the request thread
+    # (bugfix H3).
+    effects_config = new_config
 
 
 def _effective_style_chain(style):
@@ -204,14 +377,71 @@ def stream_mic():
     audio_buffer = []
     
     def audio_callback(in_data, frame_count, time_info, status):
-        """This function is called for each audio chunk."""
+        """This function is called for each audio chunk.
+
+        REAL-TIME, LOCK-FREE (bugfix H3). This runs on PortAudio's own thread
+        under a hard duplex deadline. It must never block on a lock a
+        non-real-time thread can hold, so it acquires NO lock: it reads shared
+        config via a single atomic reference read, owns its per-frame DSP state
+        exclusively, and performs any pending reset itself.
+        """
+        # Surface PortAudio status flags, but RATE-LIMITED. A wedged duplex
+        # device repeats paOutputUnderflow|paInputOverflow (status 6) every
+        # frame; printing per-frame floods stdout (and, pre-fix, under the lock
+        # it made the wedge worse). Detect a PERSISTENT output underflow and ask
+        # the stream thread to reopen the stream to re-prime ALSA, since a wedged
+        # duplex link never self-recovers on its own.
         if status:
-            print(f"Status: {status}")
-        
-        audio = np.frombuffer(in_data, dtype=np.int16).astype(np.float32)    
-        talk(audio, start_time =  datetime.now().timestamp())
-        
-        processed = apply_effects(audio)
+            _note_stream_status(status)
+
+        # Close the callback-vs-release race (bugfix 1.1/1.4, 2.1/2.4). A
+        # non-blocking PortAudio stream fires this callback on PortAudio's own
+        # thread, so a straggler callback can still run AFTER stop_streaming()
+        # has set is_streaming False and _release_gpio() has freed GPIO6/GPIO15.
+        # If such a callback reached talk() it would lazily re-create the
+        # jaw_motor / led_eye_light devices and re-grab the pins, leaking them
+        # for the mic process's whole lifetime. Short-circuiting to a no-op
+        # (passing the input through unprocessed, with the normal paContinue
+        # tuple) once is_streaming is False makes it impossible for a post-stop
+        # callback to touch GPIO, regardless of exact callback timing. While
+        # is_streaming is True this guard is transparent (preservation 3.1).
+        if not audio_state['is_streaming']:
+            return (in_data, pyaudio.paContinue)
+
+        # Apply a pending DSP reset HERE, on the callback thread, before using
+        # any per-frame DSP state (bugfix H3). The request thread never mutates
+        # the live echo deque / reverb buffer / phases; on a style change it only
+        # bumps _dsp_reset_generation. The callback is the sole owner of this
+        # state while the stream is live, so resetting it here is lock-free and
+        # can never race the request thread or produce a mid-swap read.
+        if _dsp_reset_generation != _dsp_applied_generation['value']:
+            _reset_audio_dsp_state_core()
+            _dsp_applied_generation['value'] = _dsp_reset_generation
+
+        # Snapshot the effect chain ONCE per frame with a single atomic reference
+        # read (no lock). effects_config is only ever REBOUND wholesale by the
+        # request thread, so this snapshot is either the whole old chain or the
+        # whole new chain -- never torn -- and the callback never blocks.
+        cfg = effects_config
+
+        audio = np.frombuffer(in_data, dtype=np.int16).astype(np.float32)
+
+        # Pure-CPU DSP, no lock, no I/O. talk() drives the jaw envelope/GPIO from
+        # this frame; apply_effects() runs the chain from the snapshot. Wrapped
+        # in a broad try/except so a single unforeseen DSP error can never
+        # propagate out and be treated as fatal by PortAudio (which would kill
+        # the stream). A RECURRING per-frame error is surfaced rate-limited
+        # rather than masked into silence (bugfix 2.4).
+        try:
+            talk(audio, start_time=datetime.now().timestamp())
+            processed = apply_effects(audio, cfg)
+        except Exception as e:
+            _note_callback_dsp_error(e)
+            return (in_data, pyaudio.paContinue)
+
+        # A frame processed cleanly: clear the consecutive-error counter so the
+        # recurring diagnostic is scoped to genuine back-to-back failures.
+        _reset_callback_dsp_errors()
         processed_bytes = processed.tobytes()
         # If recording, capture the FX-processed output (what the speaker hears).
         if audio_state['is_recording']:
@@ -238,6 +468,19 @@ def stream_mic():
 
 def talk(audio_data, start_time):
     global jaw_motor, led_eye_light, jaw_open, below_count, avg_level
+
+    # Only own GPIO6/GPIO15 while the stream is live (bugfix 1.1/1.4, 2.1/2.4).
+    # The audio_callback already short-circuits when is_streaming is False, but
+    # guard here too so talk() can never lazily (re-)create or drive the
+    # jaw_motor / led_eye_light devices after stop_streaming() has set
+    # is_streaming False and _release_gpio() has freed the pins. A straggler
+    # PortAudio callback therefore can never re-grab GPIO6/GPIO15. While
+    # is_streaming is True this guard is transparent, so lazy creation on the
+    # first in-stream frame and envelope-driven on/off are unchanged
+    # (preservation 3.1).
+    if not audio_state['is_streaming']:
+        return
+
     if jaw_motor is None:
         jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
     if led_eye_light is None:
@@ -286,9 +529,12 @@ def talk(audio_data, start_time):
         jaw_motor.off()
         led_eye_light.off()
 
-    state = 'OPEN' if jaw_open else 'closed'
-    print(f"RMS: {level:.0f}; avg: {avg_level:.0f}; Jaw: {state}; below: {below_count}")
-        
+    # NOTE: No per-frame diagnostic print here. talk() runs on the real-time
+    # PortAudio callback thread, and stdout I/O on that thread delays it past the
+    # CHUNK (~21 ms) deadline, underrunning/wedging the duplex ALSA stream
+    # (bugfix H1/H3, 2.1/2.3). Never do blocking I/O on the callback thread.
+    # Jaw-envelope math and GPIO drive above are unchanged (preservation 3.1/3.2).
+
 # ── Individual effect functions ──────────────────────────────────────────────
 # Each takes a float32 array (int16 range, ±32768) and returns float32.
 
@@ -328,20 +574,32 @@ def _fx_echo(audio, amount):
 
 
 def _fx_reverb(audio, amount):
-    """Cheap feedback-delay reverb using the persistent reverb buffer."""
+    """Cheap feedback-delay reverb using the persistent reverb buffer.
+
+    VECTORISED (bugfix H3). The original per-sample Python loop cost ~22 ms per
+    1024-frame block -- OVER the ~21 ms CHUNK deadline on a dev box and far over
+    it on the Pi -- so any reverb-enabled preset starved the duplex output ring
+    and wedged the stream. This block form is numerically equivalent to the loop
+    because the delay buffer (``blen`` = 9600) is always LONGER than one block
+    (CHUNK = 1024): the ``n`` slots this block touches, starting at ``pos`` and
+    stepping by 1, are all DISTINCT (no wraparound collision within a block), so
+    each slot is read-then-written exactly once with no intra-block recurrence.
+    It is therefore a pure gather/scatter, not a recursive filter across the
+    block, and vectorises exactly (verified against the loop over random
+    inputs). ``pos`` still advances by ``n`` (mod ``blen``) across blocks, so the
+    reverb tail across successive frames is unchanged.
+    """
     buf = audio_state.setdefault('reverb_buffer', np.zeros(9600, dtype=np.float32))
     pos = audio_state.get('reverb_pos', 0)
-    out = np.empty_like(audio)
     blen = len(buf)
     fb = 0.35 + amount * 0.4          # feedback amount
     wet = amount * 0.6               # wet mix
-    for i in range(len(audio)):
-        delayed = buf[pos]
-        val = audio[i] + delayed * wet
-        buf[pos] = audio[i] + delayed * fb
-        out[i] = val
-        pos = (pos + 1) % blen
-    audio_state['reverb_pos'] = pos
+    n = len(audio)
+    idx = (pos + np.arange(n)) % blen
+    delayed = buf[idx].copy()
+    out = audio + delayed * wet
+    buf[idx] = audio + delayed * fb
+    audio_state['reverb_pos'] = (pos + n) % blen
     return out
 
 
@@ -376,16 +634,38 @@ def _fx_ring_mod(audio, amount):
     return audio * (1.0 - amount) + wet * amount
 
 
-def apply_effects(audio_data):
-    """Apply the enabled effects in order, driven by effects_config.
+def apply_effects(audio_data, cfg=None):
+    """Apply the enabled effects in order, driven by an effect-chain snapshot.
 
     Signal chain: pitch → ring_mod → bitcrush → distortion → tremolo → echo → reverb.
     Returns int16 with clipping protection.
+
+    LOCK-FREE on the real-time path (bugfix H3). ``cfg`` is a point-in-time
+    snapshot of ``effects_config`` passed in by the caller. The real-time
+    callback reads ``effects_config`` ONCE per frame (an atomic reference read
+    under the GIL -- no lock) and passes that reference here, so the callback
+    never blocks and a concurrent whole-dict rebind by the request thread can
+    never produce a torn read (the callback sees either the whole old chain or
+    the whole new chain). ``effects_config`` is only ever
+    REBOUND wholesale (never mutated in place), which is what makes the lock-free
+    snapshot safe. The per-frame DSP state this touches -- the echo deque, the
+    reverb buffer/pos, and the tremolo/ring phases -- is owned exclusively by the
+    callback thread (the request thread no longer mutates it; it bumps
+    ``_dsp_reset_generation`` and the callback resets itself), so there is no
+    cross-thread mutation of the structures iterated here and the old
+    "deque mutated during iteration" race cannot recur.
+
+    Args:
+        audio_data: int16 (or float) frame of length CHUNK.
+        cfg: effect-chain snapshot {effect: {"enabled": bool, "amount": float}}.
+             Defaults to a one-shot atomic read of the module global (for
+             standalone / test callers).
     """
+    if cfg is None:
+        cfg = effects_config  # atomic reference read; see docstring.
     n_out = len(audio_data)
     audio = audio_data.astype(np.float32)
 
-    cfg = effects_config
     if cfg['pitch']['enabled']:
         audio = _fx_pitch(audio, cfg['pitch']['amount'], n_out)
     if cfg['ring_mod']['enabled']:
@@ -423,8 +703,123 @@ def _release_gpio():
             except Exception as e:
                 print(f"warning: could not release {name}: {e}")
             globals()[name] = None
+
+    # gpiozero device .close() tears down the Python wrapper but does NOT drop
+    # the underlying lgpio kernel line claim: in a long-lived process the
+    # LGPIOFactory keeps /dev/gpiochip0 and the per-line fds open, so this
+    # process stays the exclusive owner of MOUTH_MOTOR_PIN/EYE_LIGHT_PIN for its
+    # whole lifetime. A separate animatronic.py Routine subprocess then hits
+    # lgpio 'GPIO busy' in AudioPlayer.__init__ (bugfix mic-gpio-line-release-leak
+    # 1.1/1.2/1.4). Closing the pin factory drops the chip handle and both line
+    # fds, truly releasing the pins to the OS; nulling the class singleton makes
+    # gpiozero build a fresh factory lazily on the next device construction (the
+    # next mic session), exactly as on first use. This runs only on stop, after
+    # the stream thread has joined and is_streaming is already False, so a live
+    # stream is never disturbed. The only gpiozero devices in this process are
+    # the two above (both just closed+nulled); PWMLED is imported but never
+    # constructed, and the range sensor lives in webapp.py (a separate process).
+    factory = getattr(Device, 'pin_factory', None)
+    if factory is not None:
+        try:
+            factory.close()   # drops the lgpio chip handle + the kernel line claims
+        except Exception as e:
+            print(f"warning: could not close gpiozero pin factory: {e}")
+        Device.pin_factory = None
+
     jaw_open = False
     below_count = 0
+
+
+def _reset_audio_dsp_state():
+    """Re-initialise ONLY the transient DSP state, so no stale energy or phase
+    leaks across a stream start/stop or a preset change.
+
+    This long-lived process keeps the jaw envelope, time-based effect phases,
+    and the echo/reverb buffers as module/process globals. Across a mic→routine
+    hand-off or a repeated mic session they accumulate (stale echo/reverb energy,
+    drifted tremolo/ring phase, a non-zero envelope average), which shows up as
+    cumulative attenuation / inconsistent volume for the next owner. Clearing
+    them here gives every fresh stream a clean slate.
+
+    Resets:
+        - jaw envelope globals: jaw_open=False, below_count=0, avg_level=0.0
+        - effect_state phases: tremolo_phase=0.0, ring_phase=0.0
+        - echo_buffer: a fresh zero-filled deque (3 x CHUNK, maxlen=3)
+        - reverb_buffer / reverb_pos: a fresh zero buffer at position 0
+
+    Deliberately does NOT touch persisted tuning — jaw_profiles,
+    saved_voice_styles, or effects_config — so operator-tuned configuration
+    survives the reset (preservation 3.4).
+
+    Thread-safety (bugfix H3): the per-frame DSP state reset here (echo deque,
+    reverb buffer/pos, tremolo/ring phases, jaw envelope) is owned EXCLUSIVELY
+    by the real-time callback thread. The request thread must NOT mutate it
+    directly -- doing so (while the callback iterates the echo deque) was the
+    original "deque mutated during iteration" race, and taking a lock the
+    callback also needs is what wedged the duplex stream. So this PUBLIC function
+    performs the real reset only when it is safe to do so on THIS thread, and
+    otherwise defers to the callback:
+
+      * While a stream is LIVE, it does NOT touch the buffers. It bumps
+        ``_dsp_reset_generation`` (an atomic int rebind). The callback compares
+        that to the generation it last applied and calls the lock-free core
+        itself at the top of a frame -- so only the callback thread ever mutates
+        the live DSP state.
+      * While NO stream is live (standalone callers, stream (re)start, tests),
+        there is no callback running, so it resets inline AND bumps the
+        generation (so the next callback does not redo it).
+
+    Either way the callback never blocks on a lock and never sees a mid-swap.
+    """
+    global _dsp_reset_generation
+
+    # Always advance the generation so a live callback picks up the reset.
+    _dsp_reset_generation += 1
+
+    # If a stream is live, the callback owns the buffers -- defer to it.
+    if audio_state['is_streaming']:
+        return
+
+    # No callback is running: safe to reset inline on this thread.
+    _reset_audio_dsp_state_core()
+    # Mark this generation as already applied so the next callback (next stream)
+    # does not reset a second time on its first frame.
+    _dsp_applied_generation['value'] = _dsp_reset_generation
+
+
+# Tracks the reset generation the callback has already applied. A dict so the
+# callback can update it without a `global` declaration (it is mutated in place).
+_dsp_applied_generation = {'value': 0}
+
+
+def _reset_audio_dsp_state_core():
+    """Re-initialise the transient DSP state in place. LOCK-FREE.
+
+    This is the actual reset. It is called either inline by
+    ``_reset_audio_dsp_state`` when no stream is live, or by the real-time
+    callback itself (the sole owner of this state while a stream is live) when it
+    observes a new ``_dsp_reset_generation``. Because only ONE thread ever runs
+    this at a time (no stream -> request thread; live stream -> callback thread),
+    no lock is required and the callback never blocks.
+    """
+    global jaw_open, below_count, avg_level
+
+    # Jaw envelope state.
+    jaw_open = False
+    below_count = 0
+    avg_level = 0.0
+
+    # Time-based effect phases (tremolo / ring mod).
+    effect_state['tremolo_phase'] = 0.0
+    effect_state['ring_phase'] = 0.0
+
+    # Echo buffer: fresh zero-filled deque (3 x CHUNK, maxlen=3).
+    audio_state['echo_buffer'] = deque(
+        [np.zeros(CHUNK, dtype=np.int16)] * 3, maxlen=3)
+
+    # Reverb buffer/position: fresh zero buffer at position 0.
+    audio_state['reverb_buffer'] = np.zeros(9600, dtype=np.float32)
+    audio_state['reverb_pos'] = 0
 
 
 #@app.route('/start', methods=['POST'])
@@ -434,12 +829,51 @@ def start_streaming():
         return jsonify({'status': 'error', 'message': 'Already streaming'}), 400
     
     try:
+        # Start every fresh stream from a clean DSP slate so no stale echo/
+        # reverb energy or drifted effect/envelope state from a prior session
+        # leaks into this one (persisted tuning is left untouched).
+        _reset_audio_dsp_state()
+        _reset_stream_status_tracking()
+
         # Initialize PyAudio
         audio_state['audio'] = pyaudio.PyAudio()
         audio_state['is_streaming'] = True
-        
-        # Start streaming thread
-        audio_state['thread'] = threading.Thread(target=stream_mic)
+
+        # Stream thread: open the duplex stream, then watch for a persistent
+        # duplex underflow (bugfix H3). A wedged duplex ALSA link never
+        # self-recovers, so if the callback flags _stream_needs_recovery we
+        # stop/close the wedged stream and reopen a fresh one to re-prime ALSA,
+        # all WITHOUT dropping is_streaming (the UI stays "streaming" and the
+        # operator does not have to restart the process). The DSP state is reset
+        # across the reopen so the new stream starts clean.
+        def _run_stream():
+            audio_state['stream'] = stream_mic()
+            while audio_state['is_streaming']:
+                if _stream_needs_recovery.wait(timeout=0.25):
+                    if not audio_state['is_streaming']:
+                        break
+                    print("Reopening wedged duplex stream to re-prime ALSA "
+                          "(bugfix H3)...")
+                    old_stream = audio_state['stream']
+                    if old_stream is not None:
+                        try:
+                            old_stream.stop_stream()
+                        except Exception:
+                            pass
+                        try:
+                            old_stream.close()
+                        except Exception:
+                            pass
+                    # Clean slate for the reopened stream.
+                    _reset_audio_dsp_state()
+                    _reset_stream_status_tracking()
+                    try:
+                        audio_state['stream'] = stream_mic()
+                    except Exception as e:
+                        print(f"ERROR: failed to reopen duplex stream: {e}")
+                        break
+
+        audio_state['thread'] = threading.Thread(target=_run_stream, daemon=True)
         audio_state['thread'].start()
         
         return jsonify({'status': 'success', 'message': 'Streaming started (mic to speaker)'})
@@ -462,16 +896,38 @@ def stop_streaming():
 
         # Stop streaming
         audio_state['is_streaming'] = False
-        
+        # Wake the stream/recovery thread immediately so it does not sit on its
+        # recovery-wait timeout before noticing is_streaming went False
+        # (bugfix H3). It re-checks is_streaming right after waking and exits.
+        _stream_needs_recovery.set()
+
         # Wait for thread to finish
         if audio_state['thread']:
             audio_state['thread'].join()
-        
-        # Terminate PyAudio
+        _stream_needs_recovery.clear()
+
+        # Orderly teardown: stop and close the live PyAudio stream BEFORE
+        # terminating PyAudio, mirroring AudioStreamer.stop() /
+        # AudioPlayer.play_audio_file(). Abruptly terminating PyAudio while an
+        # output stream is still live leaves the shared ALSA device
+        # (output_device_index=2) degraded for the next owner. Each cleanup call
+        # is guarded so a failure here never raises and never skips terminate().
+        if audio_state['stream'] is not None:
+            try:
+                audio_state['stream'].stop_stream()
+            except Exception:
+                pass
+            try:
+                audio_state['stream'].close()
+            except Exception:
+                pass
+
+        # Terminate PyAudio after the stream is stopped/closed.
         if audio_state['audio']:
             audio_state['audio'].terminate()
-        
+
         audio_state['stream'] = None
+        audio_state['audio'] = None
 
         # Release the jaw motor and eye LED so their GPIO pins are freed for
         # another process (e.g. animatronic.py's AudioPlayer). talk() lazily
@@ -480,6 +936,12 @@ def stop_streaming():
         # Without this, this process holds MOUTH_MOTOR_PIN/EYE_LIGHT_PIN for its
         # whole lifetime and any other GPIO user hits lgpio 'GPIO busy'.
         _release_gpio()
+
+        # Clear transient DSP state on the way out so no stale echo/reverb
+        # energy, drifted effect phase, or lingering envelope average survives
+        # for the next owner of the shared output device (mic→routine hand-off
+        # or a later mic session). Persisted tuning is left untouched.
+        _reset_audio_dsp_state()
 
         return jsonify({
             'status': 'success', 
@@ -683,6 +1145,10 @@ def set_effects():
              -H 'Content-Type: application/json' \\
              -d '{"effect": "bitcrush", "enabled": true, "amount": 0.6}'
     """
+    # The single-effect branch rebinds the module-global effects_config (a
+    # whole-dict atomic swap, no lock), so declare it global for the whole
+    # handler. The style branch rebinds it indirectly via _apply_chain_to_live.
+    global effects_config
     data = request.json or {}
 
     # 1. Style preset — loads the SAVED (tuned) override if one exists, else
@@ -695,8 +1161,17 @@ def set_effects():
                             'message': f'Unknown style "{style}". Valid: {valid}'}), 400
         _apply_chain_to_live(_effective_style_chain(style))
         current_style['value'] = style
+        # Switching presets mid-stream must not carry stale tremolo/ring phase
+        # or echo/reverb energy from the old chain into the new one. Clear only
+        # transient DSP state; the chain just applied above is left intact
+        # (persisted tuning untouched — preservation 3.4).
+        _reset_audio_dsp_state()
         tuned = style in saved_voice_styles
-        print(f"Voice style set to '{style}' ({'tuned' if tuned else 'factory'}): {effects_config}")
+        # Emit a compact summary (style + tuned/factory) rather than dumping
+        # the whole effects_config dict, so the request-thread stdout I/O stays
+        # cheap. The rebinds above are lock-free atomic swaps + a generation
+        # bump, so nothing here can block the real-time callback (bugfix H3).
+        print(f"Voice style set to '{style}' ({'tuned' if tuned else 'factory'})")
         return jsonify({'status': 'success', 'style': style,
                         'tuned': tuned, 'effects': effects_config})
 
@@ -708,14 +1183,29 @@ def set_effects():
             return jsonify({'status': 'error',
                             'message': f'Unknown effect "{name}". Valid: {valid}'}), 400
 
+        # Even a single-field change becomes a whole-dict rebind under the lock,
+        # so the callback thread never sees a half-updated effect (e.g. enabled
+        # flipped while amount is still old). Build the updated chain, validate
+        # before mutating, then rebind in one atomic assignment. (Rule: ALL
+        # effects_config writes go through a whole-dict atomic rebind, no lock.)
+        new_config = {ename: dict(params)
+                      for ename, params in effects_config.items()}
+        updated = new_config[name]
         if 'enabled' in data:
-            effects_config[name]['enabled'] = bool(data['enabled'])
+            updated['enabled'] = bool(data['enabled'])
         if 'amount' in data:
             amount = float(data['amount'])
             if amount < 0:
                 return jsonify({'status': 'error', 'message': 'amount must be >= 0'}), 400
-            effects_config[name]['amount'] = amount
+            updated['amount'] = amount
 
+        # Publish with a single atomic reference rebind (atomic under the GIL);
+        # no lock, so the real-time callback never blocks on this change. The
+        # callback reads effects_config once per frame and sees either the whole
+        # old or whole new chain -- never a torn mix (bugfix H3).
+        effects_config = new_config
+
+        # Compact single-effect summary, never a whole-dict dump (bugfix 2.3).
         print(f"Effect '{name}' updated: {effects_config[name]}")
         return jsonify({'status': 'success', 'effect': name, 'config': effects_config[name]})
 

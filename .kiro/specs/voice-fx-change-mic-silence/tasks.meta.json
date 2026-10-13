@@ -1,0 +1,240 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Write bug-condition exploration test (MUST FAIL on unfixed code)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865261892
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865275511
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865841709
+      }
+    ],
+    "2.1 DSP output equality (single-threaded + PBT)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865263272
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865848876
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791866216080
+      }
+    ],
+    "2.2 Endpoint behavior (Flask test-client + temp `ConfigStore`)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865263832
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791866219951
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791866648560
+      }
+    ],
+    "2.3 Stream lifecycle & GPIO unaffected": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865264134
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791866652101
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791866972358
+      }
+    ],
+    "2.4 Stream-crash fix intact (regression guard)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865264456
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791866975814
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791867279280
+      }
+    ],
+    "2.5 Routine audio & servo paths untouched": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865264840
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791867283183
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791867523933
+      }
+    ],
+    "3.1 Remove the per-frame `print` from `talk()`'s locked hot path (H1)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865265235
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791867529821
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791868216747
+      }
+    ],
+    "3.2 Keep both callback critical sections pure CPU, no blocking I/O (H1)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865265592
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791868220433
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791868306835
+      }
+    ],
+    "3.3 Request-thread mutators — allocate and log OFF-lock; lock covers only the rebind (H1)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865265933
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791868310664
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791868501370
+      }
+    ],
+    "3.4 Surface a RECURRING callback exception instead of masking it (H2/H3)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865266306
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791868505024
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791869250651
+      }
+    ],
+    "3.5 Verify bug-condition exploration test now PASSES": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865266641
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791869257191
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791869317878
+      }
+    ],
+    "3.6 Verify preservation tests still PASS": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865266967
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791869321346
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791869462301
+      }
+    ],
+    "4. Checkpoint — ensure all tests pass": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791865267251
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791869468096
+      },
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791870487649
+      }
+    ],
+    "2. Write preservation property tests BEFORE the fix (observation-first; MUST PASS on unfixed code)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791867524365
+      }
+    ],
+    "3. Fix the voice-FX change → live-mic silence (remove under-lock I/O; surface recurring errors)": [
+      {
+        "executionId": "43a891af-a82d-41b8-90e6-e326120d12fd",
+        "chatSessionId": "sess_e91795b3-5855-485f-bd13-8c1ff71f831a",
+        "timestamp": 1791869463016
+      }
+    ]
+  }
+}

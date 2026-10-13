@@ -76,30 +76,60 @@
         "enabled": false,
         "amount": 0.0
       }
-    }
-  },
-  "voice_styles_previous": {
-    "style": "ghost",
-    "effects": {
+    },
+    "natural": {
       "pitch": {
         "enabled": true,
-        "amount": 0.7
+        "amount": 1.3
       },
       "distortion": {
         "enabled": false,
         "amount": 0.0
       },
       "echo": {
-        "enabled": true,
-        "amount": 0.3
+        "enabled": false,
+        "amount": 0.0
       },
       "reverb": {
         "enabled": true,
-        "amount": 0.25
+        "amount": 0.3
       },
       "tremolo": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "bitcrush": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "ring_mod": {
+        "enabled": false,
+        "amount": 0.0
+      }
+    }
+  },
+  "voice_styles_previous": {
+    "style": "natural",
+    "effects": {
+      "pitch": {
         "enabled": true,
-        "amount": 0.95
+        "amount": 1.3
+      },
+      "distortion": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "echo": {
+        "enabled": false,
+        "amount": 0.0
+      },
+      "reverb": {
+        "enabled": true,
+        "amount": 0.3
+      },
+      "tremolo": {
+        "enabled": false,
+        "amount": 0.0
       },
       "bitcrush": {
         "enabled": false,
@@ -126,10 +156,10 @@
     "timeout_min": 60
   },
   "napping": {
-    "timeout_min": 10
+    "timeout_min": 0
   },
   "awake": {
-    "timeout_min": 10,
+    "timeout_min": 0,
     "routine_pool": {
       "blah": 5,
       "brains": 5,
