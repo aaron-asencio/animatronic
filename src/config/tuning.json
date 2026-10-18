@@ -143,9 +143,15 @@
   },
   "scan": {
     "routine_pool": {
+      "blah": 5,
       "brains": 5,
-      "hypnotic": 5,
-      "maximus": 5
+      "burp": 3,
+      "coughMedium": 5,
+      "fart": 2,
+      "hypnotic": 4,
+      "maximus": 5,
+      "niceDay": 5,
+      "yawn": 5
     },
     "gesture_pool": {
       "beckon": 5,
@@ -159,7 +165,7 @@
     "timeout_min": 0
   },
   "awake": {
-    "timeout_min": 0,
+    "timeout_min": 30,
     "routine_pool": {
       "blah": 5,
       "brains": 5,

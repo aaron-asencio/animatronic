@@ -318,6 +318,16 @@
              Sleep/Awake chain is in progress; blank otherwise. -->
         <span id="chain-readout" style="font-size:0.8rem; color:var(--muted);
               margin-left:8px;"></span>
+        <!-- System volume control: 0-100 slider with a live percentage
+             readout. Initializes from GET /volume on load and applies via
+             POST /volume on release (JS added separately). -->
+        <span class="volume-control" style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+          <label for="volume-slider" style="font-size:0.8rem; color:var(--muted);">Volume</label>
+          <input type="range" id="volume-slider" min="0" max="100" step="1" value="100"
+                 oninput="onVolumeInput(this.value)"
+                 onchange="onVolumeChange(this.value)">
+          <span id="volume-readout" style="font-size:0.8rem; min-width:3ch;">100%</span>
+        </span>
       </div>
     </div>
 
@@ -1810,6 +1820,56 @@
       setTimeout(pollCamera, 2000);   // poll every 2s so a stall shows within ~5s
     }
     pollCamera();
+
+    // ── Volume control ───────────────────────────────────────────────────────
+    // input (drag): update ONLY the readout, send nothing (Req 3.2).
+    function onVolumeInput(value) {
+      document.getElementById('volume-readout').textContent = value + '%';
+    }
+
+    // change (release): clamp to [0,100] and POST the selected level (Req 3.1, 4.5).
+    async function onVolumeChange(value) {
+      const level = Math.max(0, Math.min(100, Math.round(+value)));
+      try {
+        const res = await fetch('/volume', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({level}),
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+          // Reflect the APPLIED (server-clamped) level in the readout (Req 3.5).
+          setVolumeUI(data.level);
+        } else {
+          toast(data.message || 'Could not set volume', true);
+        }
+      } catch (e) {
+        toast('Network error: ' + e.message, true);
+      }
+    }
+
+    // Set both the slider position and the readout to a known level.
+    function setVolumeUI(level) {
+      const slider = document.getElementById('volume-slider');
+      slider.value = level;
+      document.getElementById('volume-readout').textContent = level + '%';
+    }
+
+    // On page load, read the real sink level and initialize the slider (Req 2.1).
+    // On error, leave the slider at its default markup position and usable (Req 2.6).
+    async function initVolume() {
+      try {
+        const res = await fetch('/volume');
+        const data = await res.json();
+        if (res.ok && data.status === 'success' && typeof data.level === 'number') {
+          setVolumeUI(Math.max(0, Math.min(100, data.level)));  // Req 2.4
+        }
+        // else: leave the slider at its markup default (value="100"), still usable.
+      } catch (e) {
+        // Network error → leave default markup position, slider stays usable.
+      }
+    }
+    initVolume();   // self-start on load, like pollCamera()/pollStatus()
   </script>
 </body>
 </html>

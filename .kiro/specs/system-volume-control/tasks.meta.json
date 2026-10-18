@@ -1,0 +1,145 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "2.1 Implement `_read_sink_volume()` in `src/webapp.py`": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938134211
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938220094
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938266617
+      }
+    ],
+    "2.2 Implement `_set_sink_volume(percent)` in `src/webapp.py`": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938135734
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938270032
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938315731
+      }
+    ],
+    "5. Checkpoint - backend compiles and tests pass": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938136743
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938448019
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938888990
+      }
+    ],
+    "6. Add the volume slider markup to `src/templates/index.html`": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938137347
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938893098
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938958381
+      }
+    ],
+    "8. Final checkpoint - full feature compiles and tests pass": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938137669
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791939039945
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791939103312
+      }
+    ],
+    "1. Add volume parsing + command constants to `src/webapp.py`": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938150022
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938215618
+      }
+    ],
+    "2. Add the `_read_sink_volume` / `_set_sink_volume` subprocess helpers": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938316560
+      }
+    ],
+    "3. Implement the `GET /volume` route in `src/webapp.py`": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938328769
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938381492
+      }
+    ],
+    "4. Implement the `POST /volume` route in `src/webapp.py`": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938385270
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938435575
+      }
+    ],
+    "7. Add the volume slider JavaScript to `src/templates/index.html`": [
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791938962844
+      },
+      {
+        "executionId": "e6e79a80-35ac-49c4-93e2-dd47a9921e0b",
+        "chatSessionId": "sess_81756aaa-ec62-41cd-a4ab-a192f860453f",
+        "timestamp": 1791939035977
+      }
+    ]
+  }
+}

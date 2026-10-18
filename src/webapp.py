@@ -30,6 +30,7 @@ import subprocess
 import threading
 import time
 import os
+import re
 import json
 import urllib.request
 import urllib.error
@@ -80,6 +81,86 @@ CAMERA_SERVICE_URL = 'http://localhost:8001'
 # `_validate_within_base` (Req 9.4, 9.5). Kept in ONE place so Pi-specific paths
 # are not scattered through the code (see code-security steering).
 MODELS_DIR = os.path.join(PROJECT_DIR, 'models')
+
+# ── Volume control (wpctl) ─────────────────────────────────────────────────────
+# Fixed command fragments for the system volume routes — the sink target is a
+# constant, never request-derived. All wpctl calls go through subprocess.run with
+# shell=False and a fixed argument list (see code-security steering); the only
+# request-derived value that ever reaches a subprocess is the clamped integer
+# percent, formatted into a single f"{percent}%" argv element.
+WPCTL = 'wpctl'
+DEFAULT_SINK = '@DEFAULT_AUDIO_SINK@'
+
+# wpctl get-volume prints e.g. "Volume: 1.00" or "Volume: 0.85 [MUTED]".
+# We capture the first floating-point number on the line.
+_VOLUME_RE = re.compile(r'Volume:\s*([0-9]+(?:\.[0-9]+)?)')
+
+
+def _parse_wpctl_volume(output):
+    """Parse wpctl get-volume output into an integer percentage.
+
+    Args:
+        output: The stdout text from ``wpctl get-volume @DEFAULT_AUDIO_SINK@``,
+            e.g. ``"Volume: 1.00"`` or ``"Volume: 0.85 [MUTED]"``.
+
+    Returns:
+        The gain as an integer percentage, ``round(gain * 100)``.
+
+    Raises:
+        ValueError: If no gain value can be parsed from ``output``. Callers
+            catch this and return HTTP 500 — the raise never escapes the route.
+    """
+    match = _VOLUME_RE.search(output or '')
+    if not match:
+        raise ValueError(f'unparseable wpctl output: {output!r}')
+    gain = float(match.group(1))
+    return round(gain * 100)
+
+
+def _read_sink_volume():
+    """Read the Default_Audio_Sink level as an integer percentage.
+
+    Invokes ``wpctl get-volume @DEFAULT_AUDIO_SINK@`` with ``shell=False`` and a
+    fixed argument list (Req 5.2), then parses the gain (Req 2.2, 2.3).
+
+    Returns:
+        The current level as an int in roughly [0, 100+] (wpctl can report
+        over-amplified sinks above 100; the GET route reports what it reads).
+
+    Raises:
+        ValueError: On a non-zero exit or unparseable output. The route catches
+            this and returns HTTP 500 (Req 2.5).
+    """
+    proc = subprocess.run(
+        [WPCTL, 'get-volume', DEFAULT_SINK],
+        shell=False, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise ValueError(f'wpctl get-volume exited {proc.returncode}: {proc.stderr!r}')
+    return _parse_wpctl_volume(proc.stdout)
+
+
+def _set_sink_volume(percent):
+    """Apply an integer percentage to the Default_Audio_Sink.
+
+    Invokes ``wpctl set-volume @DEFAULT_AUDIO_SINK@ <N>%`` with ``shell=False``
+    and a fixed argument list; the validated integer is formatted into a SINGLE
+    ``f"{percent}%"`` argv element — never interpolated into a shell string
+    (Req 5.1, 5.3).
+
+    Args:
+        percent: An already-validated, already-clamped integer in [0, 100].
+
+    Raises:
+        ValueError: If wpctl exits non-zero. The route catches this and returns
+            HTTP 500 (Req 5.4).
+    """
+    proc = subprocess.run(
+        [WPCTL, 'set-volume', DEFAULT_SINK, f'{percent}%'],
+        shell=False, capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise ValueError(f'wpctl set-volume exited {proc.returncode}: {proc.stderr!r}')
 
 # ── Allowlists ───────────────────────────────────────────────────────────────
 # Only actions in these sets may be dispatched. This is the security boundary:
@@ -2013,6 +2094,52 @@ def range_sensitivity():
     if stored is None:
         return jsonify({'status': 'error', 'message': 'could not store gate'}), 500
     return jsonify({'status': 'success', 'gate_m': stored})
+
+
+# ── Route: system volume (read-back) ─────────────────────────────────────────
+@app.route('/volume', methods=['GET'])
+def volume_get():
+    """Return the current Default_Audio_Sink level as an integer percentage.
+
+    Invokes ``wpctl get-volume @DEFAULT_AUDIO_SINK@`` (shell=False, arg list),
+    parses the float gain, and converts it to an int percent (Req 2.2, 2.3).
+    On any read/parse failure returns HTTP 500 with an error body and does NOT
+    raise (Req 2.5).
+    """
+    try:
+        level = _read_sink_volume()
+    except Exception as e:   # noqa: BLE001 — never let a failure escape the route
+        print(f"[volume] get failed: {e}")
+        return jsonify({'status': 'error', 'message': 'could not read volume'}), 500
+    return jsonify({'status': 'success', 'level': level})
+
+
+@app.route('/volume', methods=['POST'])
+def volume_post():
+    """Apply a requested Volume_Level to the Default_Audio_Sink.
+
+    Pipeline (Req 4.1-4.4): coerce the requested value to int; if missing or
+    non-coercible, reject with HTTP 400 and apply NO change. Otherwise clamp to
+    [0, 100] and invoke ``wpctl set-volume @DEFAULT_AUDIO_SINK@ <N>%`` with the
+    validated int formatted into a single argv element (Req 3.3, 5.1, 5.3). On a
+    non-zero wpctl exit return HTTP 500 (Req 5.4); on success return the applied
+    level (Req 3.4).
+
+    Body: JSON ``{"level": <int>}``.
+    """
+    data = request.json or {}
+    try:
+        requested = int(data.get('level'))
+    except (TypeError, ValueError):
+        # Missing or non-coercible → reject, apply nothing (Req 4.4).
+        return jsonify({'status': 'error', 'message': 'level must be an integer'}), 400
+    applied = max(0, min(100, requested))   # clamp to [0, 100] (Req 4.2, 4.3)
+    try:
+        _set_sink_volume(applied)
+    except Exception as e:   # noqa: BLE001 — non-zero exit / failure → 500, no raise
+        print(f"[volume] set failed: {e}")
+        return jsonify({'status': 'error', 'message': 'could not set volume'}), 500
+    return jsonify({'status': 'success', 'level': applied})
 
 
 # ── Range sensor gauge poller ────────────────────────────────────────────────
