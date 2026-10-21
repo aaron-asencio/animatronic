@@ -90,6 +90,19 @@ SCAN_POOL_WEIGHT_MAX = 10
 AWAKE_ROUTINE_POOL_KEY = "routine_pool"
 AWAKE_GESTURE_POOL_KEY = "gesture_pool"
 
+# --- Awake sensor-source persistence ----------------------------------------
+# The Sensor_Source for Awake mode's interrupt trigger, persisted inside the
+# existing ``awake`` section so it coexists with ``timeout_min`` and the pools.
+# Exactly two values; any other value normalizes to the safe default "camera".
+# Default "camera" when unset. (Note: this config default is distinct from the
+# camera->range availability fallback that happens at launch when Camera_Service
+# is unreachable - see _resolve_awake_sensor_source.)
+AWAKE_SENSOR_SOURCE_KEY = "sensor_source"
+SENSOR_SOURCE_RANGE = "range"
+SENSOR_SOURCE_CAMERA = "camera"
+ALLOWED_SENSOR_SOURCES = (SENSOR_SOURCE_RANGE, SENSOR_SOURCE_CAMERA)
+SENSOR_SOURCE_DEFAULT = SENSOR_SOURCE_CAMERA
+
 # --- Mode auto-chaining persistence -----------------------------------------
 # Top-level tuning.json section + key for the Sleep/Awake auto-chaining budget:
 # the number of auto-transitions (handoffs) the chain is allowed to perform
@@ -629,6 +642,68 @@ class ConfigStore:
         """Persist the Awake timeout in minutes (clamped to [0, 120])."""
         return self._save_mode_timeout(AWAKE_KEY, minutes)
 
+    def load_awake_sensor_source(self):
+        """Load the persisted Awake Sensor_Source, defaulting to "camera".
+
+        Reads ``awake.sensor_source``. Any missing file/section, non-dict
+        section, or value not in ``ALLOWED_SENSOR_SOURCES`` yields
+        ``SENSOR_SOURCE_DEFAULT`` ("camera"). Never raises.
+
+        Returns:
+            "range" or "camera".
+        """
+        raw = self._load_raw()
+        section = raw.get(AWAKE_KEY, {})
+        if not isinstance(section, dict):
+            return SENSOR_SOURCE_DEFAULT
+        return self._coerce_sensor_source(section.get(AWAKE_SENSOR_SOURCE_KEY))
+
+    def save_awake_sensor_source(self, source):
+        """Persist the Awake Sensor_Source, normalizing invalid values to "camera".
+
+        The value is normalized via ``_coerce_sensor_source`` (any non-allowed
+        value becomes "camera") before writing. The existing raw JSON is loaded
+        first and the value is MERGED into the ``awake`` section so
+        ``timeout_min`` and the awake pools (and every other top-level section)
+        survive.
+
+        Args:
+            source: The requested Sensor_Source; invalid values coerce to
+                "camera".
+
+        Returns:
+            The normalized value that was persisted ("range" or "camera").
+        """
+        clean = self._coerce_sensor_source(source)
+        raw = self._load_raw()
+        section = raw.get(AWAKE_KEY)
+        if not isinstance(section, dict):
+            section = {}
+        section[AWAKE_SENSOR_SOURCE_KEY] = clean
+        raw[AWAKE_KEY] = section
+        self._write_raw(raw)
+        print(f"Awake sensor source saved: {clean}")
+        return clean
+
+    def _coerce_sensor_source(self, value):
+        """Return ``value`` if it is an allowed Sensor_Source, else the default.
+
+        The single normalization point for the Awake Sensor_Source: any value
+        that is not exactly one of ``ALLOWED_SENSOR_SOURCES`` (wrong type,
+        unknown string, wrong case, etc.) becomes ``SENSOR_SOURCE_DEFAULT``
+        ("camera", the default source). Never raises.
+
+        Args:
+            value: The requested Sensor_Source; any non-allowed value coerces
+                to the default.
+
+        Returns:
+            "range" or "camera".
+        """
+        if isinstance(value, str) and value in ALLOWED_SENSOR_SOURCES:
+            return value
+        return SENSOR_SOURCE_DEFAULT
+
     def _coerce_pool(self, pool):
         """Coerce a stored/raw pool map to ``{name: int in [1,10]}``.
 
@@ -894,6 +969,20 @@ def save_awake_timeout(minutes):
         The clamped int that was persisted (0..120, 0 = no timeout).
     """
     return _default_store.save_awake_timeout(minutes)
+
+
+def load_awake_sensor_source():
+    """Load the Awake Sensor_Source via the default store ("camera" default)."""
+    return _default_store.load_awake_sensor_source()
+
+
+def save_awake_sensor_source(source):
+    """Persist the Awake Sensor_Source via the default store.
+
+    Returns:
+        The normalized value persisted ("range" or "camera").
+    """
+    return _default_store.save_awake_sensor_source(source)
 
 
 def save_scan_timeout(minutes):

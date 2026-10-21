@@ -2101,6 +2101,16 @@ class Animatronic:
     AWAKE_INTERRUPT_SENSOR = "sensor"
     AWAKE_INTERRUPT_STOP = "stop"       # external stop request (e.g. web app)
 
+    # Awake Sensor_Source values (mirror config_store.SENSOR_SOURCE_*). The source
+    # is snapshotted at mode entry and fixed for the session's life.
+    AWAKE_SOURCE_RANGE = "range"
+    AWAKE_SOURCE_CAMERA = "camera"
+
+    # Camera person-detection poll cadence for the camera Sensor_Source. Matches the
+    # tracking loop's ~0.1s period so a person is noticed promptly without hammering
+    # Camera_Service.
+    _AWAKE_CAMERA_POLL_INTERVAL_S = 0.1
+
     # Weighted "idle-but-alive" ambient pool the awake loop draws from each
     # iteration. Each entry is (weight, method_name); weights are relative and
     # need not sum to 100. The robot spends MOST of its time just looking around
@@ -2194,7 +2204,8 @@ class Animatronic:
     # noticed promptly while the figure still reads as idly looking around.
     _AWAKE_GESTURE_DURATION_S = 6.0
 
-    def awake(self, timeout_seconds=300, chain_sensor_end=False):
+    def awake(self, timeout_seconds=300, chain_sensor_end=False,
+              sensor_source="camera"):
         """AWAKE mode: weighted ambient gestures/routines with 30s pauses.
 
         A Mode (per the animation vocabulary) is a continuous background
@@ -2265,6 +2276,13 @@ class Animatronic:
                 the ambient loop RESUMES (react-and-resume), exactly as before.
                 This flag is snapshotted at launch and fixed for the subprocess's
                 life, like ``timeout_seconds``.
+            sensor_source: The interrupt source for THIS session, one of "range"
+                (HC-SR04 proximity, via ``_open_nap_sensor``/``_poll_nap_sensor``)
+                or "camera" (Camera_Service person detection). Resolved ONCE at
+                mode entry and fixed for the session's life — a mid-session config
+                change never affects a running session. If "camera" is selected
+                but Camera_Service is unavailable at launch, the session silently
+                falls back to "range" (there is always exactly one active source).
         """
         # Clear any stale stop request from a previous Mode run so we start clean.
         nap_signal.clear_stop()
@@ -2275,12 +2293,26 @@ class Animatronic:
         # to the hard-coded ambient behaviour (_AWAKE_AMBIENT_POOL) unchanged.
         self._awake_pools = config_store.load_awake_pools()
 
-        # Arm the proximity sensor in PRESENCE mode (best-effort): awake reacts
-        # to someone simply standing in front of the sensor, not only to a
-        # getting-closer trend. Publishes each reading (source "awake") for the
-        # live dashboard range gauge. (A PIR sensor can later replace this with
-        # the same present/absent contract.)
-        self._open_nap_sensor(source="awake", detect_mode="presence")
+        # Resolve the single active sensor source for this session (Req 3.1,
+        # 5.3). "camera" arms the camera path only if Camera_Service is reachable
+        # at launch; otherwise it silently falls back to the always-available
+        # range sensor. The result is recorded in self._awake_active_source and
+        # never changes for the session's life.
+        self._awake_camera_client = None
+        self._awake_active_source = self._resolve_awake_sensor_source(sensor_source)
+
+        if self._awake_active_source == self.AWAKE_SOURCE_CAMERA:
+            print("[awake] sensor source: camera (person detection)")
+            # Camera path armed; no HC-SR04 detector is opened.
+        else:
+            print("[awake] sensor source: range (HC-SR04 proximity)")
+            # Existing range path, unchanged: arm the proximity sensor in
+            # PRESENCE mode (best-effort) so awake reacts to someone simply
+            # standing in front of the sensor, not only to a getting-closer
+            # trend. Publishes each reading (source "awake") for the live
+            # dashboard range gauge. (A PIR sensor can later replace this with
+            # the same present/absent contract.)
+            self._open_nap_sensor(source="awake", detect_mode="presence")
 
         if timeout_seconds:
             print(f"[awake] entering awake mode (timeout {int(timeout_seconds)}s)")
@@ -2315,6 +2347,109 @@ class Animatronic:
         # Report WHY awake ended so the webapp chain watcher can decide whether
         # to chain to napping (timeout/sensor chain; stop does not).
         return reason
+
+    def _resolve_awake_sensor_source(self, requested):
+        """Resolve the active Awake sensor source once, with camera fallback.
+
+        Normalizes ``requested`` to the two-value allowlist (anything else ->
+        "camera", the default). When the result is "camera", probes
+        Camera_Service availability at launch; if unavailable, silently falls
+        back to "range" (the always-available HC-SR04 path) so there is always
+        exactly one working source (Req 5.1-5.3). This availability fallback is
+        distinct from the config default — the default is "camera", the
+        availability-fallback target is "range". Builds and stores the
+        ``CameraClient`` on ``self._awake_camera_client`` on the camera path.
+        Records the resolved value on ``self._awake_active_source``. Never raises
+        into the caller.
+
+        Args:
+            requested: The requested Sensor_Source for this session; any value
+                not in the two-value allowlist normalizes to "camera".
+
+        Returns:
+            The active source for this session: "range" or "camera".
+        """
+        source = (requested if requested in (self.AWAKE_SOURCE_RANGE,
+                                             self.AWAKE_SOURCE_CAMERA)
+                  else self.AWAKE_SOURCE_CAMERA)
+        if source != self.AWAKE_SOURCE_CAMERA:
+            self._awake_active_source = self.AWAKE_SOURCE_RANGE
+            return self._awake_active_source
+
+        client = CameraClient(base_url=DEFAULT_CAMERA_URL)
+        if not self._camera_available(client):
+            print("[awake] camera selected but Camera_Service unavailable at "
+                  "launch; falling back to the range sensor")
+            self._awake_active_source = self.AWAKE_SOURCE_RANGE
+            return self._awake_active_source
+        self._awake_camera_client = client
+        self._awake_active_source = self.AWAKE_SOURCE_CAMERA
+        return self._awake_active_source
+
+    def _camera_available(self, client):
+        """Best-effort launch-time probe of Camera_Service reachability.
+
+        Camera_Service fails SOFT: ``CameraClient.get_detections()`` returns
+        ``([], 0, 0)`` when the service is unreachable or returns a bad payload
+        (it prints the reason and never raises). A zero frame size is the tell
+        that no live camera is behind the client, so "available" means a probe
+        returned a positive frame dimension. Never raises.
+
+        Args:
+            client: The ``CameraClient`` to probe.
+
+        Returns:
+            True if Camera_Service answered with a valid frame, else False.
+        """
+        try:
+            _detections, frame_w, frame_h = client.get_detections()
+            return frame_w > 0 and frame_h > 0
+        except Exception as e:
+            print(f"[awake] camera availability probe failed: {e}")
+            return False
+
+    def _poll_camera_person(self):
+        """Return True if Camera_Service currently reports a person (camera source).
+
+        Polls the stored ``CameraClient`` and treats ANY ``is_person`` Detection
+        as a trigger; non-person detections (dogs, other classes) and empty
+        frames do NOT fire (Req 4.1, 4.2). Reuses the same ``is_person`` contract
+        Tracking uses (``vision_models.Detection.is_person``). A soft camera
+        failure yields an empty list, i.e. no trigger. Never raises into the
+        loop.
+
+        Returns:
+            True when at least one person is detected this poll, else False.
+        """
+        client = getattr(self, "_awake_camera_client", None)
+        if client is None:
+            return False
+        try:
+            detections, _frame_w, _frame_h = client.get_detections()
+        except Exception as e:
+            print(f"[awake] camera poll failed: {e}")
+            return False
+        return any(d.is_person for d in detections)
+
+    def _poll_awake_sensor(self):
+        """Return True if the ACTIVE Sensor_Source reports a trigger this poll.
+
+        The single trigger entry point the awake loop uses, dispatching to
+        exactly the active source resolved at mode entry (Req 3.1, 4.3, 5.3):
+
+        - "camera" -> ``_poll_camera_person()`` (any person detection); the range
+          detector is never consulted.
+        - "range"  -> ``_poll_nap_sensor()`` (existing HC-SR04 presence latch);
+          the camera client is never polled.
+
+        Non-blocking either way. Returns False when neither source is armed.
+
+        Returns:
+            True when the active source reports a trigger this poll, else False.
+        """
+        if getattr(self, "_awake_active_source", None) == self.AWAKE_SOURCE_CAMERA:
+            return self._poll_camera_person()
+        return self._poll_nap_sensor()
 
     def _check_awake_interrupt(self, deadline):
         """Return a loop-ENDING interrupt reason, or None to keep running.
@@ -2369,7 +2504,7 @@ class Animatronic:
             reason = self._check_awake_interrupt(deadline)
             if reason is not None:
                 return reason
-            if self._poll_nap_sensor():
+            if self._poll_awake_sensor():
                 return self.AWAKE_INTERRUPT_SENSOR
             time.sleep(self._AWAKE_PAUSE_POLL_S)
         return None
@@ -2532,7 +2667,7 @@ class Animatronic:
             # A pending sensor presence: react once. When chaining is enabled,
             # END after that one reaction so the webapp chains to napping;
             # otherwise reset the latch and RESUME the loop (today's behaviour).
-            if self._poll_nap_sensor():
+            if self._poll_awake_sensor():
                 self._awake_approach_reaction()
                 if chain_sensor_end:
                     return self.AWAKE_INTERRUPT_SENSOR
@@ -2764,7 +2899,7 @@ class Animatronic:
                 (clamped to [0.0, 0.5]). ``None`` uses the default (0.05).
             conf: Detector confidence threshold; forwarded to
                 ``TrackingConfig.conf_threshold`` (clamped to [0.0, 1.0]).
-                ``None`` uses the default (0.5). (Camera_Service already filters
+                ``None`` uses the default (0.6). (Camera_Service already filters
                 by its own threshold; carried here so 10.3's CLI flag has a home
                 and future client-side filtering can use it.)
             scan_timeout: Scan_Sweep reacquire timeout in seconds; forwarded to
@@ -4930,6 +5065,13 @@ def main(args):
                 # falsy timeout_seconds as "no deadline"); it is NOT floored to
                 # a 1-second timeout.
                 awake_min = max(0, min(120, args.awake_timeout_min))
+                # Clamp the sensor source to the two-value allowlist; any other
+                # value (including junk) falls back to the default source
+                # ('camera'). Membership test only — never getattr/eval/shell on
+                # the raw flag.
+                source = (args.awake_sensor_source
+                          if args.awake_sensor_source in ('range', 'camera')
+                          else 'camera')
                 # Awake NEVER ends on a sensor event: by design it only returns
                 # to sleep on its TIMEOUT (a presence event just triggers one
                 # react-and-resume reaction, since whoever woke the figure is
@@ -4939,7 +5081,8 @@ def main(args):
                 # via its timeout (AWAKE_INTERRUPT_TIMEOUT is chainable); sleep
                 # still wakes to awake on sensor OR timeout.
                 reason = a.awake(timeout_seconds=awake_min * 60,
-                                 chain_sensor_end=False)
+                                 chain_sensor_end=False,
+                                 sensor_source=source)
         except ServoBusyError:
             print("Servos busy - another routine is already running. Aborting.")
             sys.exit(BUSY_EXIT_CODE)
@@ -4976,6 +5119,12 @@ if __name__ == '__main__':
                         help='Awake mode: minutes before the timeout ends the '
                              'mode, 0..120 where 0 = no timeout (manual stop '
                              'only) (default 5). Only used with --action=awake.')
+    parser.add_argument('--awake-sensor-source', dest='awake_sensor_source',
+                        default='camera',
+                        help="Awake mode: sensor interrupt source, 'camera' "
+                             "(Camera_Service person detection, default) or 'range' "
+                             "(HC-SR04 proximity). Any other value "
+                             "is treated as 'camera'. Only used with --action=awake.")
     # Tracking Mode flags (only used with --action=tracking). TrackingConfig
     # clamps every numeric value into its documented safe range, so argparse
     # only needs sensible types here; a None default means "use the

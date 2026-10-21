@@ -283,6 +283,11 @@ NAP_MAX_TIMEOUT_MIN = 120  # caps a single timed nap at 120 minutes
 AWAKE_MIN_TIMEOUT_MIN = 0   # 0 = no timeout (run until manual stop / sensor)
 AWAKE_MAX_TIMEOUT_MIN = 120  # caps a single timed awake session at 120 minutes
 
+# Awake sensor-source allowlist for the web route. Exactly the two values the
+# Config_Store accepts; the route REJECTS anything else (400), while the store
+# coerces an invalid value to "camera" as a last-line default.
+AWAKE_SENSOR_SOURCES = ('range', 'camera')
+
 
 # ── Subprocess launchers ─────────────────────────────────────────────────────
 def run_routine(action):
@@ -323,11 +328,21 @@ def run_awake(timeout_min):
     A Mode runs until interrupted; it holds the servo lock for its whole run.
     Popen (non-blocking) so the HTTP response returns immediately.
 
+    Reads the persisted Sensor_Source from config_store at launch time (not
+    cached) and passes it as the ``--awake-sensor-source`` flag, so the next
+    Start picks up the latest saved choice and a mid-session change is not seen
+    by the running session. config_store only ever returns an allowlisted value
+    ("range"/"camera"), so the subprocess argv can carry only an allowlisted
+    source — the value is appended as a separate argv token (shell=False), never
+    interpolated into a shell string and never passed to getattr/eval.
+
     Args:
         timeout_min: Minutes before the awake timeout ends the mode.
     """
+    sensor_source = config_store.load_awake_sensor_source()
     cmd = [VENV_PYTHON, ANIMATRONIC, '--action=awake',
-           f'--awake-timeout-min={int(timeout_min)}']
+           f'--awake-timeout-min={int(timeout_min)}',
+           f'--awake-sensor-source={sensor_source}']
     print(f"[awake] {' '.join(cmd)}")
     # Fresh run: clear any stale stop request so the mode doesn't exit at once.
     nap_signal.clear_stop()
@@ -1030,6 +1045,9 @@ def index():
         # <select>s survive a hard refresh instead of resetting to the default.
         nap_timeout_min=config_store.load_nap_timeout(),
         awake_timeout_min=config_store.load_awake_timeout(),
+        # The persisted Awake Sensor_Source ("range" | "camera", default
+        # "camera") so the Awake Config <select> pre-selects the stored value.
+        awake_sensor_source=config_store.load_awake_sensor_source(),
         # The persisted mode auto-chaining budget (0..20, 0 = off) so the Config
         # <select> can pre-select the stored value's <option>.
         chain_max_transitions=config_store.load_chain_max_transitions(),
@@ -1788,21 +1806,36 @@ def nap_config():
 
 @app.route('/awake/config', methods=['POST'])
 def awake_config():
-    """Persist the Awake timeout dropdown choice.
+    """Persist the Awake config dropdown choices (timeout and/or sensor source).
 
-    Body: ``{"timeout_min": <int in [0, 120]>}`` (0 = no timeout). Same strict
-    validation and defensive clamp as ``/nap/config``. Config write only.
+    Body may carry ``timeout_min`` (int in [0, 120], 0 = no timeout) and/or
+    ``sensor_source`` ("range" | "camera"). Each is optional and validated
+    independently; an invalid value is rejected with 400 and NOTHING is written
+    (the persisted values are left unchanged). Config write only — no servo
+    command.
     """
     data = request.json or {}
+
     value = data.get('timeout_min')
-    if isinstance(value, bool) or not isinstance(value, int):
+    if value is not None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return jsonify({'status': 'error',
+                            'message': 'timeout_min must be an integer'}), 400
+        if not (AWAKE_MIN_TIMEOUT_MIN <= value <= AWAKE_MAX_TIMEOUT_MIN):
+            return jsonify({'status': 'error',
+                            'message': 'timeout_min must be between 0 and 120'}), 400
+
+    source = data.get('sensor_source')
+    if source is not None and source not in AWAKE_SENSOR_SOURCES:
         return jsonify({'status': 'error',
-                        'message': 'timeout_min must be an integer'}), 400
-    if not (AWAKE_MIN_TIMEOUT_MIN <= value <= AWAKE_MAX_TIMEOUT_MIN):
-        return jsonify({'status': 'error',
-                        'message': 'timeout_min must be between 0 and 120'}), 400
-    stored = config_store.save_awake_timeout(value)
-    return jsonify({'status': 'success', 'timeout_min': stored})
+                        'message': "sensor_source must be 'range' or 'camera'"}), 400
+
+    result = {'status': 'success'}
+    if value is not None:
+        result['timeout_min'] = config_store.save_awake_timeout(value)
+    if source is not None:
+        result['sensor_source'] = config_store.save_awake_sensor_source(source)
+    return jsonify(result)
 
 
 # ── Routes: mic stream (proxied) ─────────────────────────────────────────────

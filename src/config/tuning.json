@@ -159,7 +159,7 @@
       "tapSide": 5,
       "wave": 5
     },
-    "timeout_min": 60
+    "timeout_min": 0
   },
   "napping": {
     "timeout_min": 0

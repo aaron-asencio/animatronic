@@ -1661,7 +1661,7 @@ def run_http(service, host=HTTP_HOST, port=HTTP_PORT):
 MODEL_PATH_ENV = "CAMERA_MODEL_PATH"
 LABELS_PATH_ENV = "CAMERA_LABELS_PATH"
 # Optional override for the detector confidence threshold. When unset, the
-# TrackingConfig default (0.5) is used. Lowering it (e.g. 0.3) surfaces more /
+# TrackingConfig default (0.6) is used. Lowering it (e.g. 0.3) surfaces more /
 # smaller objects (scissors, cup) at the cost of more false positives; raising
 # it is stricter. Parsed as a float and clamped to [0.0, 1.0].
 CONF_THRESHOLD_ENV = "CAMERA_CONF_THRESHOLD"

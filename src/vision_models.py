@@ -279,7 +279,7 @@ class TrackingConfig:
     resolution: Tuple[int, int] = (640, 480)
     capture_fps: int = 15
     stream_fps: int = 10
-    conf_threshold: float = 0.5
+    conf_threshold: float = 0.6
     deadband_frac_w: float = 0.08
     deadband_frac_h: float = 0.08
     aim_frac_h: float = 0.35
