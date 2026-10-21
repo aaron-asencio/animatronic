@@ -169,8 +169,46 @@ def weighted_scan_pool(
     return pool
 
 
+def pick_non_repeating(weighted: List[str], last: Optional[str], rng=random) -> str:
+    """Draw one name from a weighted list, avoiding an immediate repeat of ``last``.
+
+    "Avoid immediate repeat" (option 1): draw once from ``weighted`` via
+    ``rng.choice``; if the draw equals ``last`` AND the list contains more than
+    one DISTINCT name, draw exactly once more and use that second draw. A single
+    bounded redraw (not a loop) keeps the behaviour deterministic under
+    ``random.seed(x)`` — essential for the phased-vs-standalone equivalence
+    tests — while making a back-to-back replay of the same action far less
+    likely. The redraw is only *reached* on a collision, so in the common no-
+    collision case the draw is identical to a plain ``rng.choice`` and the
+    weighting is unchanged; on a collision the second draw may legitimately land
+    on ``last`` again (accepted, so a heavily-weighted entry is never starved).
+
+    When the pool has only ONE distinct name, a repeat is unavoidable and
+    correct, so no redraw is attempted and ``last`` is returned as drawn.
+
+    Args:
+        weighted: A non-empty weighted list of candidate names (each name
+            repeated by its weight), as built by ``weighted_scan_pool`` or an
+            operator pool expansion.
+        last: The previously chosen name to avoid repeating, or ``None`` (first
+            pick of the run — no constraint, one plain draw).
+        rng: An injectable random source exposing ``choice`` (defaults to the
+            shared ``random`` module so seeding stays reproducible).
+
+    Returns:
+        One name drawn from ``weighted``.
+    """
+    pick = rng.choice(weighted)
+    if last is not None and pick == last and len(set(weighted)) > 1:
+        # One bounded redraw on a collision; the second draw is final whatever it
+        # lands on (so a heavily-weighted name is never starved of all turns).
+        pick = rng.choice(weighted)
+    return pick
+
+
 def choose_scan_action(
     allow: Dict[str, ScanActionKind] = SCAN_SAFE_ARM_ACTIONS,
+    last: Optional[str] = None,
 ) -> str:
     """Pick one scan-safe action name at random, weighted 5:1 Gesture:Routine.
 
@@ -181,11 +219,15 @@ def choose_scan_action(
     Args:
         allow: The allowlist mapping action name -> ``ScanActionKind``. Defaults
             to the shipped ``SCAN_SAFE_ARM_ACTIONS``.
+        last: The previously chosen action name to avoid repeating back-to-back,
+            or ``None`` to draw without that constraint. Delegated to
+            ``pick_non_repeating`` (one bounded redraw on a collision).
 
     Returns:
-        One action name drawn uniformly from ``weighted_scan_pool(allow)``.
+        One action name drawn from ``weighted_scan_pool(allow)``, avoiding an
+        immediate repeat of ``last`` when possible.
     """
-    return random.choice(weighted_scan_pool(allow))
+    return pick_non_repeating(weighted_scan_pool(allow), last)
 
 
 def choose_scan_action_weighted(
@@ -193,6 +235,7 @@ def choose_scan_action_weighted(
     gesture_pool: Dict[str, int],
     allow: Dict[str, ScanActionKind] = SCAN_SAFE_ARM_ACTIONS,
     rng=random,
+    last: Optional[str] = None,
 ):
     """Pick ``(ScanActionKind, name)`` from the operator pool, safety-filtered.
 
@@ -218,6 +261,10 @@ def choose_scan_action_weighted(
             Defaults to the shipped ``SCAN_SAFE_ARM_ACTIONS``.
         rng: An injectable random source exposing ``choice`` (defaults to the
             shared ``random`` module so seeding is reproducible).
+        last: The previously chosen action name to avoid repeating back-to-back,
+            or ``None`` to draw without that constraint. Applied on BOTH the
+            operator-pool draw and the default fallback via
+            ``pick_non_repeating`` (one bounded redraw on a collision).
 
     Returns:
         A tuple ``(ScanActionKind, name)`` for the chosen action.
@@ -243,11 +290,12 @@ def choose_scan_action_weighted(
             weighted.extend([name] * weight)
 
     if not weighted:
-        # Fall back to the current default behavior over the safe set.
-        name = choose_scan_action(allow)
+        # Fall back to the current default behavior over the safe set, still
+        # avoiding an immediate repeat of ``last``.
+        name = choose_scan_action(allow, last=last)
         return allow[name], name
 
-    name = rng.choice(weighted)
+    name = pick_non_repeating(weighted, last, rng)
     return allow[name], name
 
 
