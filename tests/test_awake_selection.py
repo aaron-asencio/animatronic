@@ -199,8 +199,8 @@ def test_loop_falls_back_to_ambient_when_pool_empty(monkeypatch):
     pool = {"ran": None}
 
     monkeypatch.setattr(a, "_pick_ambient_action",
-                        lambda: (ambient.__setitem__("picked", ambient["picked"] + 1)
-                                 or ("gesture", "_do_look_around_random")))
+                        lambda last=None: (ambient.__setitem__("picked", ambient["picked"] + 1)
+                                           or ("gesture", "_do_look_around_random")))
     monkeypatch.setattr(a, "_run_awake_action",
                         lambda kind, name: ambient.__setitem__("ran", (kind, name)))
     monkeypatch.setattr(a, "_run_awake_pool_action",

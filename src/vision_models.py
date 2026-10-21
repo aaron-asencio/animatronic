@@ -79,6 +79,22 @@ TILT_MAX_DEG_DEFAULT = 110.0
 TILT_ENVELOPE_MIN = 30.0
 TILT_ENVELOPE_MAX = 160.0
 
+# Scan_Sweep pan band (degrees). SEPARATE from the global
+# constants.SAFE_LIMITS for NECK_PAN (5-175, ~+/-85 deg each way) that head
+# gestures and the closed-loop person-tracking pan use. The leave-frame
+# Scan_Sweep (the slow surveillance pan when no person is detected) bounces
+# NECK_PAN between pan_min_deg and pan_max_deg instead of the full safe range,
+# so the idle sweep covers a deliberately narrower arc. Only the Scan_Sweep is
+# affected; person-tracking pan is still bounded only by the global SAFE_LIMITS.
+# Default 40-140 (90 +/- 50). TrunkController.set_angle still applies the
+# hardware SAFE_LIMITS clamp on every write; this band only narrows the sweep.
+PAN_MIN_DEG_DEFAULT = 40.0
+PAN_MAX_DEG_DEFAULT = 140.0
+# Hard safety envelope for these tracking pan values: never allow a Scan_Sweep
+# pan endpoint outside the servo's own global SAFE_LIMITS for NECK_PAN (5-175).
+PAN_ENVELOPE_MIN = 5.0
+PAN_ENVELOPE_MAX = 175.0
+
 # Proportional settle gain for the neck control loop. The per-update step is
 # proportional to the FRACTIONAL offset of the person from frame center:
 #   step_deg = settle_gain * (offset_px / half_frame_px) * max_step_deg
@@ -259,6 +275,16 @@ class TrackingConfig:
             so the head stays at head height and cannot pitch the person out of
             frame. This band is independent of the global SAFE_LIMITS gestures
             use.
+        pan_min_deg: Lower bound of the Scan_Sweep pan band (head rotated one
+            way). Default 40. Clamped to the servo envelope ``[5, 175]``.
+        pan_max_deg: Upper bound of the Scan_Sweep pan band (head rotated the
+            other way). Default 140. Clamped to the servo envelope and kept
+            ``>= pan_min_deg``. The leave-frame Scan_Sweep bounces NECK_PAN
+            between ``pan_min_deg`` and ``pan_max_deg`` instead of the full
+            NECK_PAN SAFE_LIMITS range, so the idle surveillance pan covers a
+            deliberately narrower arc. This band is independent of the global
+            SAFE_LIMITS and affects ONLY the Scan_Sweep — the closed-loop
+            person-tracking pan is still bounded only by SAFE_LIMITS.
         settle_gain: Proportional control gain for the neck step. The per-update
             step is ``settle_gain * (offset / half_frame) * max_step_deg``,
             capped at ``max_step_deg``; clamped to ``[0.05, 1.0]`` (default 0.5).
@@ -286,6 +312,8 @@ class TrackingConfig:
     tilt_center_deg: float = TILT_CENTER_DEG_DEFAULT
     tilt_min_deg: float = TILT_MIN_DEG_DEFAULT
     tilt_max_deg: float = TILT_MAX_DEG_DEFAULT
+    pan_min_deg: float = PAN_MIN_DEG_DEFAULT
+    pan_max_deg: float = PAN_MAX_DEG_DEFAULT
     settle_gain: float = SETTLE_GAIN_DEFAULT
     max_step_deg: float = 8.0
     scan_timeout_s: int = 10
@@ -336,6 +364,18 @@ class TrackingConfig:
         self.tilt_center_deg = float(
             _clamp(self.tilt_center_deg, self.tilt_min_deg, self.tilt_max_deg)
         )
+
+        # Scan_Sweep pan band: clamp each value into the servo envelope [5, 175]
+        # and ensure max >= min, so the sweep always has a usable arc. Mirrors
+        # the tilt-band handling above.
+        pmin = _clamp(self.pan_min_deg, PAN_ENVELOPE_MIN, PAN_ENVELOPE_MAX)
+        pmax = _clamp(self.pan_max_deg, PAN_ENVELOPE_MIN, PAN_ENVELOPE_MAX)
+        if pmax < pmin:
+            # Swap rather than silently collapse so a reversed pair still yields
+            # a usable (if narrow) band instead of an empty one.
+            pmin, pmax = pmax, pmin
+        self.pan_min_deg = float(pmin)
+        self.pan_max_deg = float(pmax)
 
         self.settle_gain = float(
             _clamp(self.settle_gain, SETTLE_GAIN_MIN, SETTLE_GAIN_MAX)

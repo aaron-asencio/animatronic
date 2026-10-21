@@ -56,6 +56,7 @@ from detection_routine_map import (
     ScanActionKind,
     choose_scan_action,
     choose_scan_action_weighted,
+    pick_non_repeating,
     scan_rules,
     DEFAULT_DOG_LABEL,
 )
@@ -2509,13 +2510,27 @@ class Animatronic:
             time.sleep(self._AWAKE_PAUSE_POLL_S)
         return None
 
-    def _pick_ambient_action(self):
+    def _pick_ambient_action(self, last=None):
         """Pick the next ambient action by weight; return (kind, method_name).
 
         Draws from ``_AWAKE_AMBIENT_POOL`` by relative weight (lookAroundRandom
         60% / handVisor 15% / fanNose 8% / tapSide 7% / occasional 10%). The
         "occasional" bucket then splits evenly between the ``yawn`` and
         ``clearThroat`` Routines.
+
+        Avoid immediate repeat (option 1): if the resolved action NAME equals
+        ``last`` and more than one distinct outcome is possible, the pick is
+        redrawn exactly once (a single bounded redraw, like
+        ``pick_non_repeating``), so the same ambient action is far less likely to
+        play back-to-back. The redraw stays on the shared ``random`` module so
+        ``random.seed(x)`` remains reproducible; on the second draw whatever
+        lands is final (a heavily-weighted entry such as ``lookAroundRandom`` is
+        never starved). Comparison is on the FINAL resolved name (the occasional
+        bucket resolved to its routine), not the ``_AWAKE_OCCASIONAL`` label.
+
+        Args:
+            last: The previously performed action's method name to avoid
+                repeating, or ``None`` (first pick of the run — one plain draw).
 
         Returns:
             A tuple ``(kind, method_name)`` where ``kind`` is ``"gesture"`` (a
@@ -2524,12 +2539,25 @@ class Animatronic:
         """
         weights = [w for w, _ in self._AWAKE_AMBIENT_POOL]
         names = [n for _, n in self._AWAKE_AMBIENT_POOL]
-        choice = random.choices(names, weights=weights, k=1)[0]
-        if choice == "_AWAKE_OCCASIONAL":
-            # Occasional bucket: an audio Routine (yawn or clearThroat).
-            return "routine", random.choice(self._AWAKE_OCCASIONAL_ROUTINES)
-        # The two ambient _do_* entries are gesture-only coroutines.
-        return "gesture", choice
+
+        def _draw():
+            """One weighted draw resolved to its final ``(kind, name)``."""
+            choice = random.choices(names, weights=weights, k=1)[0]
+            if choice == "_AWAKE_OCCASIONAL":
+                # Occasional bucket: an audio Routine (yawn or clearThroat).
+                return "routine", random.choice(self._AWAKE_OCCASIONAL_ROUTINES)
+            # The two ambient _do_* entries are gesture-only coroutines.
+            return "gesture", choice
+
+        kind, name = _draw()
+        # One bounded redraw on an immediate-repeat collision. The set of
+        # possible final names is the non-occasional entries plus the two
+        # occasional routines; redraw only when more than one such name exists.
+        possible = {n for n in names if n != "_AWAKE_OCCASIONAL"}
+        possible.update(self._AWAKE_OCCASIONAL_ROUTINES)
+        if last is not None and name == last and len(possible) > 1:
+            kind, name = _draw()
+        return kind, name
 
     def _run_awake_action(self, kind, name):
         """Run one picked ambient action to completion.
@@ -2549,7 +2577,7 @@ class Animatronic:
         else:
             getattr(self, name)()
 
-    def _pick_awake_pool_action(self):
+    def _pick_awake_pool_action(self, last=None):
         """Pick a ``(kind, camelCase_name)`` from the operator Awake pool.
 
         Builds a weighted list from ``self._awake_pools`` — each routine name
@@ -2559,6 +2587,16 @@ class Animatronic:
         arm-only-safe ``allow`` intersection: Awake is a whole-robot mode, so any
         FULL-list routine/gesture is a legal pick. Uses the shared stdlib
         ``random`` so ``random.seed(x)`` stays reproducible.
+
+        Avoid immediate repeat (option 1): if the drawn NAME equals ``last`` and
+        the pool holds more than one distinct name, the pick is redrawn exactly
+        once (a single bounded redraw) so the same pooled action is far less
+        likely to replay back-to-back. The redraw is on the name only, so the
+        ``(kind, name)`` pairing of the surviving draw is preserved.
+
+        Args:
+            last: The previously performed action's camelCase name to avoid
+                repeating, or ``None`` (first pick of the run — one plain draw).
 
         Returns:
             A tuple ``(kind, name)`` with ``kind`` ``"routine"`` or ``"gesture"``
@@ -2584,7 +2622,15 @@ class Animatronic:
 
         if not weighted:
             return None
-        return random.choice(weighted)
+
+        pick = random.choice(weighted)
+        # One bounded redraw on an immediate-repeat collision. Compare on the
+        # NAME element only; redraw only when more than one distinct name exists
+        # in the pool (a single-name pool must repeat, which is correct).
+        if last is not None and pick[1] == last:
+            if len({n for _, n in weighted}) > 1:
+                pick = random.choice(weighted)
+        return pick
 
     def _run_awake_pool_action(self, kind, name):
         """Run one operator-pool action (camelCase) to completion.
@@ -2658,6 +2704,13 @@ class Animatronic:
         deadline = (
             time.monotonic() + max(1, timeout_seconds) if timeout_seconds else None
         )
+        # Name of the most recently performed ambient/pool action, so the pickers
+        # can avoid replaying the same action back-to-back (option 1). Per-run
+        # only: starts None on each awake entry (first pick unconstrained). The
+        # pool and ambient pickers draw from different name namespaces (camelCase
+        # vs internal _do_*/snake), so a single shared "last" is harmless — a
+        # cross-namespace collision simply can't occur.
+        last_awake_pick = None
         while True:
             # End only on stop/timeout, checked before each action.
             reason = self._check_awake_interrupt(deadline)
@@ -2680,13 +2733,15 @@ class Animatronic:
             # names are camelCase (FULL lists) so they dispatch through the
             # camelCase translation in _run_awake_pool_action; the ambient
             # fallback uses the internal _do_*/snake_case names as before.
-            pool_pick = self._pick_awake_pool_action()
+            pool_pick = self._pick_awake_pool_action(last_awake_pick)
             if pool_pick is not None:
                 kind, name = pool_pick
+                last_awake_pick = name
                 print(f"[awake] performing {kind}: {name}")
                 self._run_awake_pool_action(kind, name)
             else:
-                kind, name = self._pick_ambient_action()
+                kind, name = self._pick_ambient_action(last_awake_pick)
+                last_awake_pick = name
                 print(f"[awake] performing {kind}: {name}")
                 self._run_awake_action(kind, name)
 
@@ -2843,6 +2898,8 @@ class Animatronic:
         tilt_center=None,
         tilt_min=None,
         tilt_max=None,
+        pan_min=None,
+        pan_max=None,
         settle_gain=None,
         routine_map=None,
         action_map=None,
@@ -2881,7 +2938,9 @@ class Animatronic:
 
         Leave-frame Scan_Sweep (Req 6.7-6.10): when ``select_target`` returns no
         Target_Person the loop runs ``_run_scan_sweep`` — a slow pan of
-        ``NECK_PAN`` across its ``SAFE_LIMITS`` range (every command through
+        ``NECK_PAN`` across the dedicated Scan_Sweep pan band
+        (``cfg.pan_min_deg``/``pan_max_deg``, default 40-140 — a narrower arc
+        than the full ``NECK_PAN`` ``SAFE_LIMITS``; every command still through
         ``set_angle``) that keeps polling ``/detections``. If a person reappears
         mid-sweep the sweep stops immediately and normal tracking resumes; if
         ``cfg.scan_timeout_s`` elapses with no reacquire the loop recenters to
@@ -2924,6 +2983,16 @@ class Animatronic:
                 default (110). Tracking clamps every tilt command into
                 ``[tilt_min, tilt_max]`` so the head stays at head height and
                 cannot pitch the person out of frame.
+            pan_min: Lower bound of the leave-frame Scan_Sweep pan band;
+                forwarded to ``TrackingConfig.pan_min_deg``. ``None`` uses the
+                default (40).
+            pan_max: Upper bound of the leave-frame Scan_Sweep pan band;
+                forwarded to ``TrackingConfig.pan_max_deg``. ``None`` uses the
+                default (140). The Scan_Sweep bounces ``NECK_PAN`` between
+                ``[pan_min, pan_max]`` instead of the full NECK_PAN SAFE_LIMITS
+                range, so the idle surveillance pan covers a narrower arc. This
+                band bounds ONLY the Scan_Sweep; the closed-loop person-tracking
+                pan is still bounded only by the global SAFE_LIMITS.
             settle_gain: Proportional control gain; forwarded to
                 ``TrackingConfig.settle_gain`` (clamped to [0.05, 1.0]). ``None``
                 uses the default (0.5). Lower = gentler/more damped approach
@@ -2991,6 +3060,10 @@ class Animatronic:
             cfg_kwargs["tilt_min_deg"] = tilt_min
         if tilt_max is not None:
             cfg_kwargs["tilt_max_deg"] = tilt_max
+        if pan_min is not None:
+            cfg_kwargs["pan_min_deg"] = pan_min
+        if pan_max is not None:
+            cfg_kwargs["pan_max_deg"] = pan_max
         if settle_gain is not None:
             cfg_kwargs["settle_gain"] = settle_gain
         cfg = TrackingConfig(**cfg_kwargs)
@@ -3217,7 +3290,9 @@ class Animatronic:
 
                 if target is None:
                     # No Target_Person: begin the leave-frame Scan_Sweep
-                    # (Req 6.7). It pans NECK_PAN across the safe range looking
+                    # (Req 6.7). It pans NECK_PAN across the dedicated Scan_Sweep
+                    # pan band (cfg.pan_min_deg/pan_max_deg, default 40-140 — a
+                    # narrower arc than the full NECK_PAN safe range) looking
                     # for a person, stopping the instant one reappears (Req 6.9)
                     # or when cfg.scan_timeout_s elapses with no reacquire
                     # (Req 6.10). It keeps NECK_PAN's local angle consistent and
@@ -3354,15 +3429,15 @@ class Animatronic:
         return {"action": rule.action, "rule": rule, "routine_map": routine_map}
 
     async def _run_scan_sweep(self, client, cfg, trunk, cur_pan):
-        """Pan NECK_PAN across its safe range to reacquire a lost person.
+        """Pan NECK_PAN across the Scan_Sweep pan band to reacquire a lost person.
 
         The leave-frame Scan_Sweep (Req 6.7-6.10). A deliberate surveillance pan
         of NECK_PAN, driven here as
         an incremental ``set_angle`` sweep so it can interleave detection polling
         and ``nap_signal`` checks between every step. Starting from the current
-        pan angle it steps toward one ``NECK_PAN`` safe-range endpoint, then
-        reverses to the other, bouncing between the endpoints until one of three
-        things happens:
+        pan angle it steps toward one Scan_Sweep pan-band endpoint
+        (``cfg.pan_min_deg``/``pan_max_deg``), then reverses to the other,
+        bouncing between the endpoints until one of three things happens:
 
         * **Reacquire (Req 6.9):** ``select_target`` finds a person on a polled
           frame — the sweep stops immediately and the caller resumes tracking
@@ -3377,8 +3452,11 @@ class Animatronic:
         Every neck write goes through ``TrunkController.set_angle`` so each
         commanded angle is clamped to ``constants.SAFE_LIMITS`` (Req 6.8), and
         ONLY ``NECK_PAN`` is driven — no tilt, no arm, no jaw/audio. The sweep is
-        bounded strictly within the ``NECK_PAN`` ``SAFE_LIMITS`` range (the
-        configurable scan range).
+        bounded by the dedicated Scan_Sweep pan band
+        (``cfg.pan_min_deg``/``pan_max_deg``, default 40-140 — a narrower arc
+        than the full ``NECK_PAN`` ``SAFE_LIMITS`` range that the closed-loop
+        person-tracking pan uses). ``set_angle``'s ``SAFE_LIMITS`` clamp is still
+        the final hardware authority on every write.
 
         The pan does NOT advance at constant velocity. Each step's increment
         follows a TRUE accel -> cruise -> decel velocity profile across the
@@ -3436,7 +3514,13 @@ class Animatronic:
             * ``(None, pan_angle)`` — an external stop was requested mid-sweep;
               caller winds down.
         """
-        pan_min, pan_max = constants.SAFE_LIMITS[constants.NECK_PAN]
+        # The Scan_Sweep arc is the dedicated tracking pan band
+        # (cfg.pan_min_deg/pan_max_deg, default 40-140), NOT the full NECK_PAN
+        # SAFE_LIMITS range. This narrows ONLY the idle surveillance sweep; the
+        # closed-loop person-tracking pan is still bounded by SAFE_LIMITS. Every
+        # write below still goes through set_angle, so the global SAFE_LIMITS
+        # clamp remains the final authority on hardware.
+        pan_min, pan_max = cfg.pan_min_deg, cfg.pan_max_deg
         print(
             f"[tracking] no person -> Scan_Sweep across NECK_PAN "
             f"[{pan_min}, {pan_max}] (timeout {cfg.scan_timeout_s}s)"
@@ -3739,6 +3823,8 @@ class Animatronic:
         tilt_center=None,
         tilt_min=None,
         tilt_max=None,
+        pan_min=None,
+        pan_max=None,
         settle_gain=None,
     ):
         """SCAN mode: continuously neck-track a person while running arm-only responses.
@@ -3784,9 +3870,12 @@ class Animatronic:
             timeout_seconds: Seconds before the timeout winds the Mode down.
                 ``None`` means no timeout (run until an external stop).
             max_step, deadband, conf, scan_timeout, aim_frac, tilt_center,
-            tilt_min, tilt_max, settle_gain: Neck-tracker tuning forwarded to
-                ``TrackingConfig`` (same meaning and clamping as ``tracking()``).
-                Each ``None`` uses the ``TrackingConfig`` default.
+            tilt_min, tilt_max, pan_min, pan_max, settle_gain: Neck-tracker
+                tuning forwarded to ``TrackingConfig`` (same meaning and clamping
+                as ``tracking()``). Each ``None`` uses the ``TrackingConfig``
+                default. ``pan_min``/``pan_max`` bound ONLY the leave-frame
+                Scan_Sweep arc (default 40-140), not the closed-loop
+                person-tracking pan.
         """
         # Build the TrackingConfig exactly like tracking() (dataclass defaults
         # fill any None; __post_init__ clamps each value into its safe range).
@@ -3808,6 +3897,10 @@ class Animatronic:
             cfg_kwargs["tilt_min_deg"] = tilt_min
         if tilt_max is not None:
             cfg_kwargs["tilt_max_deg"] = tilt_max
+        if pan_min is not None:
+            cfg_kwargs["pan_min_deg"] = pan_min
+        if pan_max is not None:
+            cfg_kwargs["pan_max_deg"] = pan_max
         if settle_gain is not None:
             cfg_kwargs["settle_gain"] = settle_gain
         cfg = TrackingConfig(**cfg_kwargs)
@@ -3876,8 +3969,11 @@ class Animatronic:
             n: k for n, k in SCAN_SAFE_ARM_ACTIONS.items() if n in scan_responses
         }
         pools = config_store.load_scan_pools()
-        picker = lambda: choose_scan_action_weighted(
-            pools["routine_pool"], pools["gesture_pool"], allow
+        # ``last`` lets the picker avoid replaying the immediately-previous
+        # response back-to-back (option 1: one bounded redraw on a collision).
+        # The loop threads the previous pick in; None on the first call.
+        picker = lambda last=None: choose_scan_action_weighted(
+            pools["routine_pool"], pools["gesture_pool"], allow, last=last
         )
 
         # Clear any stale stop request from a previous Mode run (mirrors
@@ -3971,6 +4067,10 @@ class Animatronic:
 
         # The single in-flight arm-only response: (task, rule) or None.
         self._active = None
+        # The name of the most recently dispatched response, so the weighted
+        # picker can avoid replaying the same action back-to-back (option 1).
+        # Per-run only: starts None on each scan entry (first pick unconstrained).
+        last_scan_pick = None
         try:
             while True:
                 # Wind down on an external stop request (a web action preempting
@@ -3994,7 +4094,8 @@ class Animatronic:
                         # No walkYourDog gesture/routine yet: treat the same as a
                         # person but log the placeholder for testing (per spec).
                         print("[scan] person+dog detected (walkYourDog placeholder)")
-                    _, name = picker()
+                    _, name = picker(last_scan_pick)
+                    last_scan_pick = name
                     self._active = (
                         asyncio.create_task(
                             self._dispatch_scan_response(name, scan_responses, mv)
@@ -4928,6 +5029,8 @@ def main(args):
                     tilt_center=args.tilt_center,
                     tilt_min=args.tilt_min,
                     tilt_max=args.tilt_max,
+                    pan_min=args.pan_min,
+                    pan_max=args.pan_max,
                     settle_gain=args.settle_gain,
                     action_map=action_map,
                 )
@@ -4968,6 +5071,8 @@ def main(args):
                     tilt_center=args.tilt_center,
                     tilt_min=args.tilt_min,
                     tilt_max=args.tilt_max,
+                    pan_min=args.pan_min,
+                    pan_max=args.pan_max,
                     settle_gain=args.settle_gain,
                 )
         except ServoBusyError:
@@ -4998,6 +5103,8 @@ def main(args):
                     tilt_center=args.tilt_center,
                     tilt_min=args.tilt_min,
                     tilt_max=args.tilt_max,
+                    pan_min=args.pan_min,
+                    pan_max=args.pan_max,
                     settle_gain=args.settle_gain,
                     suppress_triggers=True,
                     # Puppeteer runs until the operator explicitly stops it: a
@@ -5180,6 +5287,19 @@ if __name__ == '__main__':
                              '(default: 110). Tracking clamps tilt to '
                              '[tilt-min, tilt-max] so the head stays at head '
                              'height. Only used with --action=tracking.')
+    parser.add_argument('--pan-min', dest='pan_min', type=float, default=None,
+                        help='Tracking/Scan mode: lower bound of the leave-frame '
+                             'Scan_Sweep pan band, within [5,175] (default: 40). '
+                             'Bounds ONLY the idle surveillance sweep, not the '
+                             'closed-loop person-tracking pan. Used with '
+                             '--action=tracking or --action=scan.')
+    parser.add_argument('--pan-max', dest='pan_max', type=float, default=None,
+                        help='Tracking/Scan mode: upper bound of the leave-frame '
+                             'Scan_Sweep pan band, within [5,175] (default: 140). '
+                             'The Scan_Sweep bounces NECK_PAN between '
+                             '[pan-min, pan-max] instead of the full NECK_PAN '
+                             'safe range, narrowing the idle sweep arc. Used '
+                             'with --action=tracking or --action=scan.')
     parser.add_argument('--settle-gain', dest='settle_gain', type=float,
                         default=None,
                         help='Tracking mode: proportional control gain, clamped '
