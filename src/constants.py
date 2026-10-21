@@ -138,7 +138,7 @@ SAFE_LIMITS = {
 # left energized against a jam. Each rest angle MUST lie within SAFE_LIMITS.
 REST_POSITIONS = {
     NECK_PAN:            90,   # centered
-    NECK_TILT:           90,   # head level (new neutral after reseat)
+    NECK_TILT:           105,  # chin slightly down for a better camera view from the animatronic's location
     RT_WRIST_TILT:       90,
     RT_SHOULDER_ROTATOR: 0,    # arm at side (within (0,270))
     RT_SHOULDER_TILT:    55,   # arm lowered toward side (within (55,245))

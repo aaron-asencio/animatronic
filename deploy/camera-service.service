@@ -45,9 +45,9 @@ Environment=CAMERA_MODEL_PATH=/home/aaron/workspace/animatronic-v2/models/ssd_mo
 Environment=CAMERA_LABELS_PATH=/home/aaron/workspace/animatronic-v2/models/coco_labels.txt
 # Detector confidence threshold (0.0-1.0). Lower surfaces more / smaller
 # objects (e.g. scissors, cup) at the cost of more false positives;
-# unset uses the TrackingConfig default (0.5). 0.3 is a good starting point
+# unset uses the TrackingConfig default (0.5). 0.6 is a good starting point
 # for a 300x300 SSD-MobileNet v1 on the NoIR camera.
-Environment=CAMERA_CONF_THRESHOLD=0.3
+Environment=CAMERA_CONF_THRESHOLD=0.6
 
 # Restart policy: keep the feed up. If the camera init fails (e.g. cable
 # knocked loose), the process exits non-zero; systemd will retry a few times

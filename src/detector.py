@@ -36,8 +36,9 @@ from vision_models import Detection, PERSON_LABEL
 
 
 # Default confidence threshold for reporting a Detection; configurable in
-# [0.0, 1.0] via the constructor (Req 3.3).
-DEFAULT_CONF_THRESHOLD = 0.5
+# [0.0, 1.0] via the constructor (Req 3.3). Raised from 0.5 to 0.6 to reject
+# borderline false positives (e.g. mailboxes misread as "person").
+DEFAULT_CONF_THRESHOLD = 0.6
 
 # Shared libedgetpu runtime library name used by the Edge TPU delegate. Defined
 # here so task 6.2 has a single place to reference when it wires the delegate;
@@ -265,7 +266,7 @@ class Detector:
                 :func:`load_labels`).
             conf_threshold: Confidence threshold in ``[0.0, 1.0]``; detections
                 below it are excluded (Req 3.3). Defaults to
-                :data:`DEFAULT_CONF_THRESHOLD` (0.5).
+                :data:`DEFAULT_CONF_THRESHOLD` (0.6).
             use_edge_tpu: Whether to attempt the Edge TPU delegate. When set,
                 :meth:`_load_interpreter` tries the ``libedgetpu`` delegate with
                 the ``*_edgetpu`` model and falls back to CPU on a

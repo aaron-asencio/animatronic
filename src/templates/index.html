@@ -598,6 +598,15 @@
         {% endfor %}
       </select>
     </div>
+    <div class="row">
+      <label>Awake sensor source<br><small style="color:var(--muted)">which
+         sensor triggers Awake's reaction: the proximity range sensor, or camera
+         person detection (falls back to range if the camera is unavailable)</small></label>
+      <select id="awake-sensor-source" onchange="saveAwakeSensorSource()">
+        <option value="range"{% if awake_sensor_source == 'range' %} selected{% endif %}>Range sensor (proximity)</option>
+        <option value="camera"{% if awake_sensor_source == 'camera' %} selected{% endif %}>Camera (person detection)</option>
+      </select>
+    </div>
 
     <!-- Awake response pool: operator-selectable + weighted routines/gestures.
          Mirrors #scanpool exactly (reusing the .scanpool-* classes) BUT is
@@ -1559,6 +1568,13 @@
       const data = await post('/awake/config', null, { timeout_min: value });
       if (data && data.status === 'success') {
         toast('Awake timeout: ' + (value === 0 ? 'No timeout' : value + ' min'));
+      }
+    }
+    async function saveAwakeSensorSource() {
+      const value = document.getElementById('awake-sensor-source').value;
+      const data = await post('/awake/config', null, { sensor_source: value });
+      if (data && data.status === 'success') {
+        toast('Awake sensor: ' + (value === 'camera' ? 'Camera' : 'Range sensor'));
       }
     }
 

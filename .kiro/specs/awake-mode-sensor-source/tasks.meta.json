@@ -1,0 +1,312 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Add Sensor_Source constants and coercion helper to `ConfigStore`": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296369260
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296385868
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296481457
+      }
+    ],
+    "1.2 Add `load_awake_sensor_source` / `save_awake_sensor_source` to `ConfigStore`": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296370672
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296485678
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296532936
+      }
+    ],
+    "1.3 Add module-level `load_awake_sensor_source` / `save_awake_sensor_source` wrappers": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296371321
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296536890
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296586198
+      }
+    ],
+    "2. Verify config_store compiles": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296371897
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296604344
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296634279
+      }
+    ],
+    "3.1 Add `--awake-sensor-source` argparse flag and `main()` awake-branch clamp": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296372349
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296639848
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296782634
+      }
+    ],
+    "3.2 Add Awake Sensor_Source class constants and extend `awake(...)` signature": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296372874
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296640817
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296784087
+      }
+    ],
+    "4.1 Implement `_resolve_awake_sensor_source` and `_camera_available`": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296373362
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296789672
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296859682
+      }
+    ],
+    "4.2 Implement `_poll_camera_person` and unified `_poll_awake_sensor`": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296373850
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296863634
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296928565
+      }
+    ],
+    "5.1 Replace unconditional range-sensor setup with source resolution at entry": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296375321
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296933009
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297002880
+      }
+    ],
+    "5.2 Route loop/pause trigger checks through `_poll_awake_sensor` and keep cleanup": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296375659
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297006949
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297106148
+      }
+    ],
+    "6. Verify animatronic.py compiles and safety guards intact": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296376185
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297110149
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297174965
+      }
+    ],
+    "7.1 Add the `AWAKE_SENSOR_SOURCES` allowlist and render context in webapp.py": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296376641
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297181049
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297238305
+      }
+    ],
+    "7.2 Extend the `/awake/config` POST route to validate and persist `sensor_source`": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296377049
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297243344
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297311673
+      }
+    ],
+    "7.3 Add the Sensor_Source `<select>` and `saveAwakeSensorSource()` to index.html": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296377479
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297182553
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297312412
+      }
+    ],
+    "7.4 Pass the persisted source to the subprocess in `run_awake`": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296377940
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297316217
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297364759
+      }
+    ],
+    "8. Final checkpoint - compile and verify integration": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296378354
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297369067
+      },
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297417972
+      }
+    ],
+    "1. Add the Sensor_Source persistence layer to config_store": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296586654
+      }
+    ],
+    "3. Add the CLI flag and session snapshot in animatronic.py": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296784536
+      }
+    ],
+    "4. Implement the camera-vs-range resolution and trigger helpers": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792296929114
+      }
+    ],
+    "5. Wire the resolution and unified poll into the awake loop": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297106542
+      }
+    ],
+    "7. Wire the sensor source into the web control panel": [
+      {
+        "executionId": "52566f8f-d183-40bc-9892-0cfe20ad7e64",
+        "chatSessionId": "sess_88b2b701-b6cd-4122-8767-62c4198132f5",
+        "timestamp": 1792297365367
+      }
+    ]
+  }
+}
