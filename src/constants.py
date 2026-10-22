@@ -40,6 +40,7 @@ NECK_CENTER = 90
 
 # --- GPIO pins (not PCA9685 servo channels) ---
 EYE_LIGHT_PIN = 6      # gpiozero LED — eye lights
+MOUTH_LIGHT_PIN = 26  # gpiozero LED — mouth light
 MOUTH_MOTOR_PIN = 15   # gpiozero DigitalOutputDevice — jaw motor (pin 18 no longer working)
 IR_ILLUMINATOR_PIN = 12  # gpiozero LED/OutputDevice — IR illuminator for NoIR night vision (Req 10)
 

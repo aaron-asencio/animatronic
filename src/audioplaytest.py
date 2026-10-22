@@ -43,7 +43,8 @@ def main(args):
         # Leave the hardware in a safe idle state.
         player.jaw_motor.off()
         player.led_eye_light.off()
-        print("Playback complete; jaw closed, eyes off.")
+        player.led_mouth_light.off()
+        print("Playback complete; jaw closed, eyes + mouth light off.")
 
 
 if __name__ == '__main__':

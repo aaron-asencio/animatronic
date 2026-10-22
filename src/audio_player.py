@@ -8,15 +8,15 @@ from gpiozero import LED
 from gpiozero import DigitalOutputDevice
 from datetime import datetime
 from utils.audio_utils import AudioUtils
-from constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
+from constants import EYE_LIGHT_PIN, MOUTH_LIGHT_PIN, MOUTH_MOTOR_PIN
 from config_store import load_profile, PROFILE_FILE
 import sys
 
 class AudioPlayer:
     def __init__(self, silence_floor=None, open_ratio=None, close_ratio=None,
                  ema_alpha=None, close_hold_frames=None,
-                 drive_jaw=True, drive_eyes=True):
-        """Initialise the audio player, jaw motor, and eye LED.
+                 drive_jaw=True, drive_eyes=True, drive_mouth_light=True):
+        """Initialise the audio player, jaw motor, eye LED, and mouth light.
 
         The jaw is a binary (on/off) DC motor driven from the audio envelope.
         Rather than fixed thresholds, it adapts to a running average of recent
@@ -67,12 +67,20 @@ class AudioPlayer:
                                When ``False`` the eye LED is not constructed
                                (``self.led_eye_light is None``) so ``EYE_LIGHT_PIN``
                                stays free for a separate blinker to own.
+            drive_mouth_light: When ``True`` (default) construct and drive the
+                               mouth light LED on ``MOUTH_LIGHT_PIN`` from the
+                               envelope, in lockstep with the eyes. When
+                               ``False`` the mouth light is not constructed
+                               (``self.led_mouth_light is None``) so
+                               ``MOUTH_LIGHT_PIN`` stays free for another owner.
         """
         self.drive_jaw = drive_jaw
         self.drive_eyes = drive_eyes
+        self.drive_mouth_light = drive_mouth_light
         # Only claim a pin when that device is enabled, so a disabled device
         # frees its GPIO pin for another owner (e.g. the eye blinker).
         self.led_eye_light = LED(EYE_LIGHT_PIN) if drive_eyes else None
+        self.led_mouth_light = LED(MOUTH_LIGHT_PIN) if drive_mouth_light else None
         self.jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN) if drive_jaw else None
 
         # Audio parameters
@@ -138,11 +146,15 @@ class AudioPlayer:
                 self.jaw_motor.on()
             if self.drive_eyes and self.led_eye_light is not None:
                 self.led_eye_light.on()
+            if self.drive_mouth_light and self.led_mouth_light is not None:
+                self.led_mouth_light.on()
         else:
             if self.drive_jaw and self.jaw_motor is not None:
                 self.jaw_motor.off()
             if self.drive_eyes and self.led_eye_light is not None:
                 self.led_eye_light.off()
+            if self.drive_mouth_light and self.led_mouth_light is not None:
+                self.led_mouth_light.off()
 
         state = 'OPEN' if self.jaw_open else 'closed'
         print(f"RMS: {level:.0f}; avg: {self._avg:.0f}; Jaw: {state}; below: {self._below_count}")
@@ -185,7 +197,7 @@ class AudioPlayer:
     def close(self):
         """Turn off and release any GPIO devices this player owns.
 
-        Drives the jaw motor and eye LED off (if constructed) and closes them so
+        Drives the jaw motor, eye LED, and mouth light off (if constructed) and closes them so
         their pins are freed. This lets a caller that plays several tracks with
         DIFFERENT player options build one ``AudioPlayer`` per track and release
         the previous one's pins before constructing the next -- e.g. a chain
@@ -193,7 +205,7 @@ class AudioPlayer:
         call when a device was never constructed (``drive_*=False``) and safe to
         call more than once. Never raises: cleanup must not mask playback.
         """
-        for device in (self.jaw_motor, self.led_eye_light):
+        for device in (self.jaw_motor, self.led_eye_light, self.led_mouth_light):
             if device is None:
                 continue
             try:
@@ -203,6 +215,7 @@ class AudioPlayer:
                 print(f"AudioPlayer.close: error releasing {device}: {e}")
         self.jaw_motor = None
         self.led_eye_light = None
+        self.led_mouth_light = None
 
 if __name__ == "__main__":        
     music = ['beetel-exorcist.wav', 'blah.wav', 'krusty-laugh.wav', 'sb_party_switch.wav',
