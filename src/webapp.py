@@ -39,6 +39,7 @@ from servo_lock import is_locked
 import nap_signal
 import mode_exit
 import range_publish
+import motion_publish
 import config_store
 # Read-only reference data for the mode panels (sensors + interrupt allowlists).
 # Defined next to the mode methods in animatronic.py so there is one source of
@@ -2109,6 +2110,26 @@ def range_reading():
     })
 
 
+# ── Route: PIR motion indicator ──────────────────────────────────────────────
+@app.route('/motion', methods=['GET'])
+def motion_reading():
+    """Return the latest HC-SR501 PIR motion state for the dashboard LED.
+
+    Reads the shared reading published by the webapp's PIR poller. Returns
+    ``motion`` (bool), the publishing ``source``, and the reading ``age_s``.
+    When there is no fresh reading (missing/stale), reports no motion so the
+    indicator defaults to off. Read-only; takes no request input.
+    """
+    reading = motion_publish.read_latest()
+    if reading is None:
+        return jsonify({'motion': False, 'source': None, 'age_s': None})
+    return jsonify({
+        'motion': bool(reading.get('motion')),
+        'source': reading.get('source'),
+        'age_s': round(reading.get('age_s', 0.0), 2),
+    })
+
+
 # ── Route: range sensor sensitivity (detection gate) ─────────────────────────
 @app.route('/range/sensitivity', methods=['POST'])
 def range_sensitivity():
@@ -2238,13 +2259,65 @@ def _range_poll_loop():
         time.sleep(RANGE_POLL_INTERVAL_S)
 
 
+# ── Motion sensor (PIR) poller ───────────────────────────────────────────────
+# The HC-SR501 is a single GPIO device; only one process may open it at a time.
+# The web app is the SOLE owner of the PIR, exactly like the HC-SR04 range
+# poller above: it reads every MOTION_POLL_INTERVAL_S and PUBLISHES each reading
+# via motion_publish. The dashboard LED reads the shared file through /motion.
+MOTION_POLL_INTERVAL_S = 0.2
+_motion_state = {'sensor': None}
+
+
+def _motion_poll_loop():
+    """SOLE owner of the HC-SR501: read it and publish for the dashboard LED.
+
+    The web app is the one and only process that opens the PIR sensor, so there
+    is never GPIO contention over the pin. It reads every
+    ``MOTION_POLL_INTERVAL_S`` and publishes each reading (source ``"webapp"``)
+    via ``motion_publish``. The dashboard reads that shared reading through
+    ``/motion`` to drive the flashing motion indicator.
+
+    All hardware access is best-effort — if the sensor isn't wired or GPIO is
+    unavailable, the loop keeps retrying without crashing the app.
+    """
+    while True:
+        try:
+            # Open the sensor lazily and keep it for the app's lifetime.
+            if _motion_state['sensor'] is None:
+                try:
+                    from motion_sensor import PirMotionSensor
+                    _motion_state['sensor'] = PirMotionSensor()
+                except Exception as e:
+                    # Not wired / no GPIO — try again shortly.
+                    print(f"[motion] sensor unavailable: {e}")
+                    time.sleep(1.0)
+                    continue
+
+            try:
+                motion = _motion_state['sensor'].motion_detected()
+                motion_publish.publish(motion, source='webapp')
+            except Exception as e:
+                print(f"[motion] read failed: {e}")
+                # Drop the sensor so a wedged device gets reopened next tick.
+                try:
+                    _motion_state['sensor'].close()
+                except Exception:
+                    pass
+                _motion_state['sensor'] = None
+        except Exception as e:
+            print(f"[motion] poll loop error: {e}")
+        time.sleep(MOTION_POLL_INTERVAL_S)
+
+
 def _start_background_threads():
     """Start the background daemon threads (die with the process).
 
-    Currently just the HC-SR04 range poller, which owns the sensor and
-    publishes readings for the dashboard gauge and the background Modes.
+    The HC-SR04 range poller (owns the range sensor and publishes readings for
+    the dashboard gauge and the background Modes) and the HC-SR501 PIR poller
+    (owns the motion sensor and publishes readings for the dashboard indicator).
     """
     threading.Thread(target=_range_poll_loop, daemon=True).start()
+    threading.Thread(target=_motion_poll_loop, daemon=True).start()
 
 
 if __name__ == '__main__':
