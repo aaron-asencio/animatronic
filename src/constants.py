@@ -51,6 +51,12 @@ IR_ILLUMINATOR_PIN = 12  # gpiozero LED/OutputDevice — IR illuminator for NoIR
 RANGE_TRIG_PIN = 23    # HC-SR04 trigger (output)
 RANGE_ECHO_PIN = 24    # HC-SR04 echo (input, via voltage divider)
 
+# HC-SR501 PIR motion sensor (gpiozero MotionSensor / DigitalInputDevice).
+# Unlike the HC-SR04 ECHO line above, the HC-SR501 OUT is a clean 3.3V
+# push-pull logic signal (HIGH = motion) — it needs NO voltage divider or
+# level shifter, so it wires straight to a plain GPIO input.
+PIR_MOTION_PIN = 16  # gpiozero MotionSensor/DigitalInputDevice — HC-SR501 PIR
+
 
 # --------------------------------------------------------------------------- #
 # AXIS DIRECTION REFERENCE — how commanded angle maps to physical motion       #

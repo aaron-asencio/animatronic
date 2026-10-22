@@ -129,6 +129,11 @@ src/.range_reading
 .range_config
 src/.range_config
 
+# PIR motion sensor runtime state (machine-local, written at runtime, not
+# committed): latest HC-SR501 motion reading.
+.motion_reading
+src/.motion_reading
+
 # Kinematic collision model: calibration backups (timestamped, machine-local)
 src/config/calibration.json.*.bak
 # Collision-model preview renders and probe disagreement logs
