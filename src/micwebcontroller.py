@@ -11,7 +11,7 @@ from gpiozero import DigitalOutputDevice
 from gpiozero import Device
 from datetime import datetime
 from utils.audio_utils import AudioUtils
-from constants import EYE_LIGHT_PIN, MOUTH_MOTOR_PIN
+from constants import EYE_LIGHT_PIN, MOUTH_LIGHT_PIN, MOUTH_MOTOR_PIN
 from collections import deque
 from config_store import ConfigStore, ALLOWED_PROFILES, PROFILE_MIC, sanitize_voice_effects
 
@@ -49,6 +49,7 @@ output_device_index = 2  # playback device index
 
 jaw_motor = None
 led_eye_light = None
+led_mouth_light = None
 
 # Adaptive jaw envelope state (mic passthrough).
 jaw_open = False
@@ -467,7 +468,7 @@ def stream_mic():
 
 
 def talk(audio_data, start_time):
-    global jaw_motor, led_eye_light, jaw_open, below_count, avg_level
+    global jaw_motor, led_eye_light, led_mouth_light, jaw_open, below_count, avg_level
 
     # Only own GPIO6/GPIO15 while the stream is live (bugfix 1.1/1.4, 2.1/2.4).
     # The audio_callback already short-circuits when is_streaming is False, but
@@ -485,6 +486,8 @@ def talk(audio_data, start_time):
         jaw_motor = DigitalOutputDevice(MOUTH_MOTOR_PIN)
     if led_eye_light is None:
         led_eye_light = LED(EYE_LIGHT_PIN)
+    if led_mouth_light is None:
+        led_mouth_light = LED(MOUTH_LIGHT_PIN)
 
     # Read the live mic profile so runtime POST /config updates take effect.
     mic = jaw_profiles[PROFILE_MIC]
@@ -525,9 +528,11 @@ def talk(audio_data, start_time):
     if jaw_open:
         jaw_motor.on()
         led_eye_light.on()
+        led_mouth_light.on()
     else:
         jaw_motor.off()
         led_eye_light.off()
+        led_mouth_light.off()
 
     # NOTE: No per-frame diagnostic print here. talk() runs on the real-time
     # PortAudio callback thread, and stdout I/O on that thread delays it past the
@@ -686,15 +691,16 @@ def apply_effects(audio_data, cfg=None):
     return audio.astype(np.int16)
 
 def _release_gpio():
-    """Turn off and release the jaw motor and eye LED GPIO pins.
+    """Turn off and release the jaw motor, eye LED, and mouth light GPIO pins.
 
     Closes the gpiozero devices so their underlying pins (MOUTH_MOTOR_PIN,
-    EYE_LIGHT_PIN) are freed for another process, and resets the module globals
-    to None + jaw state to closed so talk() re-creates them cleanly on the next
-    stream. Safe to call when the devices are already None (no-op).
+    EYE_LIGHT_PIN, MOUTH_LIGHT_PIN) are freed for another process, and resets the
+    module globals to None + jaw state to closed so talk() re-creates them
+    cleanly on the next stream. Safe to call when the devices are already None
+    (no-op).
     """
-    global jaw_motor, led_eye_light, jaw_open, below_count
-    for name in ('jaw_motor', 'led_eye_light'):
+    global jaw_motor, led_eye_light, led_mouth_light, jaw_open, below_count
+    for name in ('jaw_motor', 'led_eye_light', 'led_mouth_light'):
         device = globals().get(name)
         if device is not None:
             try:
